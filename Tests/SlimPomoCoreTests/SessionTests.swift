@@ -31,6 +31,8 @@ struct SessionTests {
         #expect(session.reconcile(now: firstWorkEnd) == .playBell)
         #expect(session.phase == .breakTime)
         #expect(session.queue[0].count == 1)
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 1)
         #expect(session.displayedRemaining(at: firstWorkEnd) == 5 * 60)
 
         let firstBreakEnd = firstWorkEnd.addingTimeInterval(5 * 60)
@@ -41,13 +43,16 @@ struct SessionTests {
 
         let secondWorkEnd = firstBreakEnd.addingTimeInterval(25 * 60)
         #expect(session.reconcile(now: secondWorkEnd) == .playBell)
-        #expect(session.queue[0].count == 0)
+        #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.done[0].count == 2)
         #expect(session.phase == .breakTime)
 
         let secondBreakEnd = secondWorkEnd.addingTimeInterval(5 * 60)
         #expect(session.reconcile(now: secondBreakEnd) == .playBell)
         #expect(session.phase == .work)
         #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 2)
         #expect(session.displayedRemaining(at: secondBreakEnd) == 50 * 60)
     }
 
@@ -81,6 +86,8 @@ struct SessionTests {
         #expect(session.phase == .breakTime)
         #expect(session.isRunning)
         #expect(session.queue[0].count == 2)
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 1)
         #expect(session.displayedRemaining(at: start.addingTimeInterval(40)) == 10 * 60)
     }
 
@@ -103,6 +110,7 @@ struct SessionTests {
         #expect(session.skipBreak(now: start.addingTimeInterval(3)) == .none)
         #expect(session.phase == .work)
         #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.done.map(\.description) == ["Write"])
         #expect(session.displayedRemaining(at: start.addingTimeInterval(3)) == 75 * 60)
     }
 
@@ -115,6 +123,8 @@ struct SessionTests {
         #expect(session.skipBreak(now: start.addingTimeInterval(25)) == .none)
         #expect(session.phase == .idle)
         #expect(session.queue.isEmpty)
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 1)
         #expect(session.isRunning == false)
     }
 
@@ -128,6 +138,8 @@ struct SessionTests {
         #expect(session.reconcile(now: breakEnd) == .playBell)
         #expect(session.phase == .idle)
         #expect(session.queue.isEmpty)
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 1)
         #expect(session.isRunning == false)
         #expect(session.reconcile(now: breakEnd.addingTimeInterval(10)) == .none)
     }
@@ -180,14 +192,24 @@ struct SessionTests {
         #expect(session.phase == .work)
     }
 
-    @Test func settingQueuedCountToZeroRemovesIt() {
+    @Test func clearingTheLastPomodoroKeepsTheItem() {
         var session = Session()
         session.addItem(description: "Write", intensity: .regular, count: 1)
-        session.addItem(description: "Review", intensity: .focus, count: 2)
-        _ = session.start(now: start)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
         session.setCount(id: session.queue[1].id, count: 0)
-        #expect(session.queue.map(\.description) == ["Write"])
-        #expect(session.phase == .work)
+        #expect(session.queue.map(\.description) == ["Write", "Review"])
+        #expect(session.queue[1].count == 0)
+
+        _ = session.start(now: start)
+        #expect(session.activeItem?.description == "Write")
+        let workEnd = start.addingTimeInterval(25 * 60)
+        #expect(session.reconcile(now: workEnd) == .playBell)
+        let breakEnd = workEnd.addingTimeInterval(5 * 60)
+        #expect(session.reconcile(now: breakEnd) == .playBell)
+        #expect(session.phase == .idle)
+        #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.queue[0].count == 0)
+        #expect(session.done.map(\.description) == ["Write"])
     }
 
     @Test func deletingTheActiveItemStartsTheNextOne() {
@@ -282,5 +304,98 @@ struct SessionTests {
             }
         }
         #expect(peak > 8_000)
+    }
+
+    @Test func countIsCappedAtFive() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 9)
+        #expect(session.queue[0].count == 5)
+        session.setCount(id: session.queue[0].id, count: 8)
+        #expect(session.queue[0].count == 5)
+    }
+
+    @Test func finishedItemMovesToDoneAndCanReturn() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        _ = session.start(now: start)
+        let workEnd = start.addingTimeInterval(25 * 60)
+        #expect(session.reconcile(now: workEnd) == .playBell)
+        #expect(session.phase == .breakTime)
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 1)
+        let breakEnd = workEnd.addingTimeInterval(5 * 60)
+        #expect(session.reconcile(now: breakEnd) == .playBell)
+        #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.done.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 1)
+        #expect(session.done[0].intensity == .regular)
+
+        let doneID = session.done[0].id
+        session.requeue(id: doneID)
+        #expect(session.done.isEmpty)
+        #expect(session.queue.map(\.description) == ["Review", "Write"])
+        #expect(session.queue[1].count == 1)
+        #expect(session.queue[1].completed == 0)
+    }
+
+    @Test func finishTimesAccumulateFromNow() {
+        var session = Session()
+        session.addItem(description: "A", intensity: .regular, count: 1)
+        session.addItem(description: "B", intensity: .regular, count: 2)
+        let dates = session.finishDates(at: start)
+        #expect(dates[session.queue[0].id] == start.addingTimeInterval(25 * 60))
+        #expect(dates[session.queue[1].id] == start.addingTimeInterval(85 * 60))
+    }
+
+    @Test func finishTimeIncludesThePomodoroAlreadyUnderway() {
+        var session = Session()
+        session.addItem(description: "A", intensity: .regular, count: 1)
+        session.addItem(description: "B", intensity: .regular, count: 1)
+        _ = session.start(now: start)
+        let now = start.addingTimeInterval(10 * 60)
+        let dates = session.finishDates(at: now)
+        #expect(dates[session.queue[0].id] == now.addingTimeInterval(15 * 60))
+        #expect(dates[session.queue[1].id] == now.addingTimeInterval(45 * 60))
+    }
+
+    @Test func stopResetsARunningPomodoroWithoutFinishingIt() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        _ = session.start(now: start)
+        _ = session.stop()
+        #expect(session.phase == .idle)
+        #expect(session.isRunning == false)
+        #expect(session.queue[0].count == 2)
+        #expect(session.done.isEmpty)
+        #expect(session.displayedRemaining(at: start.addingTimeInterval(10 * 60)) == 0)
+    }
+
+    @Test func menuActionAdaptsToThePhase() {
+        var session = Session()
+        #expect(session.menuAction == SessionMenuAction(title: "Start next pomodoro", isEnabled: false))
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        #expect(session.menuAction == SessionMenuAction(title: "Start next pomodoro", isEnabled: true))
+        _ = session.start(now: start)
+        #expect(session.menuAction == SessionMenuAction(title: "Pomodoro running", isEnabled: false))
+        _ = session.pause(now: start.addingTimeInterval(30))
+        #expect(session.menuAction == SessionMenuAction(title: "Resume pomodoro", isEnabled: true))
+        _ = session.resume(now: start.addingTimeInterval(30))
+        _ = session.markDone(now: start.addingTimeInterval(30))
+        #expect(session.menuAction == SessionMenuAction(title: "Break running", isEnabled: false))
+        _ = session.pause(now: start.addingTimeInterval(40))
+        #expect(session.menuAction == SessionMenuAction(title: "Resume break", isEnabled: true))
+    }
+
+    @Test func legacySnapshotWithoutDoneStillLoads() throws {
+        let json = """
+        {"isRunning":false,"phase":"idle","phaseDuration":0,"queue":[{"count":2,"description":"Write","id":"11111111-1111-1111-1111-111111111111","intensity":"regular"}],"remaining":0}
+        """
+        let session = try JSONDecoder().decode(Session.self, from: Data(json.utf8))
+        #expect(session.queue.count == 1)
+        #expect(session.queue[0].description == "Write")
+        #expect(session.queue[0].completed == 0)
+        #expect(session.done.isEmpty)
+        #expect(session.phase == .idle)
     }
 }

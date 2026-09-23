@@ -8,9 +8,15 @@ import SlimPomoCore
 final class AppModel {
     var session: Session
     var now: Date
+    var draftDescription = ""
+    var draftIntensity = Intensity.regular
+    var descriptionDrafts: [UUID: String] = [:]
+    var hoveredQueueID: UUID?
+    var breakMessage: String?
 
     @ObservationIgnored private let store: Store
     @ObservationIgnored private let bell: Bell
+    @ObservationIgnored private let windows = MainWindowController()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
 
     init() {
@@ -20,8 +26,10 @@ final class AppModel {
         bell = Bell()
         now = Date()
         var loaded = store.load() ?? Session()
+        loaded.normalize()
         loaded.restoreAsPaused()
         session = loaded
+        syncBreakMessage()
         store.save(loaded)
     }
 
@@ -46,8 +54,32 @@ final class AppModel {
         apply { $0.markDone(now: now) }
     }
 
+    func stop() {
+        apply { $0.stop() }
+    }
+
     func skipBreak() {
         apply { $0.skipBreak(now: now) }
+    }
+
+    func descriptionDraft(for item: QueueItem) -> String {
+        descriptionDrafts[item.id] ?? item.description
+    }
+
+    func setDescriptionDraft(id: UUID, text: String) {
+        descriptionDrafts[id] = text
+    }
+
+    func commitDescriptionDraft(id: UUID) {
+        guard let current = descriptionDrafts.removeValue(forKey: id) else { return }
+        updateDescription(id: id, description: current.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    func addDraftItem() {
+        addItem(description: draftDescription, intensity: draftIntensity, count: 1)
+        if !draftDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draftDescription = ""
+        }
     }
 
     func addItem(description: String, intensity: Intensity, count: Int) {
@@ -79,7 +111,19 @@ final class AppModel {
     }
 
     func remove(id: UUID) {
+        if hoveredQueueID == id {
+            hoveredQueueID = nil
+        }
+        descriptionDrafts[id] = nil
         apply { $0.remove(id: id, now: now) }
+    }
+
+    func setQueueHover(_ id: UUID, hovering: Bool) {
+        if hovering {
+            hoveredQueueID = id
+        } else if hoveredQueueID == id {
+            hoveredQueueID = nil
+        }
     }
 
     func moveUp(id: UUID) {
@@ -94,6 +138,28 @@ final class AppModel {
             session.moveDown(id: id)
             return .none
         }
+    }
+
+    func requeue(id: UUID) {
+        apply { session in
+            session.requeue(id: id)
+            return .none
+        }
+    }
+
+    func performMenuAction() {
+        switch session.phase {
+        case .idle:
+            start()
+        case .work, .breakTime:
+            if !session.isRunning {
+                resume()
+            }
+        }
+    }
+
+    func showWindow() {
+        windows.show(model: self)
     }
 
     func quit() {
@@ -113,6 +179,7 @@ final class AppModel {
         if effect == .playBell {
             bell.play()
         }
+        syncBreakMessage()
         store.save(session.snapshot(at: now))
         ensureTicker()
     }
@@ -123,10 +190,21 @@ final class AppModel {
         if effect == .playBell {
             bell.play()
         }
+        syncBreakMessage()
         store.save(session.snapshot(at: now))
         if !session.isRunning {
             tickTask?.cancel()
             tickTask = nil
+        }
+    }
+
+    private func syncBreakMessage() {
+        if session.phase == .breakTime {
+            if breakMessage == nil {
+                breakMessage = BreakMessages.pick()
+            }
+        } else {
+            breakMessage = nil
         }
     }
 

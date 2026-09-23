@@ -8,10 +8,10 @@ struct MenuBarLabel: View {
     var body: some View {
         if model.session.phase == .idle {
             Image(systemName: "timer")
-                .font(.system(size: 17, weight: .medium))
+                .font(.system(size: Self.iconSide, weight: .medium))
                 .accessibilityLabel("SlimPomo")
         } else {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Image(nsImage: ringImage(
                     fraction: model.session.elapsedFraction(at: model.now),
                     paused: !model.session.isRunning,
@@ -19,9 +19,15 @@ struct MenuBarLabel: View {
                 ))
                 .frame(width: Self.iconSide, height: Self.iconSide)
                 .accessibilityHidden(true)
-                Text(TimeFormat.menuMinutes(model.session.displayedRemaining(at: model.now)))
-                    .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                ZStack(alignment: .leading) {
+                    Text("88")
+                        .hidden()
+                    Text(TimeFormat.menuMinutes(model.session.displayedRemaining(at: model.now)))
+                }
+                .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                .accessibilityHidden(true)
             }
+            .fixedSize()
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(accessibilityText)
         }
@@ -34,8 +40,7 @@ struct MenuBarLabel: View {
         return "\(state), \(minutes) minutes left"
     }
 
-    /// Fills the menu bar. 16pt leaves the face only a few pixels tall at 1x.
-    private static let iconSide: CGFloat = 22
+    private static let iconSide: CGFloat = 18
 
     private func ringImage(fraction: Double, paused: Bool, showsSmile: Bool) -> NSImage {
         let size = NSSize(width: Self.iconSide, height: Self.iconSide)
@@ -106,10 +111,14 @@ struct MenuBarLabel: View {
         let center = NSPoint(x: rect.midX, y: rect.midY)
         NSColor.black.setStroke()
 
+        let nudge = rect.width / 22
         func eye(dx: CGFloat) {
             let path = NSBezierPath()
             path.appendArc(
-                withCenter: NSPoint(x: center.x + dx * scale + (dx < 0 ? -0.5 : 0.5), y: center.y + 0.2 * scale + 1.5),
+                withCenter: NSPoint(
+                    x: center.x + dx * scale + (dx < 0 ? -0.5 : 0.5) * nudge,
+                    y: center.y + 0.2 * scale + 1.5 * nudge
+                ),
                 radius: 1.45 * scale,
                 startAngle: 15,
                 endAngle: 165,
@@ -124,7 +133,7 @@ struct MenuBarLabel: View {
 
         let smile = NSBezierPath()
         smile.appendArc(
-            withCenter: NSPoint(x: center.x, y: center.y + 0.7 * scale - 1.5),
+            withCenter: NSPoint(x: center.x, y: center.y + 0.7 * scale - 1.5 * nudge),
             radius: 2.45 * scale,
             startAngle: 215,
             endAngle: 325,
@@ -133,6 +142,46 @@ struct MenuBarLabel: View {
         smile.lineWidth = 1.3 * scale
         smile.lineCapStyle = .round
         smile.stroke()
+    }
+
+    /// Menu-bar image. While a timer is showing, the width stays wide enough for two digits
+    /// so the icon does not shift between 20, 19, and 9.
+    static func statusImage(model: AppModel) -> NSImage {
+        let icon = iconSide
+        let spacing: CGFloat = 4
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .semibold)
+        let digitWidth = ceil(("88" as NSString).size(withAttributes: [.font: font]).width)
+        let showsCounter = model.session.phase != .idle
+        let width = showsCounter ? icon + spacing + digitWidth : icon
+        let ring = MenuBarLabel(model: model).ringImage(
+            fraction: model.session.elapsedFraction(at: model.now),
+            paused: !model.session.isRunning,
+            showsSmile: model.session.phase == .breakTime && model.session.isRunning
+        )
+        ring.isTemplate = false
+        let minutes = TimeFormat.menuMinutes(model.session.displayedRemaining(at: model.now)) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.black
+        ]
+        let textSize = minutes.size(withAttributes: attributes)
+        let symbol = NSImage(systemSymbolName: "timer", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: icon, weight: .medium))
+        symbol?.isTemplate = false
+        let image = NSImage(size: NSSize(width: width, height: icon), flipped: false) { _ in
+            if showsCounter {
+                ring.draw(in: NSRect(x: 0, y: 0, width: icon, height: icon))
+                minutes.draw(
+                    at: NSPoint(x: icon + spacing, y: (icon - textSize.height) / 2),
+                    withAttributes: attributes
+                )
+            } else {
+                symbol?.draw(in: NSRect(x: 0, y: 0, width: icon, height: icon))
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 }
 
@@ -146,6 +195,16 @@ enum TimeFormat {
         let remaining = max(0, seconds)
         guard remaining > 0 else { return "0" }
         return String(Int((remaining / 60).rounded(.up)))
+    }
+
+    static func span(_ seconds: TimeInterval) -> String {
+        let minutes = max(0, Int((seconds / 60).rounded()))
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        if hours > 0 {
+            return "\(hours)h \(remainder)m"
+        }
+        return "\(remainder)m"
     }
 }
 
