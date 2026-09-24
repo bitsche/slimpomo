@@ -10,7 +10,12 @@ struct Store {
         } else {
             let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
                 ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            self.fileURL = base.appendingPathComponent("SlimPomo/session.json")
+            #if SLIMPOMO_DEV
+            let folder = "SlimPomo-dev"
+            #else
+            let folder = "SlimPomo"
+            #endif
+            self.fileURL = base.appendingPathComponent("\(folder)/session.json")
         }
     }
 

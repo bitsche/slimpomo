@@ -19,11 +19,11 @@ public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
     public var mode: IntensityMode {
         switch self {
         case .regular:
-            IntensityMode(name: "Regular", workMinutes: 25, breakMinutes: 5, red: 0.78, green: 0.84, blue: 0.80)
+            IntensityMode(name: "Dip", workMinutes: 25, breakMinutes: 5, red: 0.78, green: 0.84, blue: 0.80)
         case .focus:
-            IntensityMode(name: "Focus", workMinutes: 50, breakMinutes: 10, red: 0.93, green: 0.80, blue: 0.58)
+            IntensityMode(name: "Dive", workMinutes: 50, breakMinutes: 10, red: 0.93, green: 0.80, blue: 0.58)
         case .intense:
-            IntensityMode(name: "Intense", workMinutes: 75, breakMinutes: 15, red: 0.95, green: 0.64, blue: 0.60)
+            IntensityMode(name: "Deep dive", workMinutes: 75, breakMinutes: 15, red: 0.95, green: 0.64, blue: 0.60)
         }
     }
 
@@ -649,3 +649,28 @@ public struct Session: Equatable, Codable {
         lockedBreakDuration = nil
     }
 }
+
+#if SLIMPOMO_DEV
+extension Session {
+    /// Replaces history and today's Done. The queue and the running timer stay.
+    public mutating func devReplaceHistory(_ events: [HistoryEvent], doneToday: [QueueItem], day: Date) {
+        history = events
+        done = doneToday
+        doneDay = day
+        didMigrateHistory = true
+    }
+
+    public mutating func devClearHistory() {
+        history = []
+        didMigrateHistory = true
+    }
+
+    /// Done belongs to an earlier day, and the timer is idle, so launch can clear it.
+    public mutating func devInstallStaleDone(_ rows: [QueueItem], day: Date) {
+        done = rows
+        doneDay = day
+        didMigrateHistory = true
+        becomeIdle()
+    }
+}
+#endif

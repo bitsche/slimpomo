@@ -14,7 +14,14 @@ final class AppModel {
     var hoveredQueueID: UUID?
     var modePickerOpen = false
     var modeHighlight = Intensity.regular
+    var depthHintDismissed = false
+    var depthChipHover = false
+    var depthHintHover = false
+    var depthChipFocused = false
+    var depthHintFocused = false
     var breakMessage: String?
+    /// Bumped when a click lands outside a text field, so open editors resign.
+    var textFocusNonce = 0
     @ObservationIgnored private var lastBreakMessage: String?
 
     @ObservationIgnored private let store: Store
@@ -25,6 +32,7 @@ final class AppModel {
     @ObservationIgnored private var midnightTask: Task<Void, Never>?
     @ObservationIgnored private var dayObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var focusMonitor: Any?
     @ObservationIgnored private var historyCache: [HistoryDay] = []
     @ObservationIgnored private var historyCacheCount = -1
     @ObservationIgnored private var historyCacheZone = ""
@@ -37,6 +45,9 @@ final class AppModel {
         let moment = Date()
         now = moment
         var loaded = store.load() ?? Session()
+        #if SLIMPOMO_DEV
+        DevLaunch.apply(to: &loaded, now: moment)
+        #endif
         loaded.normalize()
         loaded.restoreAsPaused()
         loaded.migrateHistoryIfNeeded(now: moment)
@@ -47,17 +58,39 @@ final class AppModel {
             draftIntensity = saved
         }
         modeHighlight = draftIntensity
+        depthHintDismissed = UserDefaults.standard.bool(forKey: Self.depthHintKey)
         syncBreakMessage()
         store.save(loaded)
         observeDayChanges()
         scheduleMidnight()
         installKeyMonitor()
+        installFocusMonitor()
+    }
+
+    /// Ends editing when a click misses every text field. Buttons still receive the click.
+    func releaseTextFocus() {
+        textFocusNonce &+= 1
     }
 
     func setDraftIntensity(_ intensity: Intensity) {
         draftIntensity = intensity
         modeHighlight = intensity
         UserDefaults.standard.set(intensity.rawValue, forKey: Self.draftIntensityKey)
+    }
+
+    func showDepthPicker() {
+        modeHighlight = draftIntensity
+        modePickerOpen = true
+    }
+
+    func noteDepthChanged() {
+        guard !depthHintDismissed else { return }
+        depthHintDismissed = true
+        UserDefaults.standard.set(true, forKey: Self.depthHintKey)
+    }
+
+    var depthControlHot: Bool {
+        depthChipHover || depthHintHover || depthChipFocused || depthHintFocused
     }
 
     func refresh() {
@@ -332,6 +365,26 @@ final class AppModel {
         }
     }
 
+    private func installFocusMonitor() {
+        focusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            let point = event.locationInWindow
+            let windowNumber = event.windowNumber
+            let shouldRelease = MainActor.assumeIsolated { () -> Bool in
+                guard NSApp.windows.contains(where: { $0.firstResponder is NSTextView }) else { return false }
+                guard let window = NSApp.window(withWindowNumber: windowNumber) else { return false }
+                guard let hit = window.contentView?.hitTest(point) else { return true }
+                return !viewContainsTextInput(hit)
+            }
+            guard shouldRelease else { return event }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    AppRuntime.model.releaseTextFocus()
+                }
+            }
+            return event
+        }
+    }
+
     private func syncBreakMessage() {
         if session.phase == .breakTime {
             if breakMessage == nil {
@@ -348,6 +401,7 @@ final class AppModel {
     }
 
     private static let draftIntensityKey = "SlimPomo.draftIntensity"
+    private static let depthHintKey = "SlimPomo.depthHintDismissed"
 
     private func ensureTicker() {
         guard tickTask == nil else { return }
@@ -371,4 +425,14 @@ final class AppModel {
             }
         }
     }
+}
+
+@MainActor
+private func viewContainsTextInput(_ view: NSView) -> Bool {
+    var current: NSView? = view
+    while let view = current {
+        if view is NSTextView || view is NSTextField { return true }
+        current = view.superview
+    }
+    return false
 }

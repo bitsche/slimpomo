@@ -21,7 +21,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
             window.title = "History"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
-            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarSeparatorStyle = .none
             window.appearance = NSAppearance(named: .darkAqua)
             window.backgroundColor = Palette.canvasNS
             window.isReleasedWhenClosed = false
@@ -76,12 +76,13 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
 
     private func enforceMinimumSize(of window: NSWindow) {
         window.minSize = HistoryMetrics.minSize
-        window.contentMinSize = HistoryMetrics.minSize
+        let contentMin = window.contentRect(forFrameRect: NSRect(origin: .zero, size: HistoryMetrics.minSize)).size
+        window.contentMinSize = contentMin
         guard let content = window.contentView else { return }
         let existing = content.constraints.contains { $0.identifier == HistoryMetrics.minConstraintID }
         guard !existing else { return }
-        let width = content.widthAnchor.constraint(greaterThanOrEqualToConstant: HistoryMetrics.minSize.width)
-        let height = content.heightAnchor.constraint(greaterThanOrEqualToConstant: HistoryMetrics.minSize.height)
+        let width = content.widthAnchor.constraint(greaterThanOrEqualToConstant: contentMin.width)
+        let height = content.heightAnchor.constraint(greaterThanOrEqualToConstant: contentMin.height)
         width.identifier = HistoryMetrics.minConstraintID
         height.identifier = HistoryMetrics.minConstraintID
         width.priority = .required
@@ -195,6 +196,13 @@ struct HistoryWindow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Palette.canvas)
         .preferredColorScheme(.dark)
+        #if SLIMPOMO_DEV
+        .overlay(alignment: .topTrailing) {
+            DevBadge(color: Palette.muted)
+                .padding(.top, 8)
+                .padding(.trailing, 12)
+        }
+        #endif
     }
 }
 

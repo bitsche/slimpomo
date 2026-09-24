@@ -8,6 +8,8 @@ struct SessionTests {
     @Test func modeDurationsComeFromOneConfig() {
         #expect(Intensity.allCases.map(\.mode.workMinutes) == [25, 50, 75])
         #expect(Intensity.allCases.map(\.mode.breakMinutes) == [5, 10, 15])
+        #expect(Intensity.allCases.map(\.label) == ["Dip", "Dive", "Deep dive"])
+        #expect(Intensity.allCases.map(\.workMark) == ["25′", "50′", "75′"])
         for mode in Intensity.allCases {
             #expect(mode.workDuration == TimeInterval(mode.mode.workMinutes * 60))
             #expect(mode.breakDuration == TimeInterval(mode.mode.breakMinutes * 60))
