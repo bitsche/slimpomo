@@ -27,4 +27,10 @@ final class SlimPomoDelegate: NSObject, NSApplicationDelegate {
             StatusItemController.shared.start()
         }
     }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            AppRuntime.model.showWindow()
+        }
+    }
 }

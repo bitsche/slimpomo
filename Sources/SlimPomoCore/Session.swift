@@ -1,41 +1,55 @@
 import Foundation
 
+public struct IntensityMode: Equatable, Sendable {
+    public var name: String
+    public var workMinutes: Int
+    public var breakMinutes: Int
+    /// Pale heat-scale fill: regular, focus, then intense.
+    public var red: Double
+    public var green: Double
+    public var blue: Double
+}
+
 public enum Intensity: String, Codable, CaseIterable, Equatable {
     case regular
     case focus
     case intense
 
-    public var workDuration: TimeInterval {
+    /// Single source for a mode's name, durations, and chip color.
+    public var mode: IntensityMode {
         switch self {
-        case .regular: 25 * 60
-        case .focus: 50 * 60
-        case .intense: 75 * 60
+        case .regular:
+            IntensityMode(name: "Regular", workMinutes: 25, breakMinutes: 5, red: 0.78, green: 0.84, blue: 0.80)
+        case .focus:
+            IntensityMode(name: "Focus", workMinutes: 50, breakMinutes: 10, red: 0.93, green: 0.80, blue: 0.58)
+        case .intense:
+            IntensityMode(name: "Intense", workMinutes: 75, breakMinutes: 15, red: 0.95, green: 0.64, blue: 0.60)
         }
     }
 
-    public var breakDuration: TimeInterval {
-        switch self {
-        case .regular: 5 * 60
-        case .focus: 10 * 60
-        case .intense: 15 * 60
-        }
+    public var workDuration: TimeInterval { TimeInterval(mode.workMinutes * 60) }
+    public var breakDuration: TimeInterval { TimeInterval(mode.breakMinutes * 60) }
+    public var label: String { mode.name }
+
+    /// Work minutes, as shown on the chip. The prime marks minutes.
+    public var workMark: String { "\(mode.workMinutes)′" }
+
+    public var summary: String {
+        "\(mode.name) — \(mode.workMinutes) min work, \(mode.breakMinutes) min break"
     }
 
-    public var label: String {
-        switch self {
-        case .regular: "Regular"
-        case .focus: "Focus"
-        case .intense: "Intense"
-        }
+    /// Full session length relative to regular. Regular is 1, focus 2, intense 3.
+    public var sessionScale: Double {
+        let minutes = mode.workMinutes + mode.breakMinutes
+        let base = Intensity.regular.mode.workMinutes + Intensity.regular.mode.breakMinutes
+        return Double(minutes) / Double(base)
     }
 
-    /// Work/break minutes, shown as the intensity control's tooltip.
-    public var ratioTooltip: String {
-        switch self {
-        case .regular: "25/5"
-        case .focus: "50/10"
-        case .intense: "75/15"
-        }
+    /// Share of the session that is work. The rest is the break segment.
+    public var workShare: Double {
+        let total = mode.workMinutes + mode.breakMinutes
+        guard total > 0 else { return 1 }
+        return Double(mode.workMinutes) / Double(total)
     }
 }
 
@@ -91,7 +105,10 @@ public enum Phase: String, Codable, Equatable {
 
 public enum SessionEffect: Equatable {
     case none
-    case playBell
+    /// The work interval ended, including Finish.
+    case workDone
+    /// The break ended, including Skip.
+    case breakOver
 }
 
 public struct SessionMenuAction: Equatable, Sendable {
@@ -293,7 +310,7 @@ public struct Session: Equatable, Codable {
     public mutating func markDone(now: Date) -> SessionEffect {
         guard phase == .work else { return .none }
         completeWork(now: now)
-        return .none
+        return .workDone
     }
 
     /// Drops the running pomodoro without finishing it and returns to the unstarted queue.
@@ -306,7 +323,7 @@ public struct Session: Equatable, Codable {
     public mutating func skipBreak(now: Date) -> SessionEffect {
         guard phase == .breakTime else { return .none }
         finishBreak(now: now)
-        return .none
+        return .breakOver
     }
 
     public mutating func reconcile(now: Date) -> SessionEffect {
@@ -314,10 +331,10 @@ public struct Session: Equatable, Codable {
         switch phase {
         case .work:
             completeWork(now: now)
-            return .playBell
+            return .workDone
         case .breakTime:
             finishBreak(now: now)
-            return .playBell
+            return .breakOver
         case .idle:
             return .none
         }
@@ -337,6 +354,7 @@ public struct Session: Equatable, Codable {
 
     public mutating func updateIntensity(id: UUID, intensity: Intensity) {
         guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        if phase != .idle, activeItemID == id { return }
         queue[index].intensity = intensity
     }
 
@@ -363,12 +381,20 @@ public struct Session: Equatable, Codable {
         return .none
     }
 
+    /// Copies a finished line onto the end of the queue. The done entry stays.
     public mutating func requeue(id: UUID) {
-        guard let index = done.firstIndex(where: { $0.id == id }) else { return }
-        var item = done.remove(at: index)
-        item.count = min(Self.maxPomodoros, max(1, item.count))
-        item.completed = 0
-        queue.append(item)
+        guard let item = done.first(where: { $0.id == id }) else { return }
+        queue.append(QueueItem(
+            id: UUID(),
+            intensity: item.intensity,
+            description: item.description,
+            count: min(Self.maxPomodoros, max(1, item.count)),
+            completed: 0
+        ))
+    }
+
+    public mutating func clearDone() {
+        done.removeAll()
     }
 
     public mutating func move(from source: IndexSet, to destination: Int) {

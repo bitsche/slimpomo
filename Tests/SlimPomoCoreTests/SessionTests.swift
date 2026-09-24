@@ -5,6 +5,17 @@ import Testing
 struct SessionTests {
     let start = Date(timeIntervalSince1970: 1_000_000)
 
+    @Test func modeDurationsComeFromOneConfig() {
+        #expect(Intensity.allCases.map(\.mode.workMinutes) == [25, 50, 75])
+        #expect(Intensity.allCases.map(\.mode.breakMinutes) == [5, 10, 15])
+        for mode in Intensity.allCases {
+            #expect(mode.workDuration == TimeInterval(mode.mode.workMinutes * 60))
+            #expect(mode.breakDuration == TimeInterval(mode.mode.breakMinutes * 60))
+        }
+        #expect(Intensity.regular.sessionScale == 1)
+        #expect(Intensity.intense.sessionScale == 3)
+    }
+
     @Test func emptyQueueCannotStart() {
         var session = Session()
         #expect(session.start(now: start) == .none)
@@ -28,7 +39,7 @@ struct SessionTests {
         #expect(session.elapsedFraction(at: start) == 0)
 
         let firstWorkEnd = start.addingTimeInterval(25 * 60)
-        #expect(session.reconcile(now: firstWorkEnd) == .playBell)
+        #expect(session.reconcile(now: firstWorkEnd) == .workDone)
         #expect(session.phase == .breakTime)
         #expect(session.queue[0].count == 1)
         #expect(session.done.map(\.description) == ["Write"])
@@ -36,19 +47,19 @@ struct SessionTests {
         #expect(session.displayedRemaining(at: firstWorkEnd) == 5 * 60)
 
         let firstBreakEnd = firstWorkEnd.addingTimeInterval(5 * 60)
-        #expect(session.reconcile(now: firstBreakEnd) == .playBell)
+        #expect(session.reconcile(now: firstBreakEnd) == .breakOver)
         #expect(session.phase == .work)
         #expect(session.queue.map(\.description) == ["Write", "Review"])
         #expect(session.displayedRemaining(at: firstBreakEnd) == 25 * 60)
 
         let secondWorkEnd = firstBreakEnd.addingTimeInterval(25 * 60)
-        #expect(session.reconcile(now: secondWorkEnd) == .playBell)
+        #expect(session.reconcile(now: secondWorkEnd) == .workDone)
         #expect(session.queue.map(\.description) == ["Review"])
         #expect(session.done[0].count == 2)
         #expect(session.phase == .breakTime)
 
         let secondBreakEnd = secondWorkEnd.addingTimeInterval(5 * 60)
-        #expect(session.reconcile(now: secondBreakEnd) == .playBell)
+        #expect(session.reconcile(now: secondBreakEnd) == .breakOver)
         #expect(session.phase == .work)
         #expect(session.queue.map(\.description) == ["Review"])
         #expect(session.done.map(\.description) == ["Write"])
@@ -76,13 +87,13 @@ struct SessionTests {
         #expect(session.endsAt == Optional(later.addingTimeInterval(15 * 60)))
     }
 
-    @Test func markDoneStartsBreakWithoutBell() {
+    @Test func markDoneStartsBreakAndRings() {
         var session = Session()
         session.addItem(description: "Write", intensity: .focus, count: 3)
         _ = session.start(now: start)
         _ = session.pause(now: start.addingTimeInterval(30))
 
-        #expect(session.markDone(now: start.addingTimeInterval(40)) == .none)
+        #expect(session.markDone(now: start.addingTimeInterval(40)) == .workDone)
         #expect(session.phase == .breakTime)
         #expect(session.isRunning)
         #expect(session.queue[0].count == 2)
@@ -107,7 +118,7 @@ struct SessionTests {
         session.addItem(description: "Review", intensity: .intense, count: 1)
         _ = session.start(now: start)
         _ = session.markDone(now: start)
-        #expect(session.skipBreak(now: start.addingTimeInterval(3)) == .none)
+        #expect(session.skipBreak(now: start.addingTimeInterval(3)) == .breakOver)
         #expect(session.phase == .work)
         #expect(session.queue.map(\.description) == ["Review"])
         #expect(session.done.map(\.description) == ["Write"])
@@ -120,7 +131,7 @@ struct SessionTests {
         _ = session.start(now: start)
         _ = session.markDone(now: start)
         _ = session.pause(now: start.addingTimeInterval(20))
-        #expect(session.skipBreak(now: start.addingTimeInterval(25)) == .none)
+        #expect(session.skipBreak(now: start.addingTimeInterval(25)) == .breakOver)
         #expect(session.phase == .idle)
         #expect(session.queue.isEmpty)
         #expect(session.done.map(\.description) == ["Write"])
@@ -133,9 +144,9 @@ struct SessionTests {
         session.addItem(description: "Write", intensity: .regular, count: 1)
         _ = session.start(now: start)
         let workEnd = start.addingTimeInterval(25 * 60)
-        #expect(session.reconcile(now: workEnd) == .playBell)
+        #expect(session.reconcile(now: workEnd) == .workDone)
         let breakEnd = workEnd.addingTimeInterval(5 * 60)
-        #expect(session.reconcile(now: breakEnd) == .playBell)
+        #expect(session.reconcile(now: breakEnd) == .breakOver)
         #expect(session.phase == .idle)
         #expect(session.queue.isEmpty)
         #expect(session.done.map(\.description) == ["Write"])
@@ -173,14 +184,40 @@ struct SessionTests {
         #expect(session.displayedRemaining(at: later) == 25 * 60 - 5)
     }
 
-    @Test func intensityChangeDoesNotAlterTheCurrentPhase() {
+    @Test func activeSessionIntensityIsLocked() {
         var session = Session()
-        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Other", intensity: .regular, count: 1)
         _ = session.start(now: start)
-        session.updateIntensity(id: session.queue[0].id, intensity: .intense)
+        let active = session.queue[0].id
+        session.updateIntensity(id: active, intensity: .intense)
+        #expect(session.queue[0].intensity == .regular)
         #expect(session.displayedRemaining(at: start) == 25 * 60)
+        session.updateIntensity(id: session.queue[1].id, intensity: .focus)
+        #expect(session.queue[1].intensity == .focus)
+
+        _ = session.pause(now: start)
+        session.updateIntensity(id: active, intensity: .intense)
+        #expect(session.queue[0].intensity == .regular)
+
+        _ = session.resume(now: start)
         _ = session.markDone(now: start)
+        #expect(session.phase == .breakTime)
         #expect(session.displayedRemaining(at: start) == 5 * 60)
+        session.updateIntensity(id: active, intensity: .intense)
+        #expect(session.queue[0].intensity == .regular)
+
+        _ = session.stop()
+        #expect(session.phase == .breakTime)
+        let breakEnd = start.addingTimeInterval(5 * 60)
+        _ = session.reconcile(now: breakEnd)
+        #expect(session.phase == .work)
+        _ = session.stop()
+        #expect(session.phase == .idle)
+        session.updateIntensity(id: active, intensity: .intense)
+        #expect(session.queue[0].intensity == .intense)
+        _ = session.start(now: breakEnd)
+        #expect(session.displayedRemaining(at: breakEnd) == 75 * 60)
     }
 
     @Test func activeWorkCountStaysAtLeastOne() {
@@ -203,9 +240,9 @@ struct SessionTests {
         _ = session.start(now: start)
         #expect(session.activeItem?.description == "Write")
         let workEnd = start.addingTimeInterval(25 * 60)
-        #expect(session.reconcile(now: workEnd) == .playBell)
+        #expect(session.reconcile(now: workEnd) == .workDone)
         let breakEnd = workEnd.addingTimeInterval(5 * 60)
-        #expect(session.reconcile(now: breakEnd) == .playBell)
+        #expect(session.reconcile(now: breakEnd) == .breakOver)
         #expect(session.phase == .idle)
         #expect(session.queue.map(\.description) == ["Review"])
         #expect(session.queue[0].count == 0)
@@ -288,24 +325,6 @@ struct SessionTests {
         #expect(restored.displayedRemaining(at: start.addingTimeInterval(10_000)) == 75 * 60 - 90)
     }
 
-    @Test func chimeIsAPlayableWAV() {
-        let data = Chime.wavData()
-        #expect(data.prefix(4) == Data("RIFF".utf8))
-        #expect(data.dropFirst(8).prefix(4) == Data("WAVE".utf8))
-        #expect(data.count > 44)
-
-        var peak = 0
-        data.withUnsafeBytes { buffer in
-            var offset = 44
-            while offset + 1 < buffer.count {
-                let sample = buffer.loadUnaligned(fromByteOffset: offset, as: Int16.self)
-                peak = max(peak, abs(Int(Int16(littleEndian: sample))))
-                offset += 2
-            }
-        }
-        #expect(peak > 8_000)
-    }
-
     @Test func countIsCappedAtFive() {
         var session = Session()
         session.addItem(description: "Write", intensity: .regular, count: 9)
@@ -320,12 +339,12 @@ struct SessionTests {
         session.addItem(description: "Review", intensity: .focus, count: 1)
         _ = session.start(now: start)
         let workEnd = start.addingTimeInterval(25 * 60)
-        #expect(session.reconcile(now: workEnd) == .playBell)
+        #expect(session.reconcile(now: workEnd) == .workDone)
         #expect(session.phase == .breakTime)
         #expect(session.done.map(\.description) == ["Write"])
         #expect(session.done[0].count == 1)
         let breakEnd = workEnd.addingTimeInterval(5 * 60)
-        #expect(session.reconcile(now: breakEnd) == .playBell)
+        #expect(session.reconcile(now: breakEnd) == .breakOver)
         #expect(session.queue.map(\.description) == ["Review"])
         #expect(session.done.map(\.description) == ["Write"])
         #expect(session.done[0].count == 1)
@@ -333,10 +352,16 @@ struct SessionTests {
 
         let doneID = session.done[0].id
         session.requeue(id: doneID)
-        #expect(session.done.isEmpty)
+        #expect(session.done.map(\.id) == [doneID])
+        #expect(session.done[0].description == "Write")
         #expect(session.queue.map(\.description) == ["Review", "Write"])
+        #expect(session.queue[1].id != doneID)
         #expect(session.queue[1].count == 1)
         #expect(session.queue[1].completed == 0)
+
+        session.clearDone()
+        #expect(session.done.isEmpty)
+        #expect(session.queue.map(\.description) == ["Review", "Write"])
     }
 
     @Test func finishTimesAccumulateFromNow() {

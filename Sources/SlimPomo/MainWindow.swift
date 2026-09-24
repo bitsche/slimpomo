@@ -5,10 +5,13 @@ import SlimPomoCore
 @MainActor
 final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var acceptsSizeSaves = false
+    private var sizeSaveTask: Task<Void, Never>?
 
     func show(model: AppModel) {
         NSApp.setActivationPolicy(.regular)
-        if window == nil {
+        let created = window == nil
+        if created {
             let window = NSWindow(
                 contentRect: NSRect(origin: .zero, size: WindowMetrics.defaultSize),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -21,27 +24,64 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             window.styleMask.insert(.fullSizeContentView)
             window.appearance = NSAppearance(named: .darkAqua)
             window.backgroundColor = Palette.canvasNS
-            window.minSize = WindowMetrics.minSize
             window.isReleasedWhenClosed = false
             window.isRestorable = false
             window.hidesOnDeactivate = false
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             window.tabbingMode = .disallowed
-            let restored = window.setFrameAutosaveName(WindowMetrics.autosaveName)
-            if !restored {
-                window.setContentSize(WindowMetrics.defaultSize)
-                window.center()
-            }
-            window.contentViewController = NSHostingController(rootView: MainWindow(model: model))
+            window.alphaValue = 0
+            let hosting = NSHostingController(rootView: MainWindow(model: model))
+            // SwiftUI's default sizing options replace the restored frame with the
+            // view's intrinsic size, which the minimum then clamps to 400×450.
+            hosting.sizingOptions = []
+            window.contentViewController = hosting
+            enforceMinimumSize(of: window)
             window.delegate = self
             self.window = window
+            applySavedFrame(to: window)
         }
-        // The status-item menu is still tracking. Presenting on the next turn
-        // lets that menu close before the window is ordered in front.
         Task { @MainActor in
             guard let window = self.window else { return }
+            if created {
+                window.contentView?.layoutSubtreeIfNeeded()
+                enforceMinimumSize(of: window)
+                applySavedFrame(to: window)
+            }
             self.present(window)
+            window.alphaValue = 1
+            self.acceptsSizeSaves = true
         }
+    }
+
+    /// The hosting view uses Auto Layout, so `minSize` alone does not stop a drag.
+    private func enforceMinimumSize(of window: NSWindow) {
+        window.minSize = WindowMetrics.minSize
+        window.contentMinSize = WindowMetrics.minSize
+        guard let content = window.contentView else { return }
+        let existing = content.constraints.contains { $0.identifier == WindowMetrics.minConstraintID }
+        guard !existing else { return }
+        let width = content.widthAnchor.constraint(greaterThanOrEqualToConstant: WindowMetrics.minSize.width)
+        let height = content.heightAnchor.constraint(greaterThanOrEqualToConstant: WindowMetrics.minSize.height)
+        width.identifier = WindowMetrics.minConstraintID
+        height.identifier = WindowMetrics.minConstraintID
+        width.priority = .required
+        height.priority = .required
+        width.isActive = true
+        height.isActive = true
+    }
+
+    nonisolated func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        NSSize(
+            width: max(frameSize.width, WindowMetrics.minSize.width),
+            height: max(frameSize.height, WindowMetrics.minSize.height)
+        )
+    }
+
+    private func applySavedFrame(to window: NSWindow) {
+        var frame = window.frame
+        frame.size = Self.resolvedWindowSize()
+        window.setFrame(frame, display: false)
+        window.center()
     }
 
     private func present(_ window: NSWindow) {
@@ -69,10 +109,70 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    nonisolated func windowWillClose(_ notification: Notification) {
+    nonisolated func windowDidBecomeKey(_ notification: Notification) {
         Task { @MainActor in
+            AppRuntime.model.stopAlarm()
+        }
+    }
+
+    nonisolated func windowDidResize(_ notification: Notification) {
+        Task { @MainActor in
+            self.scheduleSizeSave()
+        }
+    }
+
+    nonisolated func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            self.sizeSaveTask?.cancel()
+            self.saveWindowSize()
             NSApp.setActivationPolicy(.accessory)
         }
+    }
+
+    private func scheduleSizeSave() {
+        guard acceptsSizeSaves else { return }
+        sizeSaveTask?.cancel()
+        sizeSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self.saveWindowSize()
+        }
+    }
+
+    private func saveWindowSize() {
+        guard let window else { return }
+        let size = window.frame.size
+        UserDefaults.standard.set(
+            ["width": Double(size.width), "height": Double(size.height)],
+            forKey: WindowMetrics.sizeKey
+        )
+    }
+
+    private static func resolvedWindowSize() -> NSSize {
+        let fallback = fitToScreen(WindowMetrics.defaultSize)
+        guard let raw = UserDefaults.standard.dictionary(forKey: WindowMetrics.sizeKey),
+              let width = (raw["width"] as? NSNumber)?.doubleValue,
+              let height = (raw["height"] as? NSNumber)?.doubleValue,
+              width.isFinite, height.isFinite
+        else { return fallback }
+        if width < WindowMetrics.minSize.width || height < WindowMetrics.minSize.height {
+            return fallback
+        }
+        let screen = NSScreen.main?.visibleFrame.size ?? fallback
+        if width > screen.width || height > screen.height {
+            return fallback
+        }
+        return NSSize(width: width, height: height)
+    }
+
+    private static func fitToScreen(_ size: NSSize) -> NSSize {
+        let screen = NSScreen.main?.visibleFrame.size ?? size
+        let maxWidth = max(WindowMetrics.minSize.width, screen.width)
+        let maxHeight = max(WindowMetrics.minSize.height, screen.height)
+        return NSSize(
+            width: min(max(size.width, WindowMetrics.minSize.width), maxWidth),
+            height: min(max(size.height, WindowMetrics.minSize.height), maxHeight)
+        )
     }
 }
 
@@ -139,6 +239,15 @@ struct MainWindow: View {
                 .lineLimit(onBreak ? 2 : 1)
                 .padding(.horizontal, 12)
 
+            if let sessionSubtitle {
+                Text(sessionSubtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(cardInk.opacity(0.68))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 16)
+            }
+
             HStack(spacing: 18) {
                 cardButton(primaryTitle, enabled: !primaryDisabled, help: primaryHelp) {
                     primaryAction()
@@ -162,10 +271,11 @@ struct MainWindow: View {
     private var todoHeader: some View {
         HStack(spacing: 12) {
             hairline
-            Text("TODO · \(todoCount) / \(TimeFormat.span(todoWork))")
+            Text(todoTitle)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
                 .fixedSize()
+                .help("Pomodoros still in the queue, and the work time they add up to")
             hairline
         }
     }
@@ -182,10 +292,11 @@ struct MainWindow: View {
                 .padding(.bottom, 14)
 
             if model.session.queue.isEmpty {
-                Text("Nothing queued yet.")
+                Text("Pick how deep you want to go — longer sessions get longer breaks.")
                     .font(.system(size: 13))
                     .foregroundStyle(Palette.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
                     .padding(.vertical, 8)
             } else {
                 VStack(spacing: 0) {
@@ -206,9 +317,7 @@ struct MainWindow: View {
 
     private var addRow: some View {
         HStack(spacing: 10) {
-            IntensitySwitch(intensity: model.draftIntensity) {
-                model.draftIntensity = model.draftIntensity.next
-            }
+            ModeMenu(model: model)
             TextField("Press Return to add a task", text: $model.draftDescription)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -238,6 +347,19 @@ struct MainWindow: View {
                     .foregroundStyle(.white.opacity(0.88))
                     .fixedSize()
                 hairline
+                Button {
+                    model.clearDone()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.7))
+                        .frame(width: 22, height: 18)
+                        .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Clear the done list")
+                .accessibilityLabel("Clear the done list")
             }
             VStack(spacing: 0) {
                 ForEach(model.session.done) { item in
@@ -245,6 +367,11 @@ struct MainWindow: View {
                 }
             }
         }
+    }
+
+    private var todoTitle: String {
+        let noun = todoCount == 1 ? "pomodoro" : "pomodoros"
+        return "TODO · \(todoCount) \(noun) · \(TimeFormat.span(todoWork)) work"
     }
 
     private var todoCount: Int {
@@ -283,7 +410,8 @@ struct MainWindow: View {
 
     private var taskLine: String {
         if onBreak {
-            return model.breakMessage ?? BreakMessages.all[0]
+            let message = model.breakMessage ?? BreakMessages.five[0]
+            return "Break · \(message)"
         }
         if model.session.phase != .idle {
             if let active = model.session.activeItem, !active.description.isEmpty {
@@ -298,6 +426,47 @@ struct MainWindow: View {
             return next.description.isEmpty ? "Untitled" : next.description
         }
         return "Add a task to begin"
+    }
+
+    private var sessionSubtitle: String? {
+        if onBreak {
+            if let name = nextWorkName {
+                return "Next: back to \(name)"
+            }
+            return "Next: nothing queued"
+        }
+        guard let item = subtitleItem else { return nil }
+        let work = model.session.phase == .work
+            ? Int(model.session.phaseDuration / 60)
+            : item.intensity.mode.workMinutes
+        let rest = model.session.phase == .work
+            ? Int((model.session.lockedBreakDuration ?? item.intensity.breakDuration) / 60)
+            : item.intensity.mode.breakMinutes
+        return "\(item.intensity.label) · \(work) min work, then \(rest) min break"
+    }
+
+    private var subtitleItem: QueueItem? {
+        if model.session.phase == .work {
+            return model.session.activeItem
+        }
+        if model.session.phase == .idle {
+            return model.session.queue.first { $0.count > 0 }
+        }
+        return nil
+    }
+
+    private var nextWorkName: String? {
+        if let active = model.session.activeItem, active.count > 0 {
+            return named(active)
+        }
+        if let next = model.session.queue.first(where: { $0.count > 0 }) {
+            return named(next)
+        }
+        return nil
+    }
+
+    private func named(_ item: QueueItem) -> String {
+        item.description.isEmpty ? "Untitled" : item.description
     }
 
     private var primaryTitle: String {
@@ -326,7 +495,7 @@ struct MainWindow: View {
         if model.session.phase == .work, !model.session.isRunning {
             return "FINISH"
         }
-        return "STOP"
+        return "RESET"
     }
 
     private var secondaryEnabled: Bool {
@@ -399,7 +568,10 @@ private struct QueueLine: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            IntensitySwitch(intensity: item.intensity) {
+            IntensitySwitch(
+                intensity: item.intensity,
+                locked: model.session.phase != .idle && item.id == model.session.activeItemID
+            ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
 
@@ -417,9 +589,10 @@ private struct QueueLine: View {
                 .font(.system(size: 13, design: .monospaced).monospacedDigit())
                 .foregroundStyle(Palette.muted)
                 .frame(width: 52, alignment: .trailing)
-                .accessibilityLabel(finish.map { "Finishes at \($0.formatted(date: .omitted, time: .shortened))" } ?? "No finish time")
+                .help(finishHelp)
+                .accessibilityLabel(finishHelp)
 
-            CountBadge(count: item.count) {
+            CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
                 guard item.count < Session.maxPomodoros else { return }
                 model.setCount(id: item.id, count: item.count + 1)
             } onDecrement: {
@@ -473,6 +646,12 @@ private struct QueueLine: View {
         return finish.formatted(date: .omitted, time: .shortened)
     }
 
+    private var finishHelp: String {
+        guard let finish else { return "No finish time yet" }
+        let clock = finish.formatted(date: .omitted, time: .shortened)
+        return "Work ends at \(clock), when the break starts"
+    }
+
     private var descriptionBinding: Binding<String> {
         Binding(
             get: { model.descriptionDraft(for: item) },
@@ -497,7 +676,7 @@ private struct DoneLine: View {
 
             Spacer(minLength: 8)
 
-            CountBadge(count: item.count)
+            CountBadge(count: item.count, detail: "\(item.count) finished × \(item.intensity.mode.workMinutes) min")
 
             Button {
                 model.requeue(id: item.id)
@@ -509,8 +688,8 @@ private struct DoneLine: View {
                     .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
             }
             .buttonStyle(.plain)
-            .help("Put back in the queue")
-            .accessibilityLabel("Push back")
+            .help("Copy to the end of the queue")
+            .accessibilityLabel("Copy to the end of the queue")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
@@ -523,73 +702,204 @@ private struct DoneLine: View {
 }
 
 private enum WindowMetrics {
-    static let defaultSize = NSSize(width: 700, height: 650)
-    static let minSize = NSSize(width: 640, height: 420)
-    static let autosaveName = "SlimPomoMainWindow"
+    static let defaultSize = NSSize(width: 550, height: 600)
+    static let minSize = NSSize(width: 400, height: 450)
+    static let sizeKey = "SlimPomo.windowSize"
+    static let minConstraintID = "SlimPomo.minSize"
 }
 
 private enum Metrics {
     /// Wide enough for RESUME and FINISH at the card button's tracking.
     static let actionWidth: CGFloat = 132
     static let actionHeight: CGFloat = 34
-    /// Wide enough for "regular" and "intense" without the control resizing.
-    static let intensityWidth: CGFloat = 84
-    static let intensityHeight: CGFloat = 26
+    /// Fixed so 25′, 50′, and 75′ occupy the same chip, including the ratio bar.
+    static let intensityWidth: CGFloat = 64
+    static let intensityHeight: CGFloat = 34
     static let corner: CGFloat = 4
 }
 
 private struct IntensityMark: View {
     var intensity: Intensity
+    var helpText: String?
 
-    var body: some View {
-        Text(intensity.label.lowercased())
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Color(red: 0.16, green: 0.13, blue: 0.12))
-            .frame(width: Metrics.intensityWidth, height: Metrics.intensityHeight)
-            .background(
-                RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
-                    .fill(fill)
-            )
-            .help(intensity.ratioTooltip)
+    init(intensity: Intensity, helpText: String? = nil) {
+        self.intensity = intensity
+        self.helpText = helpText
     }
 
-    private var fill: Color {
-        switch intensity {
-        case .regular:
-            Color(red: 0.78, green: 0.84, blue: 0.80)
-        case .focus:
-            Color(red: 0.93, green: 0.80, blue: 0.58)
-        case .intense:
-            Color(red: 0.95, green: 0.64, blue: 0.60)
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(intensity.workMark)
+                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+            SessionRatioBar(intensity: intensity)
         }
+        .foregroundStyle(Color(red: 0.16, green: 0.13, blue: 0.12))
+        .frame(width: Metrics.intensityWidth, height: Metrics.intensityHeight)
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
+                .fill(intensity.chipColor)
+        )
+        .help(helpText ?? intensity.summary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(helpText ?? intensity.summary)
+    }
+}
+
+private struct SessionRatioBar: View {
+    var intensity: Intensity
+
+    var body: some View {
+        GeometryReader { geo in
+            let full = max(0, geo.size.width - 8)
+            let length = full * intensity.sessionScale / Intensity.intense.sessionScale
+            let work = length * intensity.workShare
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.black.opacity(0.38))
+                    .frame(width: work)
+                Rectangle()
+                    .fill(Color.black.opacity(0.16))
+                    .frame(width: max(0, length - work))
+            }
+            .frame(width: full, height: 3, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+        .frame(height: 3)
+        .accessibilityHidden(true)
     }
 }
 
 private struct IntensitySwitch: View {
     var intensity: Intensity
+    var locked: Bool = false
     var action: () -> Void
+
+    private static let lockedHelp = "Intensity can't be changed while the timer is running"
 
     var body: some View {
         Button(action: action) {
-            IntensityMark(intensity: intensity)
+            IntensityMark(intensity: intensity, helpText: locked ? Self.lockedHelp : nil)
+                .opacity(locked ? 0.45 : 1)
+                .contentShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
+                .overlay {
+                    if locked {
+                        DeniedCursor()
+                    } else {
+                        HoverPlate(cornerRadius: Metrics.corner, color: NSColor(white: 0, alpha: 0.1))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .disabled(locked)
+        .accessibilityLabel(locked ? Self.lockedHelp : intensity.summary)
+        .accessibilityHint(locked ? "" : "Cycles to \(intensity.next.workMark)")
+    }
+}
+
+private struct ModeMenu: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        Button {
+            model.modeHighlight = model.draftIntensity
+            model.modePickerOpen = true
+        } label: {
+            IntensityMark(intensity: model.draftIntensity)
                 .contentShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
                 .overlay {
                     HoverPlate(cornerRadius: Metrics.corner, color: NSColor(white: 0, alpha: 0.1))
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(intensity.label), \(intensity.ratioTooltip)")
-        .accessibilityHint("Cycles to \(intensity.next.label)")
+        .accessibilityLabel(model.draftIntensity.summary)
+        .accessibilityHint("Shows every mode")
+        .popover(isPresented: $model.modePickerOpen, arrowEdge: .bottom) {
+            ModeChoices(model: model)
+        }
+    }
+}
+
+private struct ModeChoices: View {
+    @Bindable var model: AppModel
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Intensity.allCases, id: \.self) { mode in
+                Button {
+                    choose(mode)
+                } label: {
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(mode.chipColor)
+                            .frame(width: 8, height: 16)
+                        Text(mode.label.lowercased())
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 64, alignment: .leading)
+                        Text("\(mode.mode.workMinutes) min + \(mode.mode.breakMinutes) break")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(model.modeHighlight == mode ? Color.white.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .accessibilityLabel(mode.summary)
+            }
+        }
+        .padding(6)
+        .frame(width: 268)
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onAppear { focused = true }
+        .onMoveCommand { direction in
+            switch direction {
+            case .down, .right:
+                move(1)
+            case .up, .left:
+                move(-1)
+            default:
+                break
+            }
+        }
+        .onKeyPress(.return) {
+            choose(model.modeHighlight)
+            return .handled
+        }
+        .onExitCommand {
+            model.modePickerOpen = false
+        }
+    }
+
+    private func move(_ delta: Int) {
+        let modes = Intensity.allCases
+        guard let index = modes.firstIndex(of: model.modeHighlight) else { return }
+        let next = min(max(0, index + delta), modes.count - 1)
+        model.modeHighlight = modes[next]
+    }
+
+    private func choose(_ mode: Intensity) {
+        model.setDraftIntensity(mode)
+        model.modePickerOpen = false
     }
 }
 
 private struct CountBadge: View {
     var count: Int
+    var detail: String
     var onIncrement: (() -> Void)?
     var onDecrement: (() -> Void)?
 
-    init(count: Int, onIncrement: (() -> Void)? = nil, onDecrement: (() -> Void)? = nil) {
+    init(count: Int, detail: String, onIncrement: (() -> Void)? = nil, onDecrement: (() -> Void)? = nil) {
         self.count = count
+        self.detail = detail
         self.onIncrement = onIncrement
         self.onDecrement = onDecrement
     }
@@ -615,7 +925,7 @@ private struct CountBadge: View {
             .accessibilityAddTraits(onIncrement == nil ? [] : .isButton)
             .accessibilityAction(named: "Add pomodoro") { onIncrement?() }
             .accessibilityAction(named: "Remove pomodoro") { onDecrement?() }
-            .help(onIncrement == nil ? "\(count) pomodoros" : "Click to add a pomodoro. Right-click to remove one.")
+            .help(onIncrement == nil ? detail : "\(detail). Click to add a pomodoro, right-click to remove one.")
     }
 }
 
@@ -726,6 +1036,29 @@ private struct FullHit: ViewModifier {
     }
 }
 
+private struct DeniedCursor: NSViewRepresentable {
+    func makeNSView(context: Context) -> DeniedCursorView {
+        DeniedCursorView()
+    }
+
+    func updateNSView(_ nsView: DeniedCursorView, context: Context) {}
+
+    final class DeniedCursorView: NSView {
+        override var isOpaque: Bool { false }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .operationNotAllowed)
+        }
+
+        override func layout() {
+            super.layout()
+            window?.invalidateCursorRects(for: self)
+        }
+
+        override func mouseDown(with event: NSEvent) {}
+    }
+}
+
 private struct HoverPlate: NSViewRepresentable {
     var cornerRadius: CGFloat
     var color: NSColor
@@ -809,5 +1142,9 @@ private extension Intensity {
         case .focus: .intense
         case .intense: .regular
         }
+    }
+
+    var chipColor: Color {
+        Color(red: mode.red, green: mode.green, blue: mode.blue)
     }
 }
