@@ -1,15 +1,36 @@
+import AppKit
 import SwiftUI
+
+@MainActor
+enum AppRuntime {
+    static let model = AppModel()
+}
 
 @main
 struct SlimPomoApp: App {
-    @State private var model = AppModel()
+    @NSApplicationDelegateAdaptor(SlimPomoDelegate.self) var delegate
 
     var body: some Scene {
-        MenuBarExtra {
-            PopoverView(model: model)
+        // SwiftUI requires a scene. This one stays out of the menu bar;
+        // the status item and the main window are AppKit.
+        MenuBarExtra(isInserted: .constant(false)) {
+            EmptyView()
         } label: {
-            MenuBarLabel(model: model)
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
+    }
+}
+
+final class SlimPomoDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            StatusItemController.shared.start()
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            AppRuntime.model.showWindow()
+        }
     }
 }
