@@ -1,4 +1,5 @@
 .build/
 .swiftpm/
 *.app
+SlimPomo Dev.app
 .DS_Store

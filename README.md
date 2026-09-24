@@ -1,0 +1,18 @@
+# SlimPomo
+
+A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay on this machine. There is no account, sync, or settings window.
+
+Done is today's finished work. Past days live in History (read-only, local, kept indefinitely).
+
+## Dev build
+
+`scripts/dev.sh` builds and launches SlimPomo Dev.app. It keeps its own queue, Done list, and history, and it never reads or writes the release app's data.
+
+```
+scripts/dev.sh                  build and launch
+scripts/dev.sh --seed           fill History with a fixed sample, and match today's Done
+scripts/dev.sh --seed-large     the same sample, plus about three years of history
+scripts/dev.sh --clear-history  empty history; leave the queue and Done
+scripts/dev.sh --stale-done     leave yesterday's Done list so launch clears it
+scripts/dev.sh --reset          wipe the dev store and its remembered settings
+```

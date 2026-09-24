@@ -14,37 +14,83 @@ final class AppModel {
     var hoveredQueueID: UUID?
     var modePickerOpen = false
     var modeHighlight = Intensity.regular
+    var depthHintDismissed = false
+    var depthChipHover = false
+    var depthHintHover = false
+    var depthChipFocused = false
+    var depthHintFocused = false
     var breakMessage: String?
+    /// Bumped when a click lands outside a text field, so open editors resign.
+    var textFocusNonce = 0
     @ObservationIgnored private var lastBreakMessage: String?
 
     @ObservationIgnored private let store: Store
     @ObservationIgnored private let bell: Bell
     @ObservationIgnored private let windows = MainWindowController()
+    @ObservationIgnored private let historyWindows = HistoryWindowController()
     @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private var midnightTask: Task<Void, Never>?
+    @ObservationIgnored private var dayObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var focusMonitor: Any?
+    @ObservationIgnored private var historyCache: [HistoryDay] = []
+    @ObservationIgnored private var historyCacheCount = -1
+    @ObservationIgnored private var historyCacheZone = ""
 
     init() {
         NSApplication.shared.setActivationPolicy(.accessory)
         let store = Store()
         self.store = store
         bell = Bell()
-        now = Date()
+        let moment = Date()
+        now = moment
         var loaded = store.load() ?? Session()
+        #if SLIMPOMO_DEV
+        DevLaunch.apply(to: &loaded, now: moment)
+        #endif
         loaded.normalize()
         loaded.restoreAsPaused()
+        loaded.migrateHistoryIfNeeded(now: moment)
+        loaded.refreshDoneDay(now: moment)
         session = loaded
         if let raw = UserDefaults.standard.string(forKey: Self.draftIntensityKey),
            let saved = Intensity(rawValue: raw) {
             draftIntensity = saved
         }
         modeHighlight = draftIntensity
+        depthHintDismissed = UserDefaults.standard.bool(forKey: Self.depthHintKey)
         syncBreakMessage()
         store.save(loaded)
+        observeDayChanges()
+        scheduleMidnight()
+        installKeyMonitor()
+        installFocusMonitor()
+    }
+
+    /// Ends editing when a click misses every text field. Buttons still receive the click.
+    func releaseTextFocus() {
+        textFocusNonce &+= 1
     }
 
     func setDraftIntensity(_ intensity: Intensity) {
         draftIntensity = intensity
         modeHighlight = intensity
         UserDefaults.standard.set(intensity.rawValue, forKey: Self.draftIntensityKey)
+    }
+
+    func showDepthPicker() {
+        modeHighlight = draftIntensity
+        modePickerOpen = true
+    }
+
+    func noteDepthChanged() {
+        guard !depthHintDismissed else { return }
+        depthHintDismissed = true
+        UserDefaults.standard.set(true, forKey: Self.depthHintKey)
+    }
+
+    var depthControlHot: Bool {
+        depthChipHover || depthHintHover || depthChipFocused || depthHintFocused
     }
 
     func refresh() {
@@ -171,6 +217,13 @@ final class AppModel {
         }
     }
 
+    func requeueHistory(queueItemId: UUID, day: Date) {
+        apply { session in
+            session.requeueHistory(queueItemId: queueItemId, day: day)
+            return .none
+        }
+    }
+
     func clearDone() {
         apply { session in
             session.clearDone()
@@ -194,6 +247,20 @@ final class AppModel {
         windows.show(model: self)
     }
 
+    func showHistory() {
+        historyWindows.show(model: self)
+    }
+
+    var historyDays: [HistoryDay] {
+        let zone = Calendar.current.timeZone.identifier
+        if historyCacheCount != session.history.count || historyCacheZone != zone {
+            historyCache = session.groupedHistory()
+            historyCacheCount = session.history.count
+            historyCacheZone = zone
+        }
+        return historyCache
+    }
+
     func quit() {
         tickTask?.cancel()
         tickTask = nil
@@ -207,6 +274,7 @@ final class AppModel {
 
     private func apply(_ change: (inout Session) -> SessionEffect) {
         now = Date()
+        session.refreshDoneDay(now: now)
         let effect = change(&session)
         bell.play(effect)
         syncBreakMessage()
@@ -216,10 +284,105 @@ final class AppModel {
 
     private func tick() {
         now = Date()
+        session.refreshDoneDay(now: now)
         let effect = session.reconcile(now: now)
         bell.play(effect)
         syncBreakMessage()
         store.save(session.snapshot(at: now))
+    }
+
+    private func refreshDoneDay() {
+        now = Date()
+        let previousDay = session.doneDay
+        let previousDone = session.done
+        session.refreshDoneDay(now: now)
+        guard session.doneDay != previousDay || session.done != previousDone else { return }
+        store.save(session.snapshot(at: now))
+    }
+
+    private func observeDayChanges() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            .NSCalendarDayChanged,
+            .NSSystemClockDidChange,
+            .NSSystemTimeZoneDidChange,
+        ]
+        for name in names {
+            dayObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.refreshDoneDay()
+                    self?.scheduleMidnight()
+                }
+            })
+        }
+        dayObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.refreshDoneDay()
+                    self?.scheduleMidnight()
+                }
+            }
+        )
+    }
+
+    private func scheduleMidnight() {
+        midnightTask?.cancel()
+        let calendar = Calendar.current
+        guard let next = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) else { return }
+        let delay = max(1, next.timeIntervalSinceNow)
+        midnightTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.refreshDoneDay()
+            self.scheduleMidnight()
+        }
+    }
+
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard flags == .command, let key = event.charactersIgnoringModifiers?.lowercased() else {
+                return event
+            }
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard NSApp.keyWindow != nil else { return false }
+                switch key {
+                case "y":
+                    AppRuntime.model.showHistory()
+                    return true
+                case "w":
+                    NSApp.keyWindow?.performClose(nil)
+                    return true
+                default:
+                    return false
+                }
+            }
+            return handled ? nil : event
+        }
+    }
+
+    private func installFocusMonitor() {
+        focusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            let point = event.locationInWindow
+            let windowNumber = event.windowNumber
+            let shouldRelease = MainActor.assumeIsolated { () -> Bool in
+                guard NSApp.windows.contains(where: { $0.firstResponder is NSTextView }) else { return false }
+                guard let window = NSApp.window(withWindowNumber: windowNumber) else { return false }
+                guard let hit = window.contentView?.hitTest(point) else { return true }
+                return !viewContainsTextInput(hit)
+            }
+            guard shouldRelease else { return event }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    AppRuntime.model.releaseTextFocus()
+                }
+            }
+            return event
+        }
     }
 
     private func syncBreakMessage() {
@@ -238,6 +401,7 @@ final class AppModel {
     }
 
     private static let draftIntensityKey = "SlimPomo.draftIntensity"
+    private static let depthHintKey = "SlimPomo.depthHintDismissed"
 
     private func ensureTicker() {
         guard tickTask == nil else { return }
@@ -261,4 +425,14 @@ final class AppModel {
             }
         }
     }
+}
+
+@MainActor
+private func viewContainsTextInput(_ view: NSView) -> Bool {
+    var current: NSView? = view
+    while let view = current {
+        if view is NSTextView || view is NSTextField { return true }
+        current = view.superview
+    }
+    return false
 }

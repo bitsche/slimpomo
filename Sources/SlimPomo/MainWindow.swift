@@ -125,7 +125,10 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated {
             self.sizeSaveTask?.cancel()
             self.saveWindowSize()
-            NSApp.setActivationPolicy(.accessory)
+            let another = NSApp.windows.contains { $0 !== self.window && $0.isVisible }
+            if !another {
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
     }
 
@@ -176,7 +179,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 }
 
-private enum Palette {
+enum Palette {
     static let canvas = Color(red: 0.145, green: 0.145, blue: 0.145)
     static let canvasNS = NSColor(srgbRed: 0.145, green: 0.145, blue: 0.145, alpha: 1)
     static let card = Color(red: 0.73, green: 0.32, blue: 0.30)
@@ -190,6 +193,7 @@ private enum Palette {
 
 struct MainWindow: View {
     @Bindable var model: AppModel
+    @FocusState private var draftFocused: Bool
 
     var body: some View {
         VStack(spacing: 14) {
@@ -217,6 +221,10 @@ struct MainWindow: View {
         .preferredColorScheme(.dark)
         .onAppear {
             model.refresh()
+        }
+        .onChange(of: model.textFocusNonce) { _, _ in
+            draftFocused = false
+            NSApp.keyWindow?.makeFirstResponder(nil)
         }
     }
 
@@ -266,6 +274,13 @@ struct MainWindow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(onBreak ? Palette.cardBreak : Palette.card)
         )
+        #if SLIMPOMO_DEV
+        .overlay(alignment: .topTrailing) {
+            DevBadge(color: cardInk.opacity(0.5))
+                .padding(.top, 8)
+                .padding(.trailing, 10)
+        }
+        #endif
     }
 
     private var todoHeader: some View {
@@ -277,6 +292,19 @@ struct MainWindow: View {
                 .fixedSize()
                 .help("Pomodoros still in the queue, and the work time they add up to")
             hairline
+            Button {
+                model.showHistory()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.75))
+                    .frame(width: 22, height: 18)
+                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("History")
+            .accessibilityLabel("History")
         }
     }
 
@@ -289,16 +317,12 @@ struct MainWindow: View {
     private var queueBlock: some View {
         VStack(spacing: 0) {
             addRow
-                .padding(.bottom, 14)
+                .padding(.bottom, showsDepthHint ? 7 : 14)
 
-            if model.session.queue.isEmpty {
-                Text("Pick how deep you want to go — longer sessions get longer breaks.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Palette.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
-            } else {
+            if showsDepthHint {
+                DepthHint(model: model)
+            }
+            if !model.session.queue.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(Array(model.session.queue.enumerated()), id: \.element.id) { index, item in
                         QueueLine(
@@ -317,11 +341,12 @@ struct MainWindow: View {
 
     private var addRow: some View {
         HStack(spacing: 10) {
-            ModeMenu(model: model)
-            TextField("Press Return to add a task", text: $model.draftDescription)
+            ModeMenu(model: model, describesHint: showsDepthHint)
+            TextField("Describe the task, press Return to add", text: $model.draftDescription)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
+                .focused($draftFocused)
                 .padding(.horizontal, 8)
                 .frame(height: 28)
                 .overlay(
@@ -402,6 +427,10 @@ struct MainWindow: View {
 
     private var onBreak: Bool {
         model.session.phase == .breakTime
+    }
+
+    private var showsDepthHint: Bool {
+        model.session.queue.isEmpty && !model.depthHintDismissed
     }
 
     private var cardInk: Color {
@@ -584,6 +613,10 @@ private struct QueueLine: View {
                 .onChange(of: descriptionFocused) { _, focused in
                     if !focused { model.commitDescriptionDraft(id: item.id) }
                 }
+                .onChange(of: model.textFocusNonce) { _, _ in
+                    descriptionFocused = false
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                }
 
             Text(finishText)
                 .font(.system(size: 13, design: .monospaced).monospacedDigit())
@@ -708,7 +741,7 @@ private enum WindowMetrics {
     static let minConstraintID = "SlimPomo.minSize"
 }
 
-private enum Metrics {
+enum Metrics {
     /// Wide enough for RESUME and FINISH at the card button's tracking.
     static let actionWidth: CGFloat = 132
     static let actionHeight: CGFloat = 34
@@ -718,23 +751,36 @@ private enum Metrics {
     static let corner: CGFloat = 4
 }
 
-private struct IntensityMark: View {
+struct IntensityMark: View {
     var intensity: Intensity
     var helpText: String?
+    var showsMenuChevron = false
 
-    init(intensity: Intensity, helpText: String? = nil) {
+    init(intensity: Intensity, helpText: String? = nil, showsMenuChevron: Bool = false) {
         self.intensity = intensity
         self.helpText = helpText
+        self.showsMenuChevron = showsMenuChevron
     }
+
+    private static let ink = Color(red: 0.16, green: 0.13, blue: 0.12)
 
     var body: some View {
         VStack(spacing: 3) {
-            Text(intensity.workMark)
-                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+            HStack(spacing: 4) {
+                Text(intensity.workMark)
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                if showsMenuChevron {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Self.ink.opacity(0.7))
+                        .accessibilityHidden(true)
+                }
+            }
             SessionRatioBar(intensity: intensity)
         }
-        .foregroundStyle(Color(red: 0.16, green: 0.13, blue: 0.12))
-        .frame(width: Metrics.intensityWidth, height: Metrics.intensityHeight)
+        .foregroundStyle(Self.ink)
+        .frame(minWidth: Metrics.intensityWidth, maxWidth: Metrics.intensityWidth)
+        .frame(height: Metrics.intensityHeight)
         .background(
             RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
                 .fill(intensity.chipColor)
@@ -798,24 +844,90 @@ private struct IntensitySwitch: View {
 
 private struct ModeMenu: View {
     @Bindable var model: AppModel
+    var describesHint: Bool
+    @FocusState private var focused: Bool
+
+    private var hot: Bool { model.depthControlHot }
+    private static let ink = Color(red: 0.16, green: 0.13, blue: 0.12)
 
     var body: some View {
         Button {
-            model.modeHighlight = model.draftIntensity
-            model.modePickerOpen = true
+            model.showDepthPicker()
         } label: {
-            IntensityMark(intensity: model.draftIntensity)
-                .contentShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
+            IntensityMark(intensity: model.draftIntensity, showsMenuChevron: true)
+                .accessibilityHidden(true)
                 .overlay {
-                    HoverPlate(cornerRadius: Metrics.corner, color: NSColor(white: 0, alpha: 0.1))
+                    RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
+                        .fill(Color.white.opacity(hot ? 0.2 : 0))
+                    RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
+                        .strokeBorder(Self.ink.opacity(hot ? 0.4 : 0), lineWidth: 1)
                 }
+                .overlay {
+                    if focused {
+                        RoundedRectangle(cornerRadius: Metrics.corner + 1, style: .continuous)
+                            .strokeBorder(Color.white, lineWidth: 2)
+                            .padding(-3)
+                    }
+                }
+                .overlay { PointingCursor() }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(model.draftIntensity.summary)
-        .accessibilityHint("Shows every mode")
+        .focused($focused)
+        .focusEffectDisabled()
+        .onChange(of: focused) { _, value in
+            model.depthChipFocused = value
+        }
+        .onHover { model.depthChipHover = $0 }
+        .animation(.easeOut(duration: 0.12), value: hot)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Session length: \(model.draftIntensity.mode.workMinutes) minutes")
+        .accessibilityHint(describesHint ? DepthHint.sentence : "Shows every mode")
+        .accessibilityIdentifier("depth-picker")
+        .accessibilityAddTraits(.isButton)
         .popover(isPresented: $model.modePickerOpen, arrowEdge: .bottom) {
             ModeChoices(model: model)
         }
+    }
+}
+
+private struct DepthHint: View {
+    @Bindable var model: AppModel
+    @FocusState private var focused: Bool
+
+    static let sentence = "Pick how deep you want to go — longer sessions get longer breaks."
+    private static let arrowWidth: CGFloat = 12
+
+    private var hot: Bool { model.depthControlHot }
+
+    var body: some View {
+        Button {
+            model.showDepthPicker()
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("↑")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: Self.arrowWidth)
+                Text(Self.sentence)
+                    .font(.system(size: 13))
+                    .multilineTextAlignment(.leading)
+            }
+            .foregroundStyle(hot ? Color.white.opacity(0.92) : Palette.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 8 + Metrics.intensityWidth / 2 - Self.arrowWidth / 2)
+        .padding(.trailing, 8)
+        .focused($focused)
+        .focusEffectDisabled()
+        .onChange(of: focused) { _, value in
+            model.depthHintFocused = value
+        }
+        .onHover { model.depthHintHover = $0 }
+        .overlay { PointingCursor() }
+        .animation(.easeOut(duration: 0.12), value: hot)
+        .accessibilityIdentifier("depth-hint")
+        .accessibilityLabel(Self.sentence)
     }
 }
 
@@ -824,7 +936,7 @@ private struct ModeChoices: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Intensity.allCases, id: \.self) { mode in
                 Button {
                     choose(mode)
@@ -833,9 +945,10 @@ private struct ModeChoices: View {
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
                             .fill(mode.chipColor)
                             .frame(width: 8, height: 16)
-                        Text(mode.label.lowercased())
+                        Text(mode.label)
                             .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 64, alignment: .leading)
+                            .lineLimit(1)
+                            .frame(width: 72, alignment: .leading)
                         Text("\(mode.mode.workMinutes) min + \(mode.mode.breakMinutes) break")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
@@ -845,10 +958,12 @@ private struct ModeChoices: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(model.modeHighlight == mode ? Color.white.opacity(0.12) : Color.clear)
+                            .fill(model.modeHighlight == mode ? Color.white.opacity(0.12) : Color.white.opacity(0.001))
                     )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .contentShape(Rectangle())
                 .focusEffectDisabled()
                 .accessibilityLabel(mode.summary)
             }
@@ -886,12 +1001,14 @@ private struct ModeChoices: View {
     }
 
     private func choose(_ mode: Intensity) {
+        let changed = mode != model.draftIntensity
         model.setDraftIntensity(mode)
+        if changed { model.noteDepthChanged() }
         model.modePickerOpen = false
     }
 }
 
-private struct CountBadge: View {
+struct CountBadge: View {
     var count: Int
     var detail: String
     var onIncrement: (() -> Void)?
@@ -1017,7 +1134,7 @@ private struct MouseClick: NSViewRepresentable {
     }
 }
 
-private struct FullHit: ViewModifier {
+struct FullHit: ViewModifier {
     var cornerRadius: CGFloat
     var hover: NSColor?
 
@@ -1033,6 +1150,29 @@ private struct FullHit: ViewModifier {
                     HoverPlate(cornerRadius: cornerRadius, color: hover)
                 }
             }
+    }
+}
+
+private struct PointingCursor: NSViewRepresentable {
+    func makeNSView(context: Context) -> PointingCursorView {
+        PointingCursorView()
+    }
+
+    func updateNSView(_ nsView: PointingCursorView, context: Context) {}
+
+    final class PointingCursorView: NSView {
+        override var isOpaque: Bool { false }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+
+        override func layout() {
+            super.layout()
+            window?.invalidateCursorRects(for: self)
+        }
     }
 }
 
