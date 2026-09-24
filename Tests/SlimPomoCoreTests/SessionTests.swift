@@ -422,5 +422,229 @@ struct SessionTests {
         #expect(session.queue[0].completed == 0)
         #expect(session.done.isEmpty)
         #expect(session.phase == .idle)
+        #expect(session.history.isEmpty)
+        #expect(session.didMigrateHistory == false)
+    }
+
+    @Test func finishingRecordsOneHistoryEvent() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .focus, count: 1)
+        let beginning = HistoryClock.date(2026, 9, 24, 10, 0)
+        _ = session.start(now: beginning, calendar: calendar)
+        _ = session.stop(now: beginning, calendar: calendar)
+        #expect(session.history.isEmpty)
+
+        _ = session.start(now: beginning, calendar: calendar)
+        let finished = beginning.addingTimeInterval(50 * 60)
+        #expect(session.markDone(now: finished, calendar: calendar) == .workDone)
+        #expect(session.history.count == 1)
+        #expect(session.history[0].taskName == "Write")
+        #expect(session.history[0].mode == .focus)
+        #expect(session.history[0].workMinutes == 50)
+        #expect(session.history[0].queueItemId == session.done[0].sourceID)
+        #expect(session.history[0].timestamp == finished)
+
+        let skipped = finished.addingTimeInterval(60)
+        let before = session.history.count
+        #expect(session.skipBreak(now: skipped, calendar: calendar) == .breakOver)
+        #expect(session.history.count == before)
+    }
+
+    @Test func idleMidnightClearsDoneAndKeepsHistory() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let evening = HistoryClock.date(2026, 9, 24, 23, 0)
+        _ = session.start(now: evening, calendar: calendar)
+        let doneAt = evening.addingTimeInterval(25 * 60)
+        _ = session.reconcile(now: doneAt, calendar: calendar)
+        _ = session.reconcile(now: doneAt.addingTimeInterval(5 * 60), calendar: calendar)
+        #expect(session.phase == .idle)
+        #expect(session.done.count == 1)
+        #expect(session.history.count == 1)
+
+        let nextMorning = HistoryClock.date(2026, 9, 25, 0, 5)
+        session.refreshDoneDay(now: nextMorning, calendar: calendar)
+        #expect(session.done.isEmpty)
+        #expect(session.history.count == 1)
+        #expect(session.groupedHistory(calendar: calendar).map(\.pomodoros) == [1])
+        let yesterday = calendar.startOfDay(for: doneAt)
+        #expect(session.groupedHistory(calendar: calendar)[0].day == yesterday)
+    }
+
+    @Test func workAcrossMidnightClearsDoneThenRecordsToday() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let late = HistoryClock.date(2026, 9, 24, 23, 40)
+        _ = session.start(now: late, calendar: calendar)
+        let justAfterMidnight = HistoryClock.date(2026, 9, 25, 0, 1)
+        session.refreshDoneDay(now: justAfterMidnight, calendar: calendar)
+        #expect(session.phase == .work)
+        #expect(session.done.isEmpty)
+
+        let finished = late.addingTimeInterval(25 * 60)
+        _ = session.reconcile(now: finished, calendar: calendar)
+        #expect(session.done.count == 1)
+        #expect(session.done[0].count == 1)
+        #expect(session.history.count == 1)
+        let today = calendar.startOfDay(for: finished)
+        #expect(session.groupedHistory(calendar: calendar)[0].day == today)
+        #expect(session.groupedHistory(calendar: calendar)[0].workMinutes == 25)
+    }
+
+    @Test func breakAcrossMidnightClearsDoneWhenTheBreakEnds() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let startWork = HistoryClock.date(2026, 9, 24, 23, 33)
+        _ = session.start(now: startWork, calendar: calendar)
+        let breakStart = startWork.addingTimeInterval(25 * 60)
+        _ = session.reconcile(now: breakStart, calendar: calendar)
+        #expect(session.phase == .breakTime)
+        #expect(session.done.count == 1)
+
+        let afterMidnight = HistoryClock.date(2026, 9, 25, 0, 1)
+        session.refreshDoneDay(now: afterMidnight, calendar: calendar)
+        #expect(session.done.count == 1)
+        #expect(session.history.count == 1)
+
+        _ = session.skipBreak(now: afterMidnight, calendar: calendar)
+        #expect(session.done.isEmpty)
+        #expect(session.history.count == 1)
+        #expect(calendar.isDate(session.history[0].timestamp, inSameDayAs: breakStart))
+    }
+
+    @Test func pausedRelaunchWaitsUntilIdleOrCompletion() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        let evening = HistoryClock.date(2026, 9, 24, 18, 0)
+        _ = session.start(now: evening, calendar: calendar)
+        _ = session.markDone(now: evening.addingTimeInterval(60), calendar: calendar)
+        _ = session.skipBreak(now: evening.addingTimeInterval(120), calendar: calendar)
+        _ = session.pause(now: evening.addingTimeInterval(180))
+        #expect(session.phase == .work)
+        #expect(session.done.count == 1)
+
+        let saved = try! JSONEncoder().encode(session.snapshot(at: evening.addingTimeInterval(180)))
+        var restored = try! JSONDecoder().decode(Session.self, from: saved)
+        restored.restoreAsPaused()
+        let morning = HistoryClock.date(2026, 9, 25, 9, 0)
+        restored.refreshDoneDay(now: morning, calendar: calendar)
+        #expect(restored.done.count == 1)
+        #expect(restored.history.count == 1)
+
+        _ = restored.markDone(now: morning, calendar: calendar)
+        #expect(restored.done.count == 1)
+        #expect(restored.done[0].description == "Write")
+        #expect(restored.history.count == 2)
+        #expect(restored.groupedHistory(calendar: calendar).map(\.day) == [
+            calendar.startOfDay(for: morning),
+            calendar.startOfDay(for: evening),
+        ])
+    }
+
+    @Test func timeZoneChangeClearsIdleDone() {
+        var origin = HistoryClock.calendar
+        origin.timeZone = TimeZone(secondsFromGMT: 0)!
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let afternoon = HistoryClock.date(2026, 9, 24, 12, 0, calendar: origin)
+        _ = session.start(now: afternoon, calendar: origin)
+        _ = session.markDone(now: afternoon, calendar: origin)
+        _ = session.skipBreak(now: afternoon.addingTimeInterval(60), calendar: origin)
+        #expect(session.phase == .idle)
+        #expect(session.done.count == 1)
+
+        var ahead = origin
+        ahead.timeZone = TimeZone(secondsFromGMT: 14 * 3600)!
+        let stillThatInstant = HistoryClock.date(2026, 9, 24, 20, 0, calendar: origin)
+        session.refreshDoneDay(now: stillThatInstant, calendar: ahead)
+        #expect(session.done.isEmpty)
+        #expect(session.history.count == 1)
+    }
+
+    @Test func clearDoneAndDeletingTheQueueLeaveHistory() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .intense, count: 1)
+        let beginning = HistoryClock.date(2026, 9, 24, 9, 0)
+        _ = session.start(now: beginning, calendar: calendar)
+        let id = session.queue[0].id
+        _ = session.markDone(now: beginning, calendar: calendar)
+        session.clearDone()
+        #expect(session.done.isEmpty)
+        #expect(session.history.count == 1)
+        _ = session.skipBreak(now: beginning.addingTimeInterval(30), calendar: calendar)
+        session.addItem(description: "Other", intensity: .regular, count: 1)
+        _ = session.remove(id: id, now: beginning.addingTimeInterval(40), calendar: calendar)
+        #expect(session.history.count == 1)
+        #expect(session.history[0].queueItemId == id)
+    }
+
+    @Test func historyGroupsLikeDoneAndPushBackCopiesTheRow() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        let beginning = HistoryClock.date(2026, 9, 24, 9, 0)
+        _ = session.start(now: beginning, calendar: calendar)
+        _ = session.markDone(now: beginning, calendar: calendar)
+        session.updateDescription(id: session.queue[0].id, description: "Write more")
+        _ = session.skipBreak(now: beginning.addingTimeInterval(10), calendar: calendar)
+        _ = session.markDone(now: beginning.addingTimeInterval(20), calendar: calendar)
+        _ = session.skipBreak(now: beginning.addingTimeInterval(30), calendar: calendar)
+        _ = session.markDone(now: beginning.addingTimeInterval(40), calendar: calendar)
+
+        let day = session.groupedHistory(calendar: calendar)[0]
+        #expect(day.pomodoros == 3)
+        #expect(day.workMinutes == 25 + 25 + 50)
+        #expect(day.rows.map(\.taskName) == ["Write more", "Review"])
+        #expect(day.rows.map(\.count) == [2, 1])
+        #expect(day.rows.map(\.mode) == [.regular, .focus])
+
+        let writeID = day.rows[0].queueItemId
+        session.requeueHistory(queueItemId: writeID, day: day.day, calendar: calendar)
+        #expect(session.queue.map(\.description) == ["Write more"])
+        #expect(session.queue[0].count == 2)
+        #expect(session.queue[0].intensity == .regular)
+        #expect(session.queue[0].id != writeID)
+        #expect(session.history.count == 3)
+    }
+
+    @Test func existingDoneMigratesOnce() throws {
+        let calendar = HistoryClock.calendar
+        let source = UUID()
+        let row = UUID()
+        let json = """
+        {"isRunning":false,"phase":"idle","phaseDuration":0,"queue":[],"remaining":0,"done":[{"id":"\(row.uuidString)","intensity":"focus","description":"Write","count":2,"sourceID":"\(source.uuidString)"}]}
+        """
+        var session = try JSONDecoder().decode(Session.self, from: Data(json.utf8))
+        let launched = HistoryClock.date(2026, 9, 24, 8, 0)
+        session.migrateHistoryIfNeeded(now: launched, calendar: calendar)
+        #expect(session.didMigrateHistory)
+        #expect(session.doneDay == calendar.startOfDay(for: launched))
+        #expect(session.done.count == 1)
+        #expect(session.history.count == 2)
+        #expect(session.history.allSatisfy {
+            $0.queueItemId == source && $0.taskName == "Write" && $0.mode == .focus && $0.workMinutes == 50 && $0.timestamp == launched
+        })
+        session.migrateHistoryIfNeeded(now: launched.addingTimeInterval(3600), calendar: calendar)
+        #expect(session.history.count == 2)
+    }
+}
+
+private enum HistoryClock {
+    static var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.locale = Locale(identifier: "en_GB")
+        return calendar
+    }
+
+    static func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int, calendar: Calendar = calendar) -> Date {
+        calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: year, month: month, day: day, hour: hour, minute: minute))!
     }
 }

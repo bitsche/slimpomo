@@ -10,7 +10,7 @@ public struct IntensityMode: Equatable, Sendable {
     public var blue: Double
 }
 
-public enum Intensity: String, Codable, CaseIterable, Equatable {
+public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
     case regular
     case focus
     case intense
@@ -111,6 +111,43 @@ public enum SessionEffect: Equatable {
     case breakOver
 }
 
+/// One finished pomodoro. Kept permanently; the Done list is only today.
+public struct HistoryEvent: Identifiable, Equatable, Codable, Sendable {
+    public var id: UUID
+    public var timestamp: Date
+    public var queueItemId: UUID
+    public var taskName: String
+    public var mode: Intensity
+    public var workMinutes: Int
+
+    public init(id: UUID, timestamp: Date, queueItemId: UUID, taskName: String, mode: Intensity, workMinutes: Int) {
+        self.id = id
+        self.timestamp = timestamp
+        self.queueItemId = queueItemId
+        self.taskName = taskName
+        self.mode = mode
+        self.workMinutes = workMinutes
+    }
+}
+
+public struct HistoryRow: Identifiable, Equatable, Sendable {
+    public var queueItemId: UUID
+    public var taskName: String
+    public var mode: Intensity
+    public var count: Int
+
+    public var id: UUID { queueItemId }
+}
+
+public struct HistoryDay: Identifiable, Equatable, Sendable {
+    public var day: Date
+    public var pomodoros: Int
+    public var workMinutes: Int
+    public var rows: [HistoryRow]
+
+    public var id: Date { day }
+}
+
 public struct SessionMenuAction: Equatable, Sendable {
     public var title: String
     public var isEnabled: Bool
@@ -129,6 +166,11 @@ public struct Session: Equatable, Codable {
     public private(set) var activeDescription: String
     public private(set) var endsAt: Date?
     public private(set) var lockedBreakDuration: TimeInterval?
+    public private(set) var history: [HistoryEvent]
+    /// Start of the local day the Done list belongs to.
+    public private(set) var doneDay: Date?
+    /// Existing Done rows are copied into history once.
+    public private(set) var didMigrateHistory: Bool
 
     public init() {
         queue = []
@@ -141,10 +183,14 @@ public struct Session: Equatable, Codable {
         activeDescription = ""
         endsAt = nil
         lockedBreakDuration = nil
+        history = []
+        doneDay = nil
+        didMigrateHistory = false
     }
 
     private enum CodingKeys: String, CodingKey {
         case queue, done, phase, isRunning, remaining, phaseDuration, activeItemID, activeDescription, endsAt, lockedBreakDuration
+        case history, doneDay, didMigrateHistory
     }
 
     public init(from decoder: Decoder) throws {
@@ -159,6 +205,9 @@ public struct Session: Equatable, Codable {
         activeDescription = try container.decodeIfPresent(String.self, forKey: .activeDescription) ?? ""
         endsAt = try container.decodeIfPresent(Date.self, forKey: .endsAt)
         lockedBreakDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .lockedBreakDuration)
+        history = try container.decodeIfPresent([HistoryEvent].self, forKey: .history) ?? []
+        doneDay = try container.decodeIfPresent(Date.self, forKey: .doneDay)
+        didMigrateHistory = try container.decodeIfPresent(Bool.self, forKey: .didMigrateHistory) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -175,6 +224,9 @@ public struct Session: Equatable, Codable {
         }
         try container.encodeIfPresent(endsAt, forKey: .endsAt)
         try container.encodeIfPresent(lockedBreakDuration, forKey: .lockedBreakDuration)
+        try container.encode(history, forKey: .history)
+        try container.encodeIfPresent(doneDay, forKey: .doneDay)
+        try container.encode(didMigrateHistory, forKey: .didMigrateHistory)
     }
 
     public var activeItem: QueueItem? {
@@ -284,8 +336,9 @@ public struct Session: Equatable, Codable {
         }
     }
 
-    public mutating func start(now: Date) -> SessionEffect {
+    public mutating func start(now: Date, calendar: Calendar = .current) -> SessionEffect {
         guard phase == .idle, let next = queue.first(where: { $0.count > 0 }) else { return .none }
+        settleDoneDay(now: now, calendar: calendar, force: false)
         beginWork(on: next, now: now)
         return .none
     }
@@ -307,37 +360,104 @@ public struct Session: Equatable, Codable {
         return .none
     }
 
-    public mutating func markDone(now: Date) -> SessionEffect {
+    public mutating func markDone(now: Date, calendar: Calendar = .current) -> SessionEffect {
         guard phase == .work else { return .none }
-        completeWork(now: now)
+        completeWork(now: now, calendar: calendar)
         return .workDone
     }
 
     /// Drops the running pomodoro without finishing it and returns to the unstarted queue.
-    public mutating func stop() -> SessionEffect {
+    public mutating func stop(now: Date = Date(), calendar: Calendar = .current) -> SessionEffect {
         guard phase == .work, isRunning else { return .none }
         becomeIdle()
+        settleDoneDay(now: now, calendar: calendar, force: false)
         return .none
     }
 
-    public mutating func skipBreak(now: Date) -> SessionEffect {
+    public mutating func skipBreak(now: Date, calendar: Calendar = .current) -> SessionEffect {
         guard phase == .breakTime else { return .none }
-        finishBreak(now: now)
+        finishBreak(now: now, calendar: calendar)
         return .breakOver
     }
 
-    public mutating func reconcile(now: Date) -> SessionEffect {
+    public mutating func reconcile(now: Date, calendar: Calendar = .current) -> SessionEffect {
         guard isRunning, let endsAt, now >= endsAt else { return .none }
         switch phase {
         case .work:
-            completeWork(now: now)
+            completeWork(now: now, calendar: calendar)
             return .workDone
         case .breakTime:
-            finishBreak(now: now)
+            finishBreak(now: now, calendar: calendar)
             return .breakOver
         case .idle:
             return .none
         }
+    }
+
+    /// Clears Done when its day is no longer today. A running or paused phase waits.
+    public mutating func refreshDoneDay(now: Date, calendar: Calendar = .current) {
+        settleDoneDay(now: now, calendar: calendar, force: false)
+    }
+
+    /// Copies a pre-history Done list into events once. Later launches do nothing.
+    public mutating func migrateHistoryIfNeeded(now: Date, calendar: Calendar = .current) {
+        guard !didMigrateHistory else { return }
+        didMigrateHistory = true
+        for item in done {
+            let source = item.sourceID ?? item.id
+            let copies = max(1, item.count)
+            for _ in 0..<copies {
+                history.append(HistoryEvent(
+                    id: UUID(),
+                    timestamp: now,
+                    queueItemId: source,
+                    taskName: item.description,
+                    mode: item.intensity,
+                    workMinutes: item.intensity.mode.workMinutes
+                ))
+            }
+        }
+        doneDay = calendar.startOfDay(for: now)
+    }
+
+    /// Newest day first. Rows follow the order the task first finished that day.
+    public func groupedHistory(calendar: Calendar = .current) -> [HistoryDay] {
+        var dayOrder: [Date] = []
+        var eventsByDay: [Date: [HistoryEvent]] = [:]
+        for event in history {
+            let day = calendar.startOfDay(for: event.timestamp)
+            if eventsByDay[day] == nil {
+                dayOrder.append(day)
+                eventsByDay[day] = []
+            }
+            eventsByDay[day]?.append(event)
+        }
+        return dayOrder.map { day in
+            let events = eventsByDay[day] ?? []
+            var rowOrder: [UUID] = []
+            var rows: [UUID: HistoryRow] = [:]
+            for event in events {
+                if rows[event.queueItemId] == nil {
+                    rowOrder.append(event.queueItemId)
+                    rows[event.queueItemId] = HistoryRow(
+                        queueItemId: event.queueItemId,
+                        taskName: event.taskName,
+                        mode: event.mode,
+                        count: 0
+                    )
+                }
+                rows[event.queueItemId]?.taskName = event.taskName
+                rows[event.queueItemId]?.mode = event.mode
+                rows[event.queueItemId]?.count += 1
+            }
+            return HistoryDay(
+                day: day,
+                pomodoros: events.count,
+                workMinutes: events.reduce(0) { $0 + $1.workMinutes },
+                rows: rowOrder.compactMap { rows[$0] }
+            )
+        }
+        .sorted { $0.day > $1.day }
     }
 
     public mutating func addItem(description: String, intensity: Intensity, count: Int) {
@@ -369,7 +489,7 @@ public struct Session: Equatable, Codable {
         queue[index].count = min(max(0, count), Self.maxPomodoros)
     }
 
-    public mutating func remove(id: UUID, now: Date) -> SessionEffect {
+    public mutating func remove(id: UUID, now: Date, calendar: Calendar = .current) -> SessionEffect {
         let wasActive = id == activeItemID && phase != .idle
         queue.removeAll { $0.id == id }
         guard wasActive else { return .none }
@@ -377,8 +497,23 @@ public struct Session: Equatable, Codable {
             beginWork(on: next, now: now)
         } else {
             becomeIdle()
+            settleDoneDay(now: now, calendar: calendar, force: false)
         }
         return .none
+    }
+
+    /// Copies one day's history row onto the end of the queue. The history row stays.
+    public mutating func requeueHistory(queueItemId: UUID, day: Date, calendar: Calendar = .current) {
+        guard let row = groupedHistory(calendar: calendar)
+            .first(where: { calendar.isDate($0.day, inSameDayAs: day) })?
+            .rows.first(where: { $0.queueItemId == queueItemId }) else { return }
+        queue.append(QueueItem(
+            id: UUID(),
+            intensity: row.mode,
+            description: row.taskName,
+            count: min(Self.maxPomodoros, max(1, row.count)),
+            completed: 0
+        ))
     }
 
     /// Copies a finished line onto the end of the queue. The done entry stays.
@@ -439,16 +574,18 @@ public struct Session: Equatable, Codable {
         activeItemID = itemID
     }
 
-    private mutating func completeWork(now: Date) {
+    private mutating func completeWork(now: Date, calendar: Calendar) {
         guard phase == .work, let id = activeItemID, let index = queue.firstIndex(where: { $0.id == id }) else {
             becomeIdle()
+            settleDoneDay(now: now, calendar: calendar, force: false)
             return
         }
+        settleDoneDay(now: now, calendar: calendar, force: true)
         let finished = queue[index]
         activeDescription = finished.description
         queue[index].count = max(0, queue[index].count - 1)
         queue[index].completed += 1
-        recordFinishedPomodoro(from: finished)
+        recordFinishedPomodoro(from: finished, at: now)
         let breakDuration = lockedBreakDuration ?? finished.intensity.breakDuration
         if queue[index].count <= 0 {
             queue.remove(at: index)
@@ -456,7 +593,15 @@ public struct Session: Equatable, Codable {
         beginBreak(duration: breakDuration, itemID: id, now: now)
     }
 
-    private mutating func recordFinishedPomodoro(from item: QueueItem) {
+    private mutating func recordFinishedPomodoro(from item: QueueItem, at now: Date) {
+        history.append(HistoryEvent(
+            id: UUID(),
+            timestamp: now,
+            queueItemId: item.id,
+            taskName: item.description,
+            mode: item.intensity,
+            workMinutes: item.intensity.mode.workMinutes
+        ))
         if let index = done.lastIndex(where: { $0.sourceID == item.id }) {
             done[index].count += 1
             return
@@ -470,7 +615,8 @@ public struct Session: Equatable, Codable {
         ))
     }
 
-    private mutating func finishBreak(now: Date) {
+    private mutating func finishBreak(now: Date, calendar: Calendar) {
+        settleDoneDay(now: now, calendar: calendar, force: true)
         if let id = activeItemID {
             queue.removeAll { $0.id == id && $0.count <= 0 }
         }
@@ -479,6 +625,17 @@ public struct Session: Equatable, Codable {
         } else {
             becomeIdle()
         }
+    }
+
+    /// `force` clears even during work or a break. Used at completion and when a break ends.
+    private mutating func settleDoneDay(now: Date, calendar: Calendar, force: Bool) {
+        let today = calendar.startOfDay(for: now)
+        if let doneDay {
+            guard calendar.startOfDay(for: doneDay) != today else { return }
+            guard force || phase == .idle else { return }
+            done = []
+        }
+        self.doneDay = today
     }
 
     private mutating func becomeIdle() {

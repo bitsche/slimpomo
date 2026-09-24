@@ -125,7 +125,10 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated {
             self.sizeSaveTask?.cancel()
             self.saveWindowSize()
-            NSApp.setActivationPolicy(.accessory)
+            let another = NSApp.windows.contains { $0 !== self.window && $0.isVisible }
+            if !another {
+                NSApp.setActivationPolicy(.accessory)
+            }
         }
     }
 
@@ -176,7 +179,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 }
 
-private enum Palette {
+enum Palette {
     static let canvas = Color(red: 0.145, green: 0.145, blue: 0.145)
     static let canvasNS = NSColor(srgbRed: 0.145, green: 0.145, blue: 0.145, alpha: 1)
     static let card = Color(red: 0.73, green: 0.32, blue: 0.30)
@@ -277,6 +280,19 @@ struct MainWindow: View {
                 .fixedSize()
                 .help("Pomodoros still in the queue, and the work time they add up to")
             hairline
+            Button {
+                model.showHistory()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.75))
+                    .frame(width: 22, height: 18)
+                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("History")
+            .accessibilityLabel("History")
         }
     }
 
@@ -708,7 +724,7 @@ private enum WindowMetrics {
     static let minConstraintID = "SlimPomo.minSize"
 }
 
-private enum Metrics {
+enum Metrics {
     /// Wide enough for RESUME and FINISH at the card button's tracking.
     static let actionWidth: CGFloat = 132
     static let actionHeight: CGFloat = 34
@@ -718,7 +734,7 @@ private enum Metrics {
     static let corner: CGFloat = 4
 }
 
-private struct IntensityMark: View {
+struct IntensityMark: View {
     var intensity: Intensity
     var helpText: String?
 
@@ -891,7 +907,7 @@ private struct ModeChoices: View {
     }
 }
 
-private struct CountBadge: View {
+struct CountBadge: View {
     var count: Int
     var detail: String
     var onIncrement: (() -> Void)?
@@ -1017,7 +1033,7 @@ private struct MouseClick: NSViewRepresentable {
     }
 }
 
-private struct FullHit: ViewModifier {
+struct FullHit: ViewModifier {
     var cornerRadius: CGFloat
     var hover: NSColor?
 
