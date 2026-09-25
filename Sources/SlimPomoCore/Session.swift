@@ -201,9 +201,59 @@ public struct HistoryDay: Identifiable, Equatable, Sendable {
     public var id: Date { day }
 }
 
-public struct SessionMenuAction: Equatable, Sendable {
-    public var title: String
-    public var isEnabled: Bool
+/// The status-item menu's grey line and its Start, Pause, or Resume item.
+public struct StatusMenuContent: Equatable, Sendable {
+    public var statusPrefix: String
+    /// The only part of the status line that may be shortened.
+    public var taskName: String
+    public var statusSuffix: String
+    public var actionTitle: String
+    public var actionEnabled: Bool
+
+    public var statusLine: String { statusPrefix + taskName + statusSuffix }
+}
+
+public enum MenuClock {
+    /// Whole minutes, rounded up. Zero stays zero. Matches the menu-bar ring's number.
+    public static func minutes(_ seconds: TimeInterval) -> Int {
+        let remaining = max(0, seconds)
+        guard remaining > 0 else { return 0 }
+        return Int((remaining / 60).rounded(.up))
+    }
+}
+
+public enum MenuTitleFit {
+    public static let maxMenuWidth: CGFloat = 300
+
+    /// Shortens only `name`, with a trailing ellipsis, until `measure` of the whole line is within `maxWidth`.
+    public static func line(
+        prefix: String,
+        name: String,
+        suffix: String,
+        maxWidth: CGFloat,
+        measure: (String) -> CGFloat
+    ) -> String {
+        let full = prefix + name + suffix
+        if name.isEmpty || measure(full) <= maxWidth {
+            return full
+        }
+        let ellipsis = "…"
+        let characters = Array(name)
+        var best = prefix + ellipsis + suffix
+        var low = 0
+        var high = characters.count
+        while low <= high {
+            let mid = (low + high) / 2
+            let candidate = prefix + String(characters.prefix(mid)) + ellipsis + suffix
+            if measure(candidate) <= maxWidth {
+                best = candidate
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        return best
+    }
 }
 
 public struct Session: Equatable, Codable {
@@ -296,21 +346,68 @@ public struct Session: Equatable, Codable {
         queue.contains { $0.count > 0 }
     }
 
-    public var menuAction: SessionMenuAction {
+    public func statusMenu(at now: Date) -> StatusMenuContent {
+        let minutes = MenuClock.minutes(displayedRemaining(at: now))
+        let left = " · \(minutes) min left"
         switch phase {
         case .idle:
-            return SessionMenuAction(title: "Start next pomodoro", isEnabled: hasWorkQueued)
-        case .work:
-            if isRunning {
-                return SessionMenuAction(title: "Pomodoro running", isEnabled: false)
+            if let next = queue.first(where: { $0.count > 0 }) {
+                return StatusMenuContent(
+                    statusPrefix: "Idle · Next: ",
+                    taskName: Self.menuTaskName(next.description),
+                    statusSuffix: "",
+                    actionTitle: "Start",
+                    actionEnabled: true
+                )
             }
-            return SessionMenuAction(title: "Resume pomodoro", isEnabled: true)
+            return StatusMenuContent(
+                statusPrefix: "Idle · Nothing queued",
+                taskName: "",
+                statusSuffix: "",
+                actionTitle: "Start",
+                actionEnabled: false
+            )
+        case .work:
+            let name = Self.menuTaskName(activeItem?.description ?? activeDescription)
+            if isRunning {
+                return StatusMenuContent(
+                    statusPrefix: "",
+                    taskName: name,
+                    statusSuffix: left,
+                    actionTitle: "Pause",
+                    actionEnabled: true
+                )
+            }
+            return StatusMenuContent(
+                statusPrefix: "Paused · ",
+                taskName: name,
+                statusSuffix: left,
+                actionTitle: "Resume",
+                actionEnabled: true
+            )
         case .breakTime:
             if isRunning {
-                return SessionMenuAction(title: "Break running", isEnabled: false)
+                return StatusMenuContent(
+                    statusPrefix: "Break · \(minutes) min left",
+                    taskName: "",
+                    statusSuffix: "",
+                    actionTitle: "Pause",
+                    actionEnabled: true
+                )
             }
-            return SessionMenuAction(title: "Resume break", isEnabled: true)
+            return StatusMenuContent(
+                statusPrefix: "Paused · Break · \(minutes) min left",
+                taskName: "",
+                statusSuffix: "",
+                actionTitle: "Resume",
+                actionEnabled: true
+            )
         }
+    }
+
+    private static func menuTaskName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Untitled" : trimmed
     }
 
     public func displayedRemaining(at now: Date) -> TimeInterval {

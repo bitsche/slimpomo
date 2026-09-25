@@ -499,20 +499,74 @@ struct SessionTests {
         #expect(session.displayedRemaining(at: start.addingTimeInterval(10 * 60)) == 0)
     }
 
-    @Test func menuActionAdaptsToThePhase() {
+    @Test func statusMenuMatchesThePhase() {
         var session = Session()
-        #expect(session.menuAction == SessionMenuAction(title: "Start next pomodoro", isEnabled: false))
+        #expect(session.statusMenu(at: start) == StatusMenuContent(
+            statusPrefix: "Idle · Nothing queued",
+            taskName: "",
+            statusSuffix: "",
+            actionTitle: "Start",
+            actionEnabled: false
+        ))
         session.addItem(description: "Write", intensity: .regular, count: 1)
-        #expect(session.menuAction == SessionMenuAction(title: "Start next pomodoro", isEnabled: true))
+        #expect(session.statusMenu(at: start) == StatusMenuContent(
+            statusPrefix: "Idle · Next: ",
+            taskName: "Write",
+            statusSuffix: "",
+            actionTitle: "Start",
+            actionEnabled: true
+        ))
         _ = session.start(now: start)
-        #expect(session.menuAction == SessionMenuAction(title: "Pomodoro running", isEnabled: false))
-        _ = session.pause(now: start.addingTimeInterval(30))
-        #expect(session.menuAction == SessionMenuAction(title: "Resume pomodoro", isEnabled: true))
-        _ = session.resume(now: start.addingTimeInterval(30))
-        _ = session.markDone(now: start.addingTimeInterval(30))
-        #expect(session.menuAction == SessionMenuAction(title: "Break running", isEnabled: false))
-        _ = session.pause(now: start.addingTimeInterval(40))
-        #expect(session.menuAction == SessionMenuAction(title: "Resume break", isEnabled: true))
+        #expect(session.statusMenu(at: start.addingTimeInterval(30)) == StatusMenuContent(
+            statusPrefix: "",
+            taskName: "Write",
+            statusSuffix: " · 25 min left",
+            actionTitle: "Pause",
+            actionEnabled: true
+        ))
+        _ = session.pause(now: start.addingTimeInterval(10 * 60))
+        #expect(session.statusMenu(at: start.addingTimeInterval(10 * 60)) == StatusMenuContent(
+            statusPrefix: "Paused · ",
+            taskName: "Write",
+            statusSuffix: " · 15 min left",
+            actionTitle: "Resume",
+            actionEnabled: true
+        ))
+        _ = session.resume(now: start.addingTimeInterval(10 * 60))
+        _ = session.markDone(now: start.addingTimeInterval(10 * 60 + 20))
+        #expect(session.statusMenu(at: start.addingTimeInterval(10 * 60 + 20)) == StatusMenuContent(
+            statusPrefix: "Break · 5 min left",
+            taskName: "",
+            statusSuffix: "",
+            actionTitle: "Pause",
+            actionEnabled: true
+        ))
+        _ = session.pause(now: start.addingTimeInterval(10 * 60 + 80))
+        #expect(session.statusMenu(at: start.addingTimeInterval(10 * 60 + 80)) == StatusMenuContent(
+            statusPrefix: "Paused · Break · 4 min left",
+            taskName: "",
+            statusSuffix: "",
+            actionTitle: "Resume",
+            actionEnabled: true
+        ))
+        #expect(MenuClock.minutes(20) == 1)
+        #expect(MenuClock.minutes(0) == 0)
+        #expect(MenuClock.minutes(60) == 1)
+        #expect(MenuClock.minutes(61) == 2)
+    }
+
+    @Test func statusLineShortensOnlyTheTaskName() {
+        let name = String(repeating: "A", count: 200)
+        let prefix = "Paused · "
+        let suffix = " · 12 min left"
+        let measure: (String) -> CGFloat = { CGFloat($0.count * 10) }
+        let line = MenuTitleFit.line(prefix: prefix, name: name, suffix: suffix, maxWidth: 300, measure: measure)
+        #expect(line.hasPrefix(prefix))
+        #expect(line.hasSuffix(suffix))
+        #expect(line.contains("…"))
+        #expect(line.contains(name) == false)
+        #expect(measure(line) <= 300)
+        #expect(MenuTitleFit.line(prefix: "Idle · Next: ", name: "Write", suffix: "", maxWidth: 300, measure: measure) == "Idle · Next: Write")
     }
 
     @Test func legacySnapshotWithoutDoneStillLoads() throws {
