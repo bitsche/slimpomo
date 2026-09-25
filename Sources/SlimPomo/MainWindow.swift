@@ -215,6 +215,9 @@ struct MainWindow: View {
                 .padding(.bottom, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .overlay(alignment: .topLeading) {
+                queueDragFloat
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Palette.canvas)
@@ -246,6 +249,8 @@ struct MainWindow: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(onBreak ? 2 : 1)
                 .padding(.horizontal, 12)
+                .contentTransition(.opacity)
+                .animation(.easeOut(duration: model.reduceMotion ? 0.12 : 0.16), value: taskLine)
 
             if let sessionSubtitle {
                 Text(sessionSubtitle)
@@ -254,6 +259,8 @@ struct MainWindow: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .padding(.horizontal, 16)
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: model.reduceMotion ? 0.12 : 0.16), value: sessionSubtitle)
             }
 
             HStack(spacing: 18) {
@@ -324,15 +331,32 @@ struct MainWindow: View {
             }
             if !model.session.queue.isEmpty {
                 VStack(spacing: 0) {
-                    ForEach(Array(model.session.queue.enumerated()), id: \.element.id) { index, item in
-                        QueueLine(
-                            item: item,
-                            isFirst: index == 0,
-                            isLast: index == model.session.queue.count - 1,
-                            isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
-                            finish: model.session.finishDates(at: model.now)[item.id],
-                            model: model
-                        )
+                    ForEach(queueSlots) { slot in
+                        switch slot.kind {
+                        case .item(let item):
+                            QueueLine(
+                                item: item,
+                                isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
+                                finish: model.session.finishDates(at: model.now)[item.id],
+                                model: model,
+                                gripVisible: model.hoveredQueueID == item.id && model.session.canReorder(id: item.id)
+                            )
+                        case .gap:
+                            QueueGapOutline(
+                                height: model.queueDrag?.rowHeight ?? 48,
+                                visible: model.queueDrag?.showsOutline ?? false
+                            )
+                        }
+                    }
+                }
+                .animation(QueueMotion.slide(model.reduceMotion), value: model.queueDrag?.gapIndex)
+                .animation(
+                    model.queueDrag == nil ? QueueMotion.slide(model.reduceMotion) : nil,
+                    value: model.session.queue.map(\.id)
+                )
+                .background {
+                    QueueListAnchor { anchor in
+                        model.attachQueueList(anchor)
                     }
                 }
             }
@@ -355,7 +379,8 @@ struct MainWindow: View {
                 )
                 .onSubmit { model.addDraftItem() }
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -418,6 +443,59 @@ struct MainWindow: View {
         "\(clockParts.0):\(clockParts.1)"
     }
 
+    private struct QueueSlot: Identifiable {
+        enum Kind {
+            case item(QueueItem)
+            case gap
+        }
+
+        var id: UUID
+        var kind: Kind
+    }
+
+    private var queueSlots: [QueueSlot] {
+        let queue = model.session.queue
+        guard let drag = model.queueDrag,
+              let from = queue.firstIndex(where: { $0.id == drag.itemID }) else {
+            return queue.map { QueueSlot(id: $0.id, kind: .item($0)) }
+        }
+        var rest = queue
+        rest.remove(at: from)
+        let gapAt = min(max(drag.gapIndex, 0), rest.count)
+        var slots = rest.map { QueueSlot(id: $0.id, kind: .item($0)) }
+        slots.insert(QueueSlot(id: QueueDragController.gapID, kind: .gap), at: gapAt)
+        return slots
+    }
+
+    @ViewBuilder
+    private var queueDragFloat: some View {
+        if let drag = model.queueDrag,
+           let item = model.session.queue.first(where: { $0.id == drag.itemID }) {
+            QueueLine(
+                item: item,
+                isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
+                finish: model.session.finishDates(at: model.now)[item.id],
+                model: model,
+                gripVisible: true,
+                floating: true
+            )
+            .frame(width: max(drag.rowWidth, 1))
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Palette.canvas)
+            )
+            .scaleEffect(drag.lifted && !model.reduceMotion ? 1.02 : 1)
+            .shadow(
+                color: .black.opacity(drag.lifted && !model.reduceMotion ? 0.32 : 0),
+                radius: drag.lifted && !model.reduceMotion ? 12 : 0,
+                y: drag.lifted && !model.reduceMotion ? 6 : 0
+            )
+            .offset(x: drag.visualX, y: drag.visualY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
     private var clockSeconds: TimeInterval {
         if model.session.phase == .idle {
             return model.session.queue.first { $0.count > 0 }?.intensity.workDuration ?? 0
@@ -459,10 +537,14 @@ struct MainWindow: View {
 
     private var sessionSubtitle: String? {
         if onBreak {
-            if let name = nextWorkName {
+            guard let next = model.session.queue.first(where: { $0.count > 0 }) else {
+                return "Next: nothing queued"
+            }
+            let name = named(next)
+            if next.id == model.session.activeItemID {
                 return "Next: back to \(name)"
             }
-            return "Next: nothing queued"
+            return "Next: \(name)"
         }
         guard let item = subtitleItem else { return nil }
         let work = model.session.phase == .work
@@ -480,16 +562,6 @@ struct MainWindow: View {
         }
         if model.session.phase == .idle {
             return model.session.queue.first { $0.count > 0 }
-        }
-        return nil
-    }
-
-    private var nextWorkName: String? {
-        if let active = model.session.activeItem, active.count > 0 {
-            return named(active)
-        }
-        if let next = model.session.queue.first(where: { $0.count > 0 }) {
-            return named(next)
         }
         return nil
     }
@@ -585,15 +657,38 @@ struct MainWindow: View {
     }
 }
 
+private struct QueueGapOutline: View {
+    var height: CGFloat
+    var visible: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(Color.white.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .frame(height: height)
+            .opacity(visible ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
 private struct QueueLine: View {
     var item: QueueItem
-    var isFirst: Bool
-    var isLast: Bool
     var isCurrent: Bool
     var finish: Date?
     var model: AppModel
+    var gripVisible: Bool
+    var floating = false
 
     @FocusState private var descriptionFocused: Bool
+
+    private var taskName: String {
+        item.description.isEmpty ? "Untitled" : item.description
+    }
+
+    private var pinned: Bool {
+        model.session.phase == .work && item.id == model.session.activeItemID
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -624,6 +719,8 @@ private struct QueueLine: View {
                 .frame(width: 52, alignment: .trailing)
                 .help(finishHelp)
                 .accessibilityLabel(finishHelp)
+                .contentTransition(.opacity)
+                .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
 
             CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
                 guard item.count < Session.maxPomodoros else { return }
@@ -634,7 +731,8 @@ private struct QueueLine: View {
             }
             rowMenu
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
         .padding(.vertical, 7)
         .background(isCurrent ? Color.white.opacity(0.05) : Color.clear)
         .overlay(alignment: .bottom) {
@@ -642,14 +740,45 @@ private struct QueueLine: View {
                 .fill(Palette.hairline)
                 .frame(height: 1)
         }
+        .overlay(alignment: .leading) {
+            grip
+                .padding(.leading, 1)
+        }
+        .onHover { hovering in
+            guard !floating else { return }
+            model.setQueueHover(item.id, hovering: hovering)
+        }
+    }
+
+    private var grip: some View {
+        ZStack {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.75))
+                .opacity(gripVisible ? 1 : 0)
+                .animation(.easeOut(duration: 0.12), value: gripVisible)
+                .accessibilityHidden(true)
+            if !floating {
+                QueueGrip(
+                    enabled: model.session.canReorder(id: item.id),
+                    toolTip: pinned ? "The running task can't be moved." : nil,
+                    onPress: { model.beginQueueDrag(id: item.id) }
+                )
+            }
+        }
+        .frame(width: 16)
+        .frame(maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Reorder \(taskName)")
+        .accessibilityHidden(!model.session.canReorder(id: item.id))
     }
 
     private var rowMenu: some View {
         Menu {
             Button("Move up") { model.moveUp(id: item.id) }
-                .disabled(isFirst)
+                .disabled(!model.session.canMoveUp(id: item.id))
             Button("Move down") { model.moveDown(id: item.id) }
-                .disabled(isLast)
+                .disabled(!model.session.canMoveDown(id: item.id))
 
             Divider()
 
@@ -724,7 +853,8 @@ private struct DoneLine: View {
             .help("Copy to the end of the queue")
             .accessibilityLabel("Copy to the end of the queue")
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
         .padding(.vertical, 7)
         .overlay(alignment: .bottom) {
             Rectangle()

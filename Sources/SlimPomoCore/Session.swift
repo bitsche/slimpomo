@@ -544,14 +544,69 @@ public struct Session: Equatable, Codable {
         queue.insert(contentsOf: moving, at: insertion)
     }
 
+    /// The row whose work is running or paused. Nil while idle or on a break.
+    public func activeWorkIndex() -> Int? {
+        guard phase == .work, let id = activeItemID else { return nil }
+        return queue.firstIndex { $0.id == id }
+    }
+
+    /// Indexes this row may occupy after it is lifted out. Nil when it cannot move.
+    /// The index is in the queue with this row already removed.
+    public func reorderDestinations(for id: UUID) -> ClosedRange<Int>? {
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return nil }
+        let count = queue.count
+        guard count > 1 else { return nil }
+        guard let pinned = activeWorkIndex() else { return 0...(count - 1) }
+        if index == pinned { return nil }
+        let pinnedAfterRemoval = index < pinned ? pinned - 1 : pinned
+        let lower = pinnedAfterRemoval + 1
+        let upper = count - 1
+        guard lower <= upper else { return nil }
+        return lower...upper
+    }
+
+    public func nearestReorderDestination(for id: UUID, proposed: Int) -> Int? {
+        guard let allowed = reorderDestinations(for: id) else { return nil }
+        return min(max(proposed, allowed.lowerBound), allowed.upperBound)
+    }
+
+    /// False when the row is pinned, or the only place it can land is where it already sits.
+    public func canReorder(id: UUID) -> Bool {
+        guard let index = queue.firstIndex(where: { $0.id == id }),
+              let allowed = reorderDestinations(for: id) else { return false }
+        return allowed.lowerBound != index || allowed.upperBound != index
+    }
+
+    public func canMoveUp(id: UUID) -> Bool {
+        guard let index = queue.firstIndex(where: { $0.id == id }), index > 0,
+              let allowed = reorderDestinations(for: id) else { return false }
+        return allowed.contains(index - 1)
+    }
+
+    public func canMoveDown(id: UUID) -> Bool {
+        guard let index = queue.firstIndex(where: { $0.id == id }),
+              let allowed = reorderDestinations(for: id) else { return false }
+        return allowed.contains(index + 1)
+    }
+
+    /// `destination` is the index after `id` has been removed.
+    public mutating func reorder(id: UUID, to destination: Int) {
+        guard let index = queue.firstIndex(where: { $0.id == id }),
+              let allowed = reorderDestinations(for: id),
+              allowed.contains(destination),
+              destination != index else { return }
+        let item = queue.remove(at: index)
+        queue.insert(item, at: min(max(0, destination), queue.count))
+    }
+
     public mutating func moveUp(id: UUID) {
-        guard let index = queue.firstIndex(where: { $0.id == id }), index > 0 else { return }
-        queue.swapAt(index, index - 1)
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        reorder(id: id, to: index - 1)
     }
 
     public mutating func moveDown(id: UUID) {
-        guard let index = queue.firstIndex(where: { $0.id == id }), index + 1 < queue.count else { return }
-        queue.swapAt(index, index + 1)
+        guard let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        reorder(id: id, to: index + 1)
     }
 
     private mutating func beginWork(on item: QueueItem, now: Date) {
