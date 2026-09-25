@@ -38,6 +38,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             enforceMinimumSize(of: window)
             window.delegate = self
             self.window = window
+            window.acceptsMouseMovedEvents = model.isTouring
             applySavedFrame(to: window)
         }
         Task { @MainActor in
@@ -111,6 +112,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     nonisolated func windowDidBecomeKey(_ notification: Notification) {
         Task { @MainActor in
+            TourMenu.claimShortcut()
             AppRuntime.model.stopAlarm()
         }
     }
@@ -195,25 +197,39 @@ struct MainWindow: View {
     @Bindable var model: AppModel
     @FocusState private var draftFocused: Bool
 
+    private var shown: Session { model.windowSession }
+
     var body: some View {
         VStack(spacing: 14) {
             timerCard
                 .padding(.horizontal, 14)
                 .padding(.top, 6)
+                .tourTarget(.timerCard)
 
             todoHeader
                 .padding(.horizontal, 18)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    queueBlock
-                    if !model.session.done.isEmpty {
-                        doneBlock
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        queueBlock
+                        if !shown.done.isEmpty {
+                            doneBlock
+                                .tourTarget(.doneSection)
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .scrollDisabled(model.isTouring)
+                .onChange(of: model.tourScrollRequest) { _, _ in
+                    guard let target = model.tour?.step.anchor else { return }
+                    withAnimation(model.reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(target, anchor: .center)
+                    }
+                    model.scheduleTourScrollFinish()
+                }
             }
             .overlay(alignment: .topLeading) {
                 queueDragFloat
@@ -221,6 +237,16 @@ struct MainWindow: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Palette.canvas)
+        .accessibilityHidden(model.isTouring)
+        .overlayPreferenceValue(TourAnchorKey.self) { anchors in
+            GeometryReader { proxy in
+                let frames = Dictionary(uniqueKeysWithValues: anchors.map { target, anchor in
+                    (target, proxy[anchor])
+                })
+                TourOverlay(model: model, viewport: proxy.size, frames: frames)
+                    .allowsHitTesting(model.isTouring)
+            }
+        }
         .preferredColorScheme(.dark)
         .onAppear {
             model.refresh()
@@ -291,14 +317,24 @@ struct MainWindow: View {
     }
 
     private var todoHeader: some View {
-        HStack(spacing: 12) {
-            hairline
-            Text(todoTitle)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-                .fixedSize()
-                .help("Pomodoros still in the queue, and the work time they add up to")
-            hairline
+        centeredSectionTitle(
+            todoTitle,
+            help: "Pomodoros still in the queue, and the work time they add up to"
+        ) {
+            Button {
+                model.replayTour()
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.75))
+                    .frame(width: 22, height: 18)
+                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("Tour")
+            .accessibilityLabel("Tour")
+            .tourTarget(.tourButton)
             Button {
                 model.showHistory()
             } label: {
@@ -312,6 +348,32 @@ struct MainWindow: View {
             .fixedSize()
             .help("History")
             .accessibilityLabel("History")
+            .tourTarget(.historyButton)
+        }
+    }
+
+    /// The title stays on the window's center line. Trailing buttons sit over the right rule
+    /// instead of pushing the title off that line.
+    private func centeredSectionTitle<Buttons: View>(
+        _ title: String,
+        help: String? = nil,
+        @ViewBuilder buttons: () -> Buttons
+    ) -> some View {
+        HStack(spacing: 12) {
+            hairline
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .fixedSize()
+                .modifier(SectionTitleHelp(text: help))
+            hairline
+        }
+        .overlay(alignment: .trailing) {
+            HStack(spacing: 12) {
+                buttons()
+            }
+            .padding(.leading, 12)
+            .background(Palette.canvas)
         }
     }
 
@@ -329,17 +391,18 @@ struct MainWindow: View {
             if showsDepthHint {
                 DepthHint(model: model)
             }
-            if !model.session.queue.isEmpty {
+            if !shown.queue.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(queueSlots) { slot in
                         switch slot.kind {
                         case .item(let item):
                             QueueLine(
                                 item: item,
-                                isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
-                                finish: model.session.finishDates(at: model.now)[item.id],
+                                isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
+                                finish: shown.finishDates(at: model.now)[item.id],
                                 model: model,
-                                gripVisible: model.hoveredQueueID == item.id && model.session.canReorder(id: item.id)
+                                gripVisible: model.tourGripItemID == item.id
+                                    || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
                             )
                         case .gap:
                             QueueGapOutline(
@@ -351,8 +414,8 @@ struct MainWindow: View {
                 }
                 .animation(QueueMotion.slide(model.reduceMotion), value: model.queueDrag?.gapIndex)
                 .animation(
-                    model.queueDrag == nil ? QueueMotion.slide(model.reduceMotion) : nil,
-                    value: model.session.queue.map(\.id)
+                    model.queueDrag == nil && model.tour == nil ? QueueMotion.slide(model.reduceMotion) : nil,
+                    value: shown.queue.map(\.id)
                 )
                 .background {
                     QueueListAnchor { anchor in
@@ -366,7 +429,11 @@ struct MainWindow: View {
     private var addRow: some View {
         HStack(spacing: 10) {
             ModeMenu(model: model, describesHint: showsDepthHint)
-            TextField("Describe the task, press Return to add", text: $model.draftDescription)
+                .tourTarget(.addChip)
+            TextField(
+                "Describe the task, press Return to add",
+                text: model.isTouring ? .constant("") : $model.draftDescription
+            )
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
@@ -378,6 +445,7 @@ struct MainWindow: View {
                         .stroke(Palette.field, lineWidth: 1)
                 )
                 .onSubmit { model.addDraftItem() }
+                .tourTarget(.addField)
         }
         .padding(.leading, 18)
         .padding(.trailing, 8)
@@ -390,13 +458,7 @@ struct MainWindow: View {
 
     private var doneBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                hairline
-                Text("DONE · \(model.session.done.count)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.88))
-                    .fixedSize()
-                hairline
+            centeredSectionTitle("DONE · \(shown.done.count)") {
                 Button {
                     model.clearDone()
                 } label: {
@@ -412,7 +474,7 @@ struct MainWindow: View {
                 .accessibilityLabel("Clear the done list")
             }
             VStack(spacing: 0) {
-                ForEach(model.session.done) { item in
+                ForEach(shown.done) { item in
                     DoneLine(item: item, model: model)
                 }
             }
@@ -425,11 +487,11 @@ struct MainWindow: View {
     }
 
     private var todoCount: Int {
-        model.session.queue.reduce(0) { $0 + max(0, $1.count) }
+        shown.queue.reduce(0) { $0 + max(0, $1.count) }
     }
 
     private var todoWork: TimeInterval {
-        model.session.queue.reduce(0) { total, item in
+        shown.queue.reduce(0) { total, item in
             total + TimeInterval(max(0, item.count)) * item.intensity.workDuration
         }
     }
@@ -454,7 +516,7 @@ struct MainWindow: View {
     }
 
     private var queueSlots: [QueueSlot] {
-        let queue = model.session.queue
+        let queue = shown.queue
         guard let drag = model.queueDrag,
               let from = queue.firstIndex(where: { $0.id == drag.itemID }) else {
             return queue.map { QueueSlot(id: $0.id, kind: .item($0)) }
@@ -497,18 +559,18 @@ struct MainWindow: View {
     }
 
     private var clockSeconds: TimeInterval {
-        if model.session.phase == .idle {
-            return model.session.queue.first { $0.count > 0 }?.intensity.workDuration ?? 0
+        if shown.phase == .idle {
+            return shown.queue.first { $0.count > 0 }?.intensity.workDuration ?? 0
         }
-        return model.session.displayedRemaining(at: model.now)
+        return shown.displayedRemaining(at: model.now)
     }
 
     private var onBreak: Bool {
-        model.session.phase == .breakTime
+        shown.phase == .breakTime
     }
 
     private var showsDepthHint: Bool {
-        model.session.queue.isEmpty && !model.depthHintDismissed
+        shown.queue.isEmpty && !model.depthHintDismissed
     }
 
     private var cardInk: Color {
@@ -520,16 +582,16 @@ struct MainWindow: View {
             let message = model.breakMessage ?? BreakMessages.five[0]
             return "Break · \(message)"
         }
-        if model.session.phase != .idle {
-            if let active = model.session.activeItem, !active.description.isEmpty {
+        if shown.phase != .idle {
+            if let active = shown.activeItem, !active.description.isEmpty {
                 return active.description
             }
-            if !model.session.activeDescription.isEmpty {
-                return model.session.activeDescription
+            if !shown.activeDescription.isEmpty {
+                return shown.activeDescription
             }
             return "Untitled"
         }
-        if let next = model.session.queue.first(where: { $0.count > 0 }) {
+        if let next = shown.queue.first(where: { $0.count > 0 }) {
             return next.description.isEmpty ? "Untitled" : next.description
         }
         return "Add a task to begin"
@@ -537,31 +599,31 @@ struct MainWindow: View {
 
     private var sessionSubtitle: String? {
         if onBreak {
-            guard let next = model.session.queue.first(where: { $0.count > 0 }) else {
+            guard let next = shown.queue.first(where: { $0.count > 0 }) else {
                 return "Next: nothing queued"
             }
             let name = named(next)
-            if next.id == model.session.activeItemID {
+            if next.id == shown.activeItemID {
                 return "Next: back to \(name)"
             }
             return "Next: \(name)"
         }
         guard let item = subtitleItem else { return nil }
-        let work = model.session.phase == .work
-            ? Int(model.session.phaseDuration / 60)
+        let work = shown.phase == .work
+            ? Int(shown.phaseDuration / 60)
             : item.intensity.mode.workMinutes
-        let rest = model.session.phase == .work
-            ? Int((model.session.lockedBreakDuration ?? item.intensity.breakDuration) / 60)
+        let rest = shown.phase == .work
+            ? Int((shown.lockedBreakDuration ?? item.intensity.breakDuration) / 60)
             : item.intensity.mode.breakMinutes
         return "\(item.intensity.label) · \(work) min work, then \(rest) min break"
     }
 
     private var subtitleItem: QueueItem? {
-        if model.session.phase == .work {
-            return model.session.activeItem
+        if shown.phase == .work {
+            return shown.activeItem
         }
-        if model.session.phase == .idle {
-            return model.session.queue.first { $0.count > 0 }
+        if shown.phase == .idle {
+            return shown.queue.first { $0.count > 0 }
         }
         return nil
     }
@@ -571,10 +633,10 @@ struct MainWindow: View {
     }
 
     private var primaryTitle: String {
-        if model.session.phase == .idle {
+        if shown.phase == .idle {
             return "START"
         }
-        return model.session.isRunning ? "PAUSE" : "RESUME"
+        return shown.isRunning ? "PAUSE" : "RESUME"
     }
 
     private var primaryHelp: String {
@@ -586,21 +648,21 @@ struct MainWindow: View {
     }
 
     private var primaryDisabled: Bool {
-        model.session.phase == .idle && !model.session.hasWorkQueued
+        shown.phase == .idle && !shown.hasWorkQueued
     }
 
     private var secondaryTitle: String {
-        if model.session.phase == .breakTime {
+        if shown.phase == .breakTime {
             return "SKIP"
         }
-        if model.session.phase == .work, !model.session.isRunning {
+        if shown.phase == .work, !shown.isRunning {
             return "FINISH"
         }
         return "RESET"
     }
 
     private var secondaryEnabled: Bool {
-        model.session.phase == .work || model.session.phase == .breakTime
+        shown.phase == .work || shown.phase == .breakTime
     }
 
     private var secondaryHelp: String {
@@ -654,6 +716,18 @@ struct MainWindow: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .help(help)
+    }
+}
+
+private struct SectionTitleHelp: ViewModifier {
+    var text: String?
+
+    func body(content: Content) -> some View {
+        if let text {
+            content.help(text)
+        } else {
+            content
+        }
     }
 }
 
@@ -729,6 +803,7 @@ private struct QueueLine: View {
                 guard item.count > 1 else { return }
                 model.setCount(id: item.id, count: item.count - 1)
             }
+            .tourTarget(item.id == TourSample.outline ? .taskCount : nil)
             rowMenu
         }
         .padding(.leading, 18)
@@ -768,6 +843,7 @@ private struct QueueLine: View {
         }
         .frame(width: 16)
         .frame(maxHeight: .infinity)
+        .tourTarget(item.id == TourSample.emails && !floating ? .reorderGrip : nil)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Reorder \(taskName)")
         .accessibilityHidden(!model.session.canReorder(id: item.id))
@@ -1214,6 +1290,11 @@ private struct MouseClick: NSViewRepresentable {
         }
 
         override func mouseEntered(with event: NSEvent) {
+            watchTour()
+            if AppRuntime.model.isTouring {
+                clearHover()
+                return
+            }
             hovering = true
             needsDisplay = true
             guard !pushedCursor else { return }
@@ -1235,6 +1316,23 @@ private struct MouseClick: NSViewRepresentable {
             super.viewWillMove(toWindow: newWindow)
             if newWindow == nil {
                 clearHover()
+            } else {
+                watchTour()
+            }
+        }
+
+        private var tourObserver: NSObjectProtocol?
+
+        private func watchTour() {
+            guard tourObserver == nil else { return }
+            tourObserver = NotificationCenter.default.addObserver(
+                forName: .slimpomoTourInteraction,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.clearHover()
+                }
             }
         }
 
@@ -1296,7 +1394,7 @@ private struct PointingCursor: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func resetCursorRects() {
-            addCursorRect(bounds, cursor: .pointingHand)
+            addCursorRect(bounds, cursor: AppRuntime.model.isTouring ? .arrow : .pointingHand)
         }
 
         override func layout() {
@@ -1317,6 +1415,7 @@ private struct DeniedCursor: NSViewRepresentable {
         override var isOpaque: Bool { false }
 
         override func resetCursorRects() {
+            guard !AppRuntime.model.isTouring else { return }
             addCursorRect(bounds, cursor: .operationNotAllowed)
         }
 
@@ -1372,6 +1471,11 @@ private final class HoverTrackingView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        watchTour()
+        if AppRuntime.model.isTouring {
+            clearHover()
+            return
+        }
         hovering = true
         needsDisplay = true
         guard !pushedCursor else { return }
@@ -1387,6 +1491,23 @@ private final class HoverTrackingView: NSView {
         super.viewWillMove(toWindow: newWindow)
         if newWindow == nil {
             clearHover()
+        } else {
+            watchTour()
+        }
+    }
+
+    private var tourObserver: NSObjectProtocol?
+
+    private func watchTour() {
+        guard tourObserver == nil else { return }
+        tourObserver = NotificationCenter.default.addObserver(
+            forName: .slimpomoTourInteraction,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.clearHover()
+            }
         }
     }
 

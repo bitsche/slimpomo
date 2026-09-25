@@ -703,6 +703,28 @@ public struct Session: Equatable, Codable {
         endsAt = nil
         lockedBreakDuration = nil
     }
+
+    /// Idle queue and Done list shown during the tour. It is never saved.
+    public static func tourSample() -> Session {
+        var session = Session()
+        session.queue = [
+            QueueItem(id: TourSample.outline, intensity: .focus, description: "Write project outline", count: 2),
+            QueueItem(id: TourSample.emails, intensity: .regular, description: "Answer emails", count: 1),
+            QueueItem(id: TourSample.contract, intensity: .intense, description: "Review contract", count: 1),
+        ]
+        session.done = [
+            QueueItem(id: TourSample.plannedWeek, intensity: .regular, description: "Plan the week", count: 1),
+        ]
+        session.didMigrateHistory = true
+        return session
+    }
+}
+
+public enum TourSample {
+    public static let outline = UUID(uuidString: "C2000001-0000-4000-8000-000000000001")!
+    public static let emails = UUID(uuidString: "C2000001-0000-4000-8000-000000000002")!
+    public static let contract = UUID(uuidString: "C2000001-0000-4000-8000-000000000003")!
+    public static let plannedWeek = UUID(uuidString: "C2000001-0000-4000-8000-000000000004")!
 }
 
 #if SLIMPOMO_DEV

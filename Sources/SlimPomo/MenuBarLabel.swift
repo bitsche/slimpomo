@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 import SlimPomoCore
 
+enum MenuBarTourIcon: CaseIterable {
+    case idle
+    case running
+    case paused
+    case onBreak
+}
+
 struct MenuBarLabel: View {
     var model: AppModel
 
@@ -12,7 +19,7 @@ struct MenuBarLabel: View {
                 .accessibilityLabel("SlimPomo")
         } else {
             HStack(spacing: 4) {
-                Image(nsImage: ringImage(
+                Image(nsImage: Self.ringImage(
                     fraction: model.session.elapsedFraction(at: model.now),
                     paused: !model.session.isRunning,
                     showsSmile: model.session.phase == .breakTime && model.session.isRunning
@@ -62,8 +69,8 @@ struct MenuBarLabel: View {
         "M16.88 15.79C17.31 16.28 17.68 16.85 17.68 17.7C17.68 19.95 15.55 21.4 12.55 21.4C9.55 21.4 7.42 19.95 7.42 17.7C7.42 17.62 7.42 17.54 7.43 17.46Z",
     ]
 
-    private static func drawMenuTomato(in rect: NSRect) {
-        NSColor.black.setFill()
+    private static func drawMenuTomato(in rect: NSRect, color: NSColor = .black) {
+        color.setFill()
         for data in menuTomatoPaths {
             svgPath(data, in: rect).fill()
         }
@@ -117,20 +124,20 @@ struct MenuBarLabel: View {
         }
     }
 
-    private func ringImage(fraction: Double, paused: Bool, showsSmile: Bool) -> NSImage {
-        let size = NSSize(width: Self.iconSide, height: Self.iconSide)
+    private static func ringImage(fraction: Double, paused: Bool, showsSmile: Bool, color: NSColor = .black) -> NSImage {
+        let size = NSSize(width: iconSide, height: iconSide)
         let image = NSImage(size: size, flipped: false) { rect in
             let scale = rect.width / 16
             let line = 1.85 * scale
             let inset = rect.insetBy(dx: 1.15 * scale, dy: 1.15 * scale)
-            NSColor.black.withAlphaComponent(0.28).setStroke()
+            color.withAlphaComponent(0.28).setStroke()
             let track = NSBezierPath(ovalIn: inset)
             track.lineWidth = line
             track.stroke()
 
             let clamped = min(1, max(0, fraction))
             if clamped >= 0.999 {
-                NSColor.black.setStroke()
+                color.setStroke()
                 let full = NSBezierPath(ovalIn: inset)
                 full.lineWidth = line
                 full.stroke()
@@ -145,14 +152,14 @@ struct MenuBarLabel: View {
                 )
                 arc.lineWidth = line
                 arc.lineCapStyle = .round
-                NSColor.black.setStroke()
+                color.setStroke()
                 arc.stroke()
             }
 
             if paused {
-                drawPauseBars(in: rect, scale: scale)
+                drawPauseBars(in: rect, scale: scale, color: color)
             } else if showsSmile {
-                drawRelaxedFace(in: rect, scale: scale)
+                drawRelaxedFace(in: rect, scale: scale, color: color)
             }
             return true
         }
@@ -160,8 +167,30 @@ struct MenuBarLabel: View {
         return image
     }
 
-    private func drawPauseBars(in rect: NSRect, scale: CGFloat) {
-        NSColor.black.setFill()
+    /// The four menu-bar states, drawn with the same paths the status item uses.
+    static func tourIcon(_ kind: MenuBarTourIcon) -> NSImage {
+        let color = NSColor.white
+        let image: NSImage
+        switch kind {
+        case .idle:
+            let side = waitingSide
+            image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+                drawMenuTomato(in: rect, color: color)
+                return true
+            }
+        case .running:
+            image = ringImage(fraction: 0.62, paused: false, showsSmile: false, color: color)
+        case .paused:
+            image = ringImage(fraction: 0.62, paused: true, showsSmile: false, color: color)
+        case .onBreak:
+            image = ringImage(fraction: 0.4, paused: false, showsSmile: true, color: color)
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    private static func drawPauseBars(in rect: NSRect, scale: CGFloat, color: NSColor = .black) {
+        color.setFill()
         let barWidth = 1.7 * scale
         let barHeight = 6.4 * scale
         let gap = 1.25 * scale
@@ -182,9 +211,9 @@ struct MenuBarLabel: View {
         }
     }
 
-    private func drawRelaxedFace(in rect: NSRect, scale: CGFloat) {
+    private static func drawRelaxedFace(in rect: NSRect, scale: CGFloat, color: NSColor = .black) {
         let center = NSPoint(x: rect.midX, y: rect.midY)
-        NSColor.black.setStroke()
+        color.setStroke()
 
         let nudge = rect.width / 22
         func eye(dx: CGFloat) {
@@ -229,7 +258,7 @@ struct MenuBarLabel: View {
         let showsCounter = model.session.phase != .idle
         let width = showsCounter ? icon + spacing + digitWidth : waitingSide
         let height = showsCounter ? icon : waitingSide
-        let ring = MenuBarLabel(model: model).ringImage(
+        let ring = ringImage(
             fraction: model.session.elapsedFraction(at: model.now),
             paused: !model.session.isRunning,
             showsSmile: model.session.phase == .breakTime && model.session.isRunning

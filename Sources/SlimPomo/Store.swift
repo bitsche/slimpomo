@@ -26,6 +26,25 @@ struct Store {
         return try? decoder.decode(Session.self, from: data)
     }
 
+    /// Missing until the tour is finished or skipped. Quitting halfway leaves it missing.
+    var tourSeen: Bool {
+        FileManager.default.fileExists(atPath: tourURL.path)
+    }
+
+    func markTourSeen() {
+        let directory = tourURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? Data(#"{"tourSeen":true}"#.utf8).write(to: tourURL, options: .atomic)
+    }
+
+    func clearTourSeen() {
+        try? FileManager.default.removeItem(at: tourURL)
+    }
+
+    private var tourURL: URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("tour.json")
+    }
+
     func save(_ session: Session) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

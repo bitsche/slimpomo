@@ -717,6 +717,20 @@ struct SessionTests {
         #expect(session.history.count == 3)
     }
 
+    @Test func tourSampleStaysOutOfHistory() {
+        let sample = Session.tourSample()
+        #expect(sample.phase == .idle)
+        #expect(sample.isRunning == false)
+        #expect(sample.history.isEmpty)
+        #expect(sample.queue.map(\.id) == [TourSample.outline, TourSample.emails, TourSample.contract])
+        #expect(sample.queue.map(\.description) == ["Write project outline", "Answer emails", "Review contract"])
+        #expect(sample.queue.map(\.intensity) == [.focus, .regular, .intense])
+        #expect(sample.queue.map(\.count) == [2, 1, 1])
+        #expect(sample.done.map(\.description) == ["Plan the week"])
+        #expect(sample.done.map(\.intensity) == [.regular])
+        #expect(sample.done.map(\.count) == [1])
+    }
+
     @Test func existingDoneMigratesOnce() throws {
         let calendar = HistoryClock.calendar
         let source = UUID()
