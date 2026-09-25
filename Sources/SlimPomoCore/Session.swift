@@ -19,7 +19,7 @@ public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
     public var mode: IntensityMode {
         switch self {
         case .regular:
-            IntensityMode(name: "Dip", workMinutes: 25, breakMinutes: 5, red: 0.78, green: 0.84, blue: 0.80)
+            IntensityMode(name: "Dip", workMinutes: 25, breakMinutes: 5, red: 0.73, green: 0.84, blue: 0.74)
         case .focus:
             IntensityMode(name: "Dive", workMinutes: 50, breakMinutes: 10, red: 0.93, green: 0.80, blue: 0.58)
         case .intense:

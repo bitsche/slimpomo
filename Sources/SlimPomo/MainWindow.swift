@@ -9,7 +9,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private var sizeSaveTask: Task<Void, Never>?
 
     func show(model: AppModel) {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(.accessory)
         let created = window == nil
         if created {
             let window = NSWindow(
@@ -127,10 +127,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated {
             self.sizeSaveTask?.cancel()
             self.saveWindowSize()
-            let another = NSApp.windows.contains { $0 !== self.window && $0.isVisible }
-            if !another {
-                NSApp.setActivationPolicy(.accessory)
-            }
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 
@@ -1550,6 +1547,7 @@ private extension Intensity {
     }
 
     var chipColor: Color {
-        Color(red: mode.red, green: mode.green, blue: mode.blue)
+        if self == .regular { return Palette.cardBreak }
+        return Color(red: mode.red, green: mode.green, blue: mode.blue)
     }
 }

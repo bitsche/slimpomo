@@ -9,7 +9,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
     private var sizeSaveTask: Task<Void, Never>?
 
     func show(model: AppModel) {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(.accessory)
         let created = window == nil
         if created {
             let window = NSWindow(
@@ -108,10 +108,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated {
             self.sizeSaveTask?.cancel()
             self.saveWindowSize()
-            let another = NSApp.windows.contains { $0 !== self.window && $0.isVisible }
-            if !another {
-                NSApp.setActivationPolicy(.accessory)
-            }
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 
