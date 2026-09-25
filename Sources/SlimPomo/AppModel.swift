@@ -42,7 +42,8 @@ final class AppModel {
     @ObservationIgnored private let bell: Bell
     @ObservationIgnored private let windows = MainWindowController()
     @ObservationIgnored private let historyWindows = HistoryWindowController()
-    @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private var tickTimer: Timer?
+    @ObservationIgnored private var idleTickSteps = 0
     @ObservationIgnored private var midnightTask: Task<Void, Never>?
     @ObservationIgnored private var dayObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var keyMonitor: Any?
@@ -374,14 +375,14 @@ final class AppModel {
         }
     }
 
+    /// Start, Pause, or Resume. The window button and the status-item menu both use this.
     func performMenuAction() {
-        switch session.phase {
-        case .idle:
+        if session.phase == .idle {
             start()
-        case .work, .breakTime:
-            if !session.isRunning {
-                resume()
-            }
+        } else if session.isRunning {
+            pause()
+        } else {
+            resume()
         }
     }
 
@@ -406,8 +407,8 @@ final class AppModel {
     }
 
     func quit() {
-        tickTask?.cancel()
-        tickTask = nil
+        tickTimer?.invalidate()
+        tickTimer = nil
         now = Date()
         var paused = session.snapshot(at: now)
         paused.restoreAsPaused()
@@ -784,26 +785,35 @@ final class AppModel {
     private static let depthHintKey = "SlimPomo.depthHintDismissed"
 
     private func ensureTicker() {
-        guard tickTask == nil else { return }
-        tickTask = Task { [weak self] in
-            var idleSteps = 0
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(500))
-                guard !Task.isCancelled, let self else { return }
-                if self.session.isRunning {
-                    idleSteps = 0
-                    self.tick()
-                } else if !self.session.queue.isEmpty {
-                    // Finish clocks are "if the queue started now", so they move
-                    // with the wall clock while nothing is running.
-                    idleSteps += 1
-                    if idleSteps >= 10 {
-                        idleSteps = 0
-                        self.now = Date()
-                    }
-                }
+        guard tickTimer == nil else { return }
+        // `.common` keeps firing while a status-item menu is tracking events.
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleTick()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        tickTimer = timer
+    }
+
+    private func handleTick() {
+        if session.isRunning {
+            idleTickSteps = 0
+            tick()
+        } else if !session.queue.isEmpty {
+            // Finish clocks are "if the queue started now", so they move
+            // with the wall clock while nothing is running.
+            idleTickSteps += 1
+            if idleTickSteps >= 10 {
+                idleTickSteps = 0
+                now = Date()
+            }
+        } else {
+            return
+        }
+        // The menu tracks events in its own run-loop mode, so refresh the icon
+        // here instead of waiting for a main-queue task that would not run.
+        StatusItemController.shared.refreshAppearance()
     }
 
     private func reconcileQueueDrag() {

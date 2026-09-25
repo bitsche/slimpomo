@@ -294,9 +294,7 @@ enum TimeFormat {
     }
 
     static func menuMinutes(_ seconds: TimeInterval) -> String {
-        let remaining = max(0, seconds)
-        guard remaining > 0 else { return "0" }
-        return String(Int((remaining / 60).rounded(.up)))
+        String(MenuClock.minutes(seconds))
     }
 
     static func span(_ seconds: TimeInterval) -> String {

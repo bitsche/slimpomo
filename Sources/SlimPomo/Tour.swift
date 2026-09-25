@@ -81,7 +81,7 @@ enum TourStep: Hashable {
         case .reorder:
             "Hover a task and drag the grip on its left to move it. A task that is running stays at the top and can't be moved."
         case .menuBar:
-            "SlimPomo lives up there. The tomato means idle, the ring fills as time passes, pause bars mean paused, and a smile means you're on a break. Click it to open this window."
+            "SlimPomo lives up there. The tomato means idle, the ring fills as time passes, pause bars mean paused, and a smile means you're on a break. Click it for quick controls, right-click to open this window."
         case .done:
             "Finished tasks land here with the time you worked. The arrow puts a task back in the queue. Done starts fresh every night at midnight, and nothing is lost."
         case .history:

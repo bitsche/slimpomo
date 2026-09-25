@@ -4,6 +4,10 @@ A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay 
 
 Done is today's finished work. Past days live in History (read-only, local, kept indefinitely).
 
+## Menu bar
+
+Left-click the icon to open the menu: the current status, Show Window, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.
+
 ## Dev build
 
 `scripts/dev.sh` builds and launches SlimPomo Dev.app. It keeps its own queue, Done list, and history, and it never reads or writes the release app's data.

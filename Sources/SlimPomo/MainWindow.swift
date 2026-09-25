@@ -291,7 +291,7 @@ struct MainWindow: View {
 
             HStack(spacing: 18) {
                 cardButton(primaryTitle, enabled: !primaryDisabled, help: primaryHelp) {
-                    primaryAction()
+                    model.performMenuAction()
                 }
                 cardButton(secondaryTitle, enabled: secondaryEnabled, help: secondaryHelp) {
                     secondaryAction()
@@ -677,16 +677,6 @@ struct MainWindow: View {
         case "FINISH": "Finish this pomodoro and start its break"
         case "SKIP": "End the break and continue the queue"
         default: "Reset this pomodoro without finishing it"
-        }
-    }
-
-    private func primaryAction() {
-        if model.session.phase == .idle {
-            model.start()
-        } else if model.session.isRunning {
-            model.pause()
-        } else {
-            model.resume()
         }
     }
 
