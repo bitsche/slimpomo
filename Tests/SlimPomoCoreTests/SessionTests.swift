@@ -295,6 +295,107 @@ struct SessionTests {
         #expect(session.queue.map(\.description) == ["A", "B", "C"])
         session.moveDown(id: session.queue[0].id)
         #expect(session.queue.map(\.description) == ["B", "A", "C"])
+        session.reorder(id: session.queue[2].id, to: 0)
+        #expect(session.queue.map(\.description) == ["C", "B", "A"])
+        #expect(session.canMoveDown(id: session.queue[2].id) == false)
+        #expect(session.canMoveUp(id: session.queue[0].id) == false)
+
+        var solo = Session()
+        solo.addItem(description: "Solo", intensity: .regular, count: 1)
+        #expect(solo.canReorder(id: solo.queue[0].id) == false)
+        solo.moveUp(id: solo.queue[0].id)
+        solo.moveDown(id: solo.queue[0].id)
+        #expect(solo.queue.map(\.description) == ["Solo"])
+    }
+
+    @Test func runningAndPausedTasksCannotMoveOrBePassed() {
+        var session = Session()
+        session.addItem(description: "Zero", intensity: .regular, count: 1)
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        session.addItem(description: "Ship", intensity: .intense, count: 1)
+        session.setCount(id: session.queue[0].id, count: 0)
+        _ = session.start(now: start)
+        #expect(session.activeWorkIndex() == 1)
+        let zero = session.queue[0].id
+        let write = session.queue[1].id
+        let review = session.queue[2].id
+        let ship = session.queue[3].id
+
+        #expect(session.canReorder(id: write) == false)
+        #expect(session.canMoveUp(id: write) == false)
+        #expect(session.canMoveDown(id: write) == false)
+        session.moveUp(id: write)
+        session.moveDown(id: write)
+        session.reorder(id: write, to: 0)
+        #expect(session.queue.map(\.description) == ["Zero", "Write", "Review", "Ship"])
+
+        #expect(session.canMoveUp(id: review) == false)
+        #expect(session.canMoveDown(id: review) == true)
+        #expect(session.canMoveUp(id: ship) == true)
+        #expect(session.canMoveDown(id: ship) == false)
+        session.reorder(id: review, to: 0)
+        #expect(session.queue.map(\.description) == ["Zero", "Write", "Review", "Ship"])
+        session.reorder(id: ship, to: 2)
+        #expect(session.queue.map(\.description) == ["Zero", "Write", "Ship", "Review"])
+
+        #expect(session.canMoveUp(id: zero) == false)
+        #expect(session.canMoveDown(id: zero) == true)
+        #expect(session.reorderDestinations(for: zero) == 1...3)
+        session.moveDown(id: zero)
+        #expect(session.queue.map(\.description) == ["Write", "Zero", "Ship", "Review"])
+
+        _ = session.pause(now: start)
+        #expect(session.isRunning == false)
+        #expect(session.canReorder(id: write) == false)
+        #expect(session.canMoveUp(id: session.queue[1].id) == false)
+    }
+
+    @Test func breakLetsEveryQueueRowMoveAndSkipFollowsTheNewOrder() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        _ = session.start(now: start)
+        _ = session.markDone(now: start)
+        #expect(session.phase == .breakTime)
+        #expect(session.activeWorkIndex() == nil)
+        #expect(session.canReorder(id: session.queue[0].id) == true)
+        #expect(session.canReorder(id: session.queue[1].id) == true)
+        session.reorder(id: session.queue[1].id, to: 0)
+        #expect(session.queue.map(\.description) == ["Review", "Write"])
+        #expect(session.queue.first { $0.count > 0 }?.description == "Review")
+        #expect(session.queue.first { $0.count > 0 }?.id != session.activeItemID)
+        _ = session.skipBreak(now: start)
+        #expect(session.activeItem?.description == "Review")
+    }
+
+    @Test func reorderRecalculatesFinishTimes() {
+        var session = Session()
+        session.addItem(description: "A", intensity: .regular, count: 1)
+        session.addItem(description: "B", intensity: .regular, count: 2)
+        let first = session.queue[0].id
+        let second = session.queue[1].id
+        session.reorder(id: second, to: 0)
+        let dates = session.finishDates(at: start)
+        #expect(dates[second] == start.addingTimeInterval(55 * 60))
+        #expect(dates[first] == start.addingTimeInterval(85 * 60))
+    }
+
+    @Test func gapMovesWhenThePointerCrossesANeighborMidpoint() {
+        #expect(QueueDrop.gapIndex(pointerY: 100, rowHeight: 40, gap: 2, lower: 0, upper: 5) == 2)
+        #expect(QueueDrop.gapIndex(pointerY: 59, rowHeight: 40, gap: 2, lower: 0, upper: 5) == 1)
+        #expect(QueueDrop.gapIndex(pointerY: 141, rowHeight: 40, gap: 2, lower: 0, upper: 5) == 3)
+        #expect(QueueDrop.gapIndex(pointerY: 200, rowHeight: 40, gap: 0, lower: 0, upper: 5) == 4)
+        #expect(QueueDrop.gapIndex(pointerY: 10, rowHeight: 40, gap: 0, lower: 2, upper: 4) == 2)
+        #expect(QueueDrop.gapIndex(pointerY: 400, rowHeight: 40, gap: 1, lower: 2, upper: 3) == 3)
+    }
+
+    @Test func releasingAboveTheListKeepsTheSnappedSlot() {
+        #expect(QueueDrop.releaseLandsInQueue(pointerX: 80, pointerY: -80, listWidth: 300, listHeight: 160))
+        #expect(QueueDrop.releaseLandsInQueue(pointerX: 80, pointerY: -400, listWidth: 300, listHeight: 160))
+        #expect(QueueDrop.releaseLandsInQueue(pointerX: 40, pointerY: 20, listWidth: 300, listHeight: 160))
+        #expect(QueueDrop.releaseLandsInQueue(pointerX: 40, pointerY: 200, listWidth: 300, listHeight: 160) == false)
+        #expect(QueueDrop.releaseLandsInQueue(pointerX: -80, pointerY: -20, listWidth: 300, listHeight: 160) == false)
     }
 
     @Test func reorderBeforeTheBreakFollowsTheNewFront() {
