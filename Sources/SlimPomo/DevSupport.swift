@@ -110,8 +110,11 @@ private final class Builder {
     let now: Date
     let calendar: Calendar
     var rng: SeededRandom
+    var durationRNG = SeededRandom(seed: 0x57A11ED)
     var events: [HistoryEvent] = []
     var occupied: Set<Date> = []
+    private var completionIndex = 0
+    private var seededShortFinish = false
 
     init(now: Date, calendar: Calendar, rng: SeededRandom) {
         self.now = now
@@ -189,15 +192,16 @@ private final class Builder {
 
     func doneRows(on today: Date) -> [QueueItem] {
         var order: [UUID] = []
-        var rows: [UUID: (name: String, mode: Intensity, count: Int)] = [:]
+        var rows: [UUID: (name: String, mode: Intensity, count: Int, worked: Int)] = [:]
         for event in events where calendar.isDate(event.timestamp, inSameDayAs: today) {
             if rows[event.queueItemId] == nil {
                 order.append(event.queueItemId)
-                rows[event.queueItemId] = (event.taskName, event.mode, 0)
+                rows[event.queueItemId] = (event.taskName, event.mode, 0, 0)
             }
             rows[event.queueItemId]?.name = event.taskName
             rows[event.queueItemId]?.mode = event.mode
             rows[event.queueItemId]?.count += 1
+            rows[event.queueItemId]?.worked += event.workedSeconds
         }
         return order.map { id in
             let row = rows[id]!
@@ -206,7 +210,8 @@ private final class Builder {
                 intensity: row.mode,
                 description: row.name,
                 count: row.count,
-                sourceID: id
+                sourceID: id,
+                workedSeconds: row.worked
             )
         }
     }
@@ -233,13 +238,25 @@ private final class Builder {
     }
 
     private func add(on timestamp: Date, task: UUID, name: String, mode: Intensity) {
+        completionIndex += 1
+        let planned = mode.mode.workMinutes * 60
+        var worked = planned
+        if completionIndex % 5 == 0 {
+            if !seededShortFinish {
+                seededShortFinish = true
+                worked = 1 + durationRNG.int(0..<59)
+            } else {
+                worked = 60 + durationRNG.int(0..<(planned - 59))
+            }
+        }
         events.append(HistoryEvent(
             id: rng.uuid(),
             timestamp: timestamp,
             queueItemId: task,
             taskName: name,
             mode: mode,
-            workMinutes: mode.mode.workMinutes
+            workMinutes: mode.mode.workMinutes,
+            workedSeconds: worked
         ))
         occupied.insert(calendar.startOfDay(for: timestamp))
     }
@@ -256,6 +273,10 @@ private final class Builder {
         precondition(DevSeed.longTaskName.count >= 110 && DevSeed.longTaskName.count <= 140)
         precondition(events.contains { $0.taskName == DevSeed.longTaskName })
         precondition(events.allSatisfy { $0.workMinutes == $0.mode.mode.workMinutes })
+        precondition(events.allSatisfy { $0.workedSeconds >= 1 && $0.workedSeconds <= $0.workMinutes * 60 })
+        let early = events.filter { $0.workedSeconds < $0.workMinutes * 60 }
+        precondition(early.count == events.count / 5)
+        precondition(early.contains { $0.workedSeconds < 60 })
         precondition(Set(events.map(\.mode)) == Set(Intensity.allCases))
 
         var byDay: [Date: [HistoryEvent]] = [:]

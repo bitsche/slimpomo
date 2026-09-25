@@ -74,6 +74,7 @@ final class AppModel {
         loaded.normalize()
         loaded.restoreAsPaused()
         loaded.migrateHistoryIfNeeded(now: moment)
+        loaded.migrateWorkedSecondsIfNeeded()
         loaded.refreshDoneDay(now: moment)
         session = loaded
         if let raw = UserDefaults.standard.string(forKey: Self.draftIntensityKey),

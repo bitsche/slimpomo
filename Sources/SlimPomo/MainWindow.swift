@@ -458,7 +458,7 @@ struct MainWindow: View {
 
     private var doneBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            centeredSectionTitle("DONE · \(shown.done.count)") {
+            centeredSectionTitle(doneTitle) {
                 Button {
                     model.clearDone()
                 } label: {
@@ -479,6 +479,13 @@ struct MainWindow: View {
                 }
             }
         }
+    }
+
+    private var doneTitle: String {
+        let count = shown.done.reduce(0) { $0 + max(0, $1.count) }
+        let noun = count == 1 ? "pomodoro" : "pomodoros"
+        let seconds = shown.done.reduce(0) { $0 + max(0, $1.workedSeconds) }
+        return "DONE · \(count) \(noun) · \(TimeFormat.span(TimeInterval(seconds))) work"
     }
 
     private var todoTitle: String {
@@ -911,8 +918,11 @@ private struct DoneLine: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
+                .layoutPriority(-1)
 
             Spacer(minLength: 8)
+
+            WorkedTimeLabel(seconds: item.workedSeconds)
 
             CountBadge(count: item.count, detail: "\(item.count) finished × \(item.intensity.mode.workMinutes) min")
 
@@ -1211,6 +1221,20 @@ private struct ModeChoices: View {
         model.setDraftIntensity(mode)
         if changed { model.noteDepthChanged() }
         model.modePickerOpen = false
+    }
+}
+
+struct WorkedTimeLabel: View {
+    var seconds: Int
+
+    var body: some View {
+        Text(TimeFormat.span(TimeInterval(seconds)))
+            .font(.system(size: 13, design: .monospaced).monospacedDigit())
+            .foregroundStyle(Palette.muted)
+            .lineLimit(1)
+            .frame(width: 68, alignment: .trailing)
+            .layoutPriority(1)
+            .accessibilityLabel("\(TimeFormat.span(TimeInterval(seconds))) worked")
     }
 }
 

@@ -300,13 +300,7 @@ enum TimeFormat {
     }
 
     static func span(_ seconds: TimeInterval) -> String {
-        let minutes = max(0, Int((seconds / 60).rounded()))
-        let hours = minutes / 60
-        let remainder = minutes % 60
-        if hours > 0 {
-            return "\(hours)h \(remainder)m"
-        }
-        return "\(remainder)m"
+        TimeSpan.text(seconds)
     }
 }
 

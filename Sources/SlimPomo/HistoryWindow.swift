@@ -231,7 +231,7 @@ private struct HistoryDaySection: View {
 
     private var title: String {
         let noun = day.pomodoros == 1 ? "pomodoro" : "pomodoros"
-        let work = TimeFormat.span(TimeInterval(day.workMinutes * 60))
+        let work = TimeFormat.span(TimeInterval(day.workedSeconds))
         return "\(HistoryDayTitle.text(for: day.day, now: now)) · \(day.pomodoros) \(noun) · \(work) work"
     }
 
@@ -256,8 +256,11 @@ private struct HistoryLine: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.white.opacity(0.75))
                 .lineLimit(1)
+                .layoutPriority(-1)
 
             Spacer(minLength: 8)
+
+            WorkedTimeLabel(seconds: row.workedSeconds)
 
             CountBadge(count: row.count, detail: "\(row.count) finished × \(row.mode.mode.workMinutes) min")
 
