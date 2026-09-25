@@ -256,10 +256,89 @@ public enum MenuTitleFit {
     }
 }
 
+/// A calendar date with no time, stored as `yyyy-MM-dd` in the local calendar.
+public enum CalendarDay {
+    public static func stamp(_ date: Date, calendar: Calendar = .current) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+    }
+
+    public static func date(_ stamp: String, calendar: Calendar = .current) -> Date? {
+        let parts = stamp.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+}
+
+public struct SnoozeOffer: Equatable, Identifiable, Sendable {
+    public var title: String
+    public var returnDay: String
+    public var id: String { returnDay }
+}
+
+public enum Snooze {
+    /// Tomorrow, and next Monday when that is a different day. On Sunday the only offer is tomorrow.
+    public static func offers(on now: Date, calendar: Calendar = .current) -> [SnoozeOffer] {
+        let today = calendar.startOfDay(for: now)
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) else { return [] }
+        let tomorrowStamp = CalendarDay.stamp(tomorrow, calendar: calendar)
+        let monday = nextMonday(after: today, calendar: calendar)
+        let mondayStamp = CalendarDay.stamp(monday, calendar: calendar)
+        if tomorrowStamp == mondayStamp {
+            let weekday = shortWeekday(monday, calendar: calendar)
+            return [SnoozeOffer(title: "Move to tomorrow (\(weekday))", returnDay: tomorrowStamp)]
+        }
+        return [
+            SnoozeOffer(title: "Move to tomorrow", returnDay: tomorrowStamp),
+            SnoozeOffer(title: "Move to next Monday", returnDay: mondayStamp),
+        ]
+    }
+
+    public static func offers(on now: Date, excluding returnDay: String, calendar: Calendar = .current) -> [SnoozeOffer] {
+        offers(on: now, calendar: calendar).filter { $0.returnDay != returnDay }
+    }
+
+    /// The first Monday after `today`. A Monday yields the Monday seven days later.
+    public static func nextMonday(after today: Date, calendar: Calendar) -> Date {
+        let weekday = calendar.component(.weekday, from: today)
+        let daysUntilMonday = (9 - weekday) % 7
+        let offset = daysUntilMonday == 0 ? 7 : daysUntilMonday
+        return calendar.date(byAdding: .day, value: offset, to: today) ?? today
+    }
+
+    private static func shortWeekday(_ date: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .autoupdatingCurrent
+        formatter.setLocalizedDateFormatFromTemplate("EEE")
+        return formatter.string(from: date)
+    }
+}
+
+public struct LaterItem: Identifiable, Equatable, Codable, Sendable {
+    public var id: UUID
+    public var intensity: Intensity
+    public var description: String
+    public var count: Int
+    /// Local calendar date, `yyyy-MM-dd`.
+    public var returnDay: String
+    public var snoozedAt: Date
+
+    public init(id: UUID, intensity: Intensity, description: String, count: Int, returnDay: String, snoozedAt: Date) {
+        self.id = id
+        self.intensity = intensity
+        self.description = description
+        self.count = count
+        self.returnDay = returnDay
+        self.snoozedAt = snoozedAt
+    }
+}
+
 public struct Session: Equatable, Codable {
     public static let maxPomodoros = 5
 
     public private(set) var queue: [QueueItem]
+    public private(set) var later: [LaterItem]
     public private(set) var done: [QueueItem]
     public private(set) var phase: Phase
     public private(set) var isRunning: Bool
@@ -279,6 +358,7 @@ public struct Session: Equatable, Codable {
 
     public init() {
         queue = []
+        later = []
         done = []
         phase = .idle
         isRunning = false
@@ -295,13 +375,14 @@ public struct Session: Equatable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case queue, done, phase, isRunning, remaining, phaseDuration, activeItemID, activeDescription, endsAt, lockedBreakDuration
+        case queue, later, done, phase, isRunning, remaining, phaseDuration, activeItemID, activeDescription, endsAt, lockedBreakDuration
         case history, doneDay, didMigrateHistory, didMigrateWorkedSeconds
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         queue = try container.decode([QueueItem].self, forKey: .queue)
+        later = try container.decodeIfPresent([LaterItem].self, forKey: .later) ?? []
         done = try container.decodeIfPresent([QueueItem].self, forKey: .done) ?? []
         phase = try container.decode(Phase.self, forKey: .phase)
         isRunning = try container.decode(Bool.self, forKey: .isRunning)
@@ -320,6 +401,7 @@ public struct Session: Equatable, Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(queue, forKey: .queue)
+        try container.encode(later, forKey: .later)
         try container.encode(done, forKey: .done)
         try container.encode(phase, forKey: .phase)
         try container.encode(isRunning, forKey: .isRunning)
@@ -482,6 +564,9 @@ public struct Session: Equatable, Codable {
         }
         if phase == .work, let id = activeItemID, let index = queue.firstIndex(where: { $0.id == id }), queue[index].count < 1 {
             queue[index].count = 1
+        }
+        for index in later.indices {
+            later[index].count = min(Self.maxPomodoros, max(0, later[index].count))
         }
         done = done.map { item in
             var copy = item
@@ -659,6 +744,81 @@ public struct Session: Equatable, Codable {
             return
         }
         queue[index].count = min(max(0, count), Self.maxPomodoros)
+    }
+
+    public func canSnooze(id: UUID) -> Bool {
+        guard queue.contains(where: { $0.id == id }) else { return false }
+        return !(phase == .work && activeItemID == id)
+    }
+
+    public mutating func snooze(id: UUID, returnDay: String, now: Date) {
+        guard canSnooze(id: id), let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        let item = queue.remove(at: index)
+        later.append(LaterItem(
+            id: item.id,
+            intensity: item.intensity,
+            description: item.description,
+            count: item.count,
+            returnDay: returnDay,
+            snoozedAt: now
+        ))
+    }
+
+    public func laterGroups() -> [(day: String, items: [LaterItem])] {
+        let sorted = later.sorted { lhs, rhs in
+            if lhs.returnDay != rhs.returnDay { return lhs.returnDay < rhs.returnDay }
+            return lhs.snoozedAt < rhs.snoozedAt
+        }
+        var order: [String] = []
+        var grouped: [String: [LaterItem]] = [:]
+        for item in sorted {
+            if grouped[item.returnDay] == nil {
+                order.append(item.returnDay)
+                grouped[item.returnDay] = []
+            }
+            grouped[item.returnDay, default: []].append(item)
+        }
+        return order.map { ($0, grouped[$0] ?? []) }
+    }
+
+    public mutating func deleteLater(id: UUID) {
+        later.removeAll { $0.id == id }
+    }
+
+    public mutating func retargetLater(id: UUID, returnDay: String, now: Date) {
+        guard let index = later.firstIndex(where: { $0.id == id }), later[index].returnDay != returnDay else { return }
+        later[index].returnDay = returnDay
+        later[index].snoozedAt = now
+    }
+
+    /// Puts one snoozed task back now, in the same spot a scheduled return would use.
+    public mutating func returnLater(id: UUID) {
+        guard let index = later.firstIndex(where: { $0.id == id }) else { return }
+        let item = later.remove(at: index)
+        insertReturned([item])
+    }
+
+    /// Moves every later item whose day is today or earlier back into the queue. Does not wait for an idle timer.
+    @discardableResult
+    public mutating func returnDueLater(now: Date, calendar: Calendar = .current) -> Bool {
+        let today = CalendarDay.stamp(now, calendar: calendar)
+        let due = later.filter { $0.returnDay <= today }.sorted { lhs, rhs in
+            if lhs.returnDay != rhs.returnDay { return lhs.returnDay < rhs.returnDay }
+            return lhs.snoozedAt < rhs.snoozedAt
+        }
+        guard !due.isEmpty else { return false }
+        let ids = Set(due.map(\.id))
+        later.removeAll { ids.contains($0.id) }
+        insertReturned(due)
+        return true
+    }
+
+    private mutating func insertReturned(_ items: [LaterItem]) {
+        let index = (activeWorkIndex() ?? -1) + 1
+        let rows = items.map {
+            QueueItem(id: $0.id, intensity: $0.intensity, description: $0.description, count: $0.count)
+        }
+        queue.insert(contentsOf: rows, at: min(max(0, index), queue.count))
     }
 
     public mutating func remove(id: UUID, now: Date, calendar: Calendar = .current) -> SessionEffect {
@@ -940,6 +1100,10 @@ extension Session {
         didMigrateHistory = true
         didMigrateWorkedSeconds = true
         becomeIdle()
+    }
+
+    public mutating func devInstallLater(_ items: [LaterItem]) {
+        later = items
     }
 }
 #endif

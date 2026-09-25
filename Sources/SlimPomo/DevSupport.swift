@@ -32,6 +32,8 @@ enum DevLaunch {
             session.devClearHistory()
         } else if args.contains("-staleDone") {
             DevSeed.installStaleDone(into: &session, now: now)
+        } else if args.contains("-seedLater") {
+            DevSeed.installLater(into: &session, now: now)
         }
     }
 
@@ -40,7 +42,7 @@ enum DevLaunch {
         if let id = Bundle.main.bundleIdentifier {
             defaults.removePersistentDomain(forName: id)
         }
-        for key in ["SlimPomo.draftIntensity", "SlimPomo.windowSize", "SlimPomo.historyWindowSize", "SlimPomo.depthHintDismissed"] {
+        for key in ["SlimPomo.draftIntensity", "SlimPomo.windowSize", "SlimPomo.historyWindowSize", "SlimPomo.depthHintDismissed", "SlimPomo.laterExpanded"] {
             defaults.removeObject(forKey: key)
         }
     }
@@ -71,6 +73,22 @@ enum DevSeed {
             QueueItem(id: UUID(uuidString: "A1000001-0000-4000-8000-000000000003")!, intensity: .intense, description: "Plan the next day", count: 3, sourceID: UUID(uuidString: "B1000001-0000-4000-8000-000000000003")!),
         ]
         session.devInstallStaleDone(rows, day: yesterday)
+    }
+
+    static func installLater(into session: inout Session, now: Date) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+        let tomorrow = CalendarDay.stamp(calendar.date(byAdding: .day, value: 1, to: today)!, calendar: calendar)
+        let monday = CalendarDay.stamp(Snooze.nextMonday(after: today, calendar: calendar), calendar: calendar)
+        let earlier = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: yesterday)!
+        let later = calendar.date(bySettingHour: 15, minute: 0, second: 0, of: yesterday)!
+        session.devInstallLater([
+            LaterItem(id: UUID(uuidString: "D1000001-0000-4000-8000-000000000001")!, intensity: .regular, description: "Due yesterday, earlier", count: 2, returnDay: CalendarDay.stamp(yesterday, calendar: calendar), snoozedAt: earlier),
+            LaterItem(id: UUID(uuidString: "D1000001-0000-4000-8000-000000000002")!, intensity: .focus, description: "Due yesterday, later", count: 1, returnDay: CalendarDay.stamp(yesterday, calendar: calendar), snoozedAt: later),
+            LaterItem(id: UUID(uuidString: "D1000001-0000-4000-8000-000000000003")!, intensity: .regular, description: "Due tomorrow", count: 1, returnDay: tomorrow, snoozedAt: now),
+            LaterItem(id: UUID(uuidString: "D1000001-0000-4000-8000-000000000004")!, intensity: .intense, description: "Due next Monday", count: 3, returnDay: monday, snoozedAt: now),
+        ])
     }
 }
 

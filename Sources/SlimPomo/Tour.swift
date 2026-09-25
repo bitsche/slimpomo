@@ -79,7 +79,7 @@ enum TourStep: Hashable {
         case .timer:
             "START begins the first task that has pomodoros left. PAUSE freezes the clock. RESET drops a running session without counting it. While paused, FINISH counts it as done and records the time you actually worked. A break always follows, and SKIP ends it early."
         case .reorder:
-            "Hover a task and drag the grip on its left to move it. A task that is running stays at the top and can't be moved."
+            "Hover a task and drag the grip on its left to move it. A task that is running stays at the top and can't be moved. Or use ••• to move it to tomorrow or next Monday."
         case .menuBar:
             "SlimPomo lives up there. The tomato means idle, the ring fills as time passes, pause bars mean paused, and a smile means you're on a break. Click it for quick controls, right-click to open this window."
         case .done:

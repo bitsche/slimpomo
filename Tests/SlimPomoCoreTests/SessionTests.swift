@@ -925,6 +925,140 @@ struct SessionTests {
     }
 }
 
+    @Test func snoozeKeepsTheTaskForTomorrowOrNextMonday() {
+        let calendar = HistoryClock.calendar
+        let friday = HistoryClock.date(2026, 9, 25, 10, 0)
+        var session = Session()
+        session.addItem(description: "Write", intensity: .focus, count: 2)
+        session.addItem(description: "Review", intensity: .regular, count: 1)
+        let offers = Snooze.offers(on: friday, calendar: calendar)
+        #expect(offers.map(\.title) == ["Move to tomorrow", "Move to next Monday"])
+        #expect(offers[0].returnDay == "2026-09-26")
+        #expect(offers[1].returnDay == "2026-09-28")
+
+        session.snooze(id: session.queue[0].id, returnDay: offers[0].returnDay, now: friday)
+        #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.later.map(\.description) == ["Write"])
+        #expect(session.later[0].intensity == .focus)
+        #expect(session.later[0].count == 2)
+        #expect(session.later[0].returnDay == "2026-09-26")
+        #expect(session.finishDates(at: friday)[session.later[0].id] == nil)
+        #expect(session.statusMenu(at: friday).taskName == "Review")
+
+        let monday = HistoryClock.date(2026, 9, 21, 9, 0)
+        let mondayOffers = Snooze.offers(on: monday, calendar: calendar)
+        #expect(mondayOffers[1].returnDay == "2026-09-28")
+
+        var sundayCalendar = calendar
+        sundayCalendar.locale = Locale(identifier: "en_US")
+        let sunday = HistoryClock.date(2026, 9, 27, 9, 0, calendar: sundayCalendar)
+        let sundayOffers = Snooze.offers(on: sunday, calendar: sundayCalendar)
+        #expect(sundayOffers.map(\.title) == ["Move to tomorrow (Mon)"])
+        #expect(sundayOffers[0].returnDay == "2026-09-28")
+    }
+
+    @Test func activeWorkCannotBeSnoozedAndABreakCan() {
+        let calendar = HistoryClock.calendar
+        let start = HistoryClock.date(2026, 9, 25, 9, 0)
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        _ = session.start(now: start, calendar: calendar)
+        let active = session.queue[0].id
+        #expect(session.canSnooze(id: active) == false)
+        session.snooze(id: active, returnDay: "2026-09-26", now: start)
+        #expect(session.queue.contains { $0.id == active })
+        #expect(session.later.isEmpty)
+        _ = session.pause(now: start.addingTimeInterval(30))
+        #expect(session.canSnooze(id: active) == false)
+
+        _ = session.resume(now: start.addingTimeInterval(30))
+        _ = session.markDone(now: start.addingTimeInterval(60), calendar: calendar)
+        #expect(session.phase == .breakTime)
+        let next = session.queue.first { $0.description == "Review" }!
+        #expect(session.canSnooze(id: next.id))
+        session.snooze(id: next.id, returnDay: "2026-09-26", now: start.addingTimeInterval(60))
+        #expect(session.queue.contains { $0.id == next.id } == false)
+        #expect(session.later.map(\.description) == ["Review"])
+        session.addItem(description: "Zero", intensity: .regular, count: 1)
+        session.setCount(id: session.queue.last!.id, count: 0)
+        let zero = session.queue.last!.id
+        #expect(session.canSnooze(id: zero))
+        session.snooze(id: zero, returnDay: "2026-09-26", now: start.addingTimeInterval(61))
+        #expect(session.later.contains { $0.id == zero && $0.count == 0 })
+    }
+
+    @Test func dueLaterItemsReturnAtTheTopInOrder() {
+        let calendar = HistoryClock.calendar
+        let friday = HistoryClock.date(2026, 9, 25, 18, 0)
+        var session = Session()
+        session.addItem(description: "Stay", intensity: .regular, count: 1)
+        let stay = session.queue[0].id
+        func park(_ name: String, intensity: Intensity, count: Int, day: String, at: Date) {
+            session.addItem(description: name, intensity: intensity, count: count)
+            session.snooze(id: session.queue.last!.id, returnDay: day, now: at)
+        }
+        park("Monday", intensity: .focus, count: 1, day: "2026-09-28", at: friday)
+        park("Earlier yesterday", intensity: .regular, count: 2, day: "2026-09-24", at: friday.addingTimeInterval(-3600))
+        park("Later yesterday", intensity: .intense, count: 3, day: "2026-09-24", at: friday)
+        park("Tomorrow", intensity: .regular, count: 1, day: "2026-09-26", at: friday)
+        let mondayID = session.later.first { $0.description == "Monday" }!.id
+        let returnedOnFriday = session.returnDueLater(now: friday, calendar: calendar)
+        #expect(returnedOnFriday)
+        #expect(session.queue.map(\.description) == ["Earlier yesterday", "Later yesterday", "Stay"])
+        #expect(session.queue[0].count == 2)
+        #expect(session.queue[0].intensity == .regular)
+        #expect(session.later.map(\.description) == ["Monday", "Tomorrow"])
+        #expect(session.later.contains { $0.id == mondayID })
+
+        session.refreshDoneDay(now: HistoryClock.date(2026, 9, 26, 0, 5), calendar: calendar)
+        #expect(session.queue.contains { $0.id == stay })
+        #expect(session.later.contains { $0.description == "Tomorrow" })
+
+        let saturday = HistoryClock.date(2026, 9, 26, 8, 0)
+        let returnedOnSaturday = session.returnDueLater(now: saturday, calendar: calendar)
+        #expect(returnedOnSaturday)
+        #expect(session.queue.map(\.description) == ["Tomorrow", "Earlier yesterday", "Later yesterday", "Stay"])
+        #expect(session.later.map(\.description) == ["Monday"])
+    }
+
+    @Test func returningLaterItemsSitBelowTheRunningTask() {
+        let calendar = HistoryClock.calendar
+        let start = HistoryClock.date(2026, 9, 25, 9, 0)
+        var session = Session()
+        session.addItem(description: "Running", intensity: .regular, count: 1)
+        session.addItem(description: "Queued", intensity: .regular, count: 1)
+        _ = session.start(now: start, calendar: calendar)
+        session.addItem(description: "Back later", intensity: .intense, count: 1)
+        session.snooze(id: session.queue.last!.id, returnDay: "2026-09-24", now: start)
+        session.addItem(description: "Back", intensity: .focus, count: 2)
+        session.snooze(id: session.queue.last!.id, returnDay: "2026-09-25", now: start)
+        let returned = session.returnDueLater(now: start, calendar: calendar)
+        #expect(returned)
+        #expect(session.queue.map(\.description) == ["Running", "Back later", "Back", "Queued"])
+        #expect(session.phase == .work)
+    }
+
+    @Test func laterRowCanReturnRetargetAndDelete() {
+        let calendar = HistoryClock.calendar
+        let friday = HistoryClock.date(2026, 9, 25, 11, 0)
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let id = session.queue[0].id
+        session.snooze(id: id, returnDay: "2026-09-26", now: friday)
+        let other = Snooze.offers(on: friday, excluding: "2026-09-26", calendar: calendar)
+        #expect(other.map(\.title) == ["Move to next Monday"])
+        session.retargetLater(id: id, returnDay: other[0].returnDay, now: friday.addingTimeInterval(10))
+        #expect(session.later[0].returnDay == "2026-09-28")
+        session.returnLater(id: id)
+        #expect(session.later.isEmpty)
+        #expect(session.queue.map(\.id) == [id])
+        session.snooze(id: id, returnDay: "2026-09-26", now: friday)
+        session.deleteLater(id: id)
+        #expect(session.later.isEmpty)
+        #expect(session.queue.isEmpty)
+    }
+
 private enum HistoryClock {
     static var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)

@@ -16,6 +16,7 @@ final class AppModel {
     var modePickerOpen = false
     var modeHighlight = Intensity.regular
     var depthHintDismissed = false
+    var laterExpanded = true
     var depthChipHover = false
     var depthHintHover = false
     var depthChipFocused = false
@@ -77,6 +78,7 @@ final class AppModel {
         loaded.migrateHistoryIfNeeded(now: moment)
         loaded.migrateWorkedSecondsIfNeeded()
         loaded.refreshDoneDay(now: moment)
+        loaded.returnDueLater(now: moment)
         session = loaded
         if let raw = UserDefaults.standard.string(forKey: Self.draftIntensityKey),
            let saved = Intensity(rawValue: raw) {
@@ -84,6 +86,9 @@ final class AppModel {
         }
         modeHighlight = draftIntensity
         depthHintDismissed = UserDefaults.standard.bool(forKey: Self.depthHintKey)
+        if UserDefaults.standard.object(forKey: Self.laterExpandedKey) != nil {
+            laterExpanded = UserDefaults.standard.bool(forKey: Self.laterExpandedKey)
+        }
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         syncBreakMessage()
         store.save(loaded)
@@ -226,6 +231,51 @@ final class AppModel {
         apply { session in
             session.setCount(id: id, count: count)
             return .none
+        }
+    }
+
+    func toggleLaterExpanded() {
+        laterExpanded.toggle()
+        UserDefaults.standard.set(laterExpanded, forKey: Self.laterExpandedKey)
+    }
+
+    func snooze(id: UUID, returnDay: String) {
+        descriptionDrafts[id] = nil
+        if hoveredQueueID == id {
+            hoveredQueueID = nil
+        }
+        withAnimation(QueueMotion.slide(reduceMotion)) {
+            apply { session in
+                session.snooze(id: id, returnDay: returnDay, now: now)
+                return .none
+            }
+        }
+    }
+
+    func returnLater(id: UUID) {
+        withAnimation(QueueMotion.slide(reduceMotion)) {
+            apply { session in
+                session.returnLater(id: id)
+                return .none
+            }
+        }
+    }
+
+    func retargetLater(id: UUID, returnDay: String) {
+        withAnimation(QueueMotion.slide(reduceMotion)) {
+            apply { session in
+                session.retargetLater(id: id, returnDay: returnDay, now: now)
+                return .none
+            }
+        }
+    }
+
+    func deleteLater(id: UUID) {
+        withAnimation(QueueMotion.slide(reduceMotion)) {
+            apply { session in
+                session.deleteLater(id: id)
+                return .none
+            }
         }
     }
 
@@ -421,6 +471,7 @@ final class AppModel {
         guard tour == nil else { return }
         now = Date()
         session.refreshDoneDay(now: now)
+        bringBackDueLater(animated: true)
         let effect = change(&session)
         bell.play(effect)
         syncBreakMessage()
@@ -432,6 +483,7 @@ final class AppModel {
     private func tick() {
         now = Date()
         session.refreshDoneDay(now: now)
+        bringBackDueLater(animated: true)
         let effect = session.reconcile(now: now)
         bell.play(effect)
         syncBreakMessage()
@@ -444,6 +496,7 @@ final class AppModel {
         let previousDay = session.doneDay
         let previousDone = session.done
         session.refreshDoneDay(now: now)
+        bringBackDueLater(animated: true)
         guard session.doneDay != previousDay || session.done != previousDone else { return }
         store.save(session.snapshot(at: now))
     }
@@ -486,6 +539,19 @@ final class AppModel {
                 }
             }
         )
+    }
+
+    private func bringBackDueLater(animated: Bool) {
+        let returned: Bool
+        if animated {
+            returned = withAnimation(QueueMotion.slide(reduceMotion)) {
+                self.session.returnDueLater(now: self.now)
+            }
+        } else {
+            returned = session.returnDueLater(now: now)
+        }
+        guard returned else { return }
+        store.save(session.snapshot(at: now))
     }
 
     private func scheduleMidnight() {
@@ -783,6 +849,7 @@ final class AppModel {
 
     private static let draftIntensityKey = "SlimPomo.draftIntensity"
     private static let depthHintKey = "SlimPomo.depthHintDismissed"
+    private static let laterExpandedKey = "SlimPomo.laterExpanded"
 
     private func ensureTicker() {
         guard tickTimer == nil else { return }

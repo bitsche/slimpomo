@@ -210,6 +210,9 @@ struct MainWindow: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         queueBlock
+                        if !shown.later.isEmpty {
+                            laterBlock
+                        }
                         if !shown.done.isEmpty {
                             doneBlock
                                 .tourTarget(.doneSection)
@@ -451,6 +454,54 @@ struct MainWindow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.white.opacity(0.045))
         )
+    }
+
+    private var laterBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            centeredSectionTitle("LATER · \(shown.later.count)") {
+                Button {
+                    model.toggleLaterExpanded()
+                } label: {
+                    Image(systemName: model.laterExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.7))
+                        .frame(width: 22, height: 18)
+                        .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help(model.laterExpanded ? "Collapse later" : "Expand later")
+                .accessibilityLabel(model.laterExpanded ? "Collapse later" : "Expand later")
+            }
+            if model.laterExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(shown.laterGroups(), id: \.day) { group in
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(laterHeading(group.day))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.white.opacity(0.45))
+                                .padding(.leading, 18)
+                                .padding(.bottom, 4)
+                            ForEach(group.items) { item in
+                                LaterLine(item: item, model: model)
+                            }
+                        }
+                    }
+                }
+                .animation(QueueMotion.slide(model.reduceMotion), value: shown.later.map(\.id))
+            }
+        }
+    }
+
+    private func laterHeading(_ day: String) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: model.now)
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: today),
+           day == CalendarDay.stamp(tomorrow, calendar: calendar) {
+            return "Tomorrow"
+        }
+        guard let date = CalendarDay.date(day, calendar: calendar) else { return day }
+        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 
     private var doneBlock: some View {
@@ -849,6 +900,11 @@ private struct QueueLine: View {
                 .disabled(!model.session.canMoveUp(id: item.id))
             Button("Move down") { model.moveDown(id: item.id) }
                 .disabled(!model.session.canMoveDown(id: item.id))
+            let snoozeLocked = !model.session.canSnooze(id: item.id)
+            ForEach(Snooze.offers(on: model.now)) { offer in
+                Button(offer.title) { model.snooze(id: item.id, returnDay: offer.returnDay) }
+                    .disabled(snoozeLocked)
+            }
 
             Divider()
 
@@ -856,21 +912,12 @@ private struct QueueLine: View {
                 model.remove(id: item.id)
             }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white.opacity(0.9))
-                .frame(width: 26, height: 22)
-                .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
-                        .stroke(Color.white.opacity(0.55), lineWidth: 1)
-                        .allowsHitTesting(false)
-                )
+            EllipsisMenuLabel()
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Reorder or delete")
+        .help("Reorder, snooze, or delete")
     }
 
     private var finishText: String {
@@ -889,6 +936,75 @@ private struct QueueLine: View {
             get: { model.descriptionDraft(for: item) },
             set: { model.setDescriptionDraft(id: item.id, text: $0) }
         )
+    }
+}
+
+private struct LaterLine: View {
+    var item: LaterItem
+    var model: AppModel
+
+    private var taskName: String {
+        item.description.isEmpty ? "Untitled" : item.description
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            IntensityMark(intensity: item.intensity)
+                .opacity(0.55)
+                .accessibilityHidden(true)
+
+            Text(taskName)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .layoutPriority(-1)
+
+            Spacer(minLength: 8)
+
+            CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min")
+                .opacity(0.7)
+                .allowsHitTesting(false)
+
+            Menu {
+                Button("Back to queue") { model.returnLater(id: item.id) }
+                ForEach(Snooze.offers(on: model.now, excluding: item.returnDay)) { offer in
+                    Button(offer.title) { model.retargetLater(id: item.id, returnDay: offer.returnDay) }
+                }
+                Divider()
+                Button("Delete", role: .destructive) {
+                    model.deleteLater(id: item.id)
+                }
+            } label: {
+                EllipsisMenuLabel()
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Return, reschedule, or delete")
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 7)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Palette.hairline)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct EllipsisMenuLabel: View {
+    var body: some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(.white.opacity(0.9))
+            .frame(width: 26, height: 22)
+            .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
+            .overlay(
+                RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
+                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
+                    .allowsHitTesting(false)
+            )
     }
 }
 
