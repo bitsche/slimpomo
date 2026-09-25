@@ -62,18 +62,21 @@ public struct QueueItem: Identifiable, Equatable, Codable {
     public var completed: Int
     /// Queue item these done pomodoros came from, so later finishes accumulate on the same row.
     public var sourceID: UUID?
+    /// Seconds actually worked across this done row's completions. Queue rows leave it at 0.
+    public var workedSeconds: Int
 
-    public init(id: UUID, intensity: Intensity, description: String, count: Int, completed: Int = 0, sourceID: UUID? = nil) {
+    public init(id: UUID, intensity: Intensity, description: String, count: Int, completed: Int = 0, sourceID: UUID? = nil, workedSeconds: Int = 0) {
         self.id = id
         self.intensity = intensity
         self.description = description
         self.count = count
         self.completed = completed
         self.sourceID = sourceID
+        self.workedSeconds = workedSeconds
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, intensity, description, count, completed, sourceID
+        case id, intensity, description, count, completed, sourceID, workedSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +87,7 @@ public struct QueueItem: Identifiable, Equatable, Codable {
         count = try container.decode(Int.self, forKey: .count)
         completed = try container.decodeIfPresent(Int.self, forKey: .completed) ?? 0
         sourceID = try container.decodeIfPresent(UUID.self, forKey: .sourceID)
+        workedSeconds = try container.decodeIfPresent(Int.self, forKey: .workedSeconds) ?? 0
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -94,6 +98,7 @@ public struct QueueItem: Identifiable, Equatable, Codable {
         try container.encode(count, forKey: .count)
         try container.encode(completed, forKey: .completed)
         try container.encodeIfPresent(sourceID, forKey: .sourceID)
+        try container.encode(workedSeconds, forKey: .workedSeconds)
     }
 }
 
@@ -118,15 +123,61 @@ public struct HistoryEvent: Identifiable, Equatable, Codable, Sendable {
     public var queueItemId: UUID
     public var taskName: String
     public var mode: Intensity
+    /// Planned length of the mode. Early finishes keep this and store the real time in `workedSeconds`.
     public var workMinutes: Int
+    /// Seconds that actually ran for this one pomodoro. Never below 1.
+    public var workedSeconds: Int
 
-    public init(id: UUID, timestamp: Date, queueItemId: UUID, taskName: String, mode: Intensity, workMinutes: Int) {
+    public init(id: UUID, timestamp: Date, queueItemId: UUID, taskName: String, mode: Intensity, workMinutes: Int, workedSeconds: Int) {
         self.id = id
         self.timestamp = timestamp
         self.queueItemId = queueItemId
         self.taskName = taskName
         self.mode = mode
         self.workMinutes = workMinutes
+        self.workedSeconds = workedSeconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, queueItemId, taskName, mode, workMinutes, workedSeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        queueItemId = try container.decode(UUID.self, forKey: .queueItemId)
+        taskName = try container.decode(String.self, forKey: .taskName)
+        mode = try container.decode(Intensity.self, forKey: .mode)
+        workMinutes = try container.decode(Int.self, forKey: .workMinutes)
+        workedSeconds = try container.decodeIfPresent(Int.self, forKey: .workedSeconds) ?? 0
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(queueItemId, forKey: .queueItemId)
+        try container.encode(taskName, forKey: .taskName)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(workMinutes, forKey: .workMinutes)
+        try container.encode(workedSeconds, forKey: .workedSeconds)
+    }
+}
+
+/// Shared header and row label. Seconds are added first; the total is rounded once.
+public enum TimeSpan {
+    public static func text(_ seconds: TimeInterval) -> String {
+        if seconds > 0, seconds < 30 {
+            return "<1m"
+        }
+        let minutes = max(0, Int((seconds / 60).rounded()))
+        let hours = minutes / 60
+        let remainder = minutes % 60
+        if hours > 0 {
+            return "\(hours)h \(remainder)m"
+        }
+        return "\(remainder)m"
     }
 }
 
@@ -135,6 +186,7 @@ public struct HistoryRow: Identifiable, Equatable, Sendable {
     public var taskName: String
     public var mode: Intensity
     public var count: Int
+    public var workedSeconds: Int
 
     public var id: UUID { queueItemId }
 }
@@ -143,6 +195,7 @@ public struct HistoryDay: Identifiable, Equatable, Sendable {
     public var day: Date
     public var pomodoros: Int
     public var workMinutes: Int
+    public var workedSeconds: Int
     public var rows: [HistoryRow]
 
     public var id: Date { day }
@@ -171,6 +224,8 @@ public struct Session: Equatable, Codable {
     public private(set) var doneDay: Date?
     /// Existing Done rows are copied into history once.
     public private(set) var didMigrateHistory: Bool
+    /// Older events and Done rows receive full-length worked time once.
+    public private(set) var didMigrateWorkedSeconds: Bool
 
     public init() {
         queue = []
@@ -186,11 +241,12 @@ public struct Session: Equatable, Codable {
         history = []
         doneDay = nil
         didMigrateHistory = false
+        didMigrateWorkedSeconds = true
     }
 
     private enum CodingKeys: String, CodingKey {
         case queue, done, phase, isRunning, remaining, phaseDuration, activeItemID, activeDescription, endsAt, lockedBreakDuration
-        case history, doneDay, didMigrateHistory
+        case history, doneDay, didMigrateHistory, didMigrateWorkedSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -208,6 +264,7 @@ public struct Session: Equatable, Codable {
         history = try container.decodeIfPresent([HistoryEvent].self, forKey: .history) ?? []
         doneDay = try container.decodeIfPresent(Date.self, forKey: .doneDay)
         didMigrateHistory = try container.decodeIfPresent(Bool.self, forKey: .didMigrateHistory) ?? false
+        didMigrateWorkedSeconds = try container.decodeIfPresent(Bool.self, forKey: .didMigrateWorkedSeconds) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -227,6 +284,7 @@ public struct Session: Equatable, Codable {
         try container.encode(history, forKey: .history)
         try container.encodeIfPresent(doneDay, forKey: .doneDay)
         try container.encode(didMigrateHistory, forKey: .didMigrateHistory)
+        try container.encode(didMigrateWorkedSeconds, forKey: .didMigrateWorkedSeconds)
     }
 
     public var activeItem: QueueItem? {
@@ -413,11 +471,25 @@ public struct Session: Equatable, Codable {
                     queueItemId: source,
                     taskName: item.description,
                     mode: item.intensity,
-                    workMinutes: item.intensity.mode.workMinutes
+                    workMinutes: item.intensity.mode.workMinutes,
+                    workedSeconds: item.intensity.mode.workMinutes * 60
                 ))
             }
         }
         doneDay = calendar.startOfDay(for: now)
+    }
+
+    /// Fills missing worked time with the planned length, once. It never adds events.
+    public mutating func migrateWorkedSecondsIfNeeded() {
+        guard !didMigrateWorkedSeconds else { return }
+        didMigrateWorkedSeconds = true
+        for index in history.indices where history[index].workedSeconds == 0 {
+            history[index].workedSeconds = history[index].workMinutes * 60
+        }
+        for index in done.indices where done[index].workedSeconds == 0 {
+            let minutes = done[index].intensity.mode.workMinutes
+            done[index].workedSeconds = minutes * 60 * done[index].count
+        }
     }
 
     /// Newest day first. Rows follow the order the task first finished that day.
@@ -443,17 +515,20 @@ public struct Session: Equatable, Codable {
                         queueItemId: event.queueItemId,
                         taskName: event.taskName,
                         mode: event.mode,
-                        count: 0
+                        count: 0,
+                        workedSeconds: 0
                     )
                 }
                 rows[event.queueItemId]?.taskName = event.taskName
                 rows[event.queueItemId]?.mode = event.mode
                 rows[event.queueItemId]?.count += 1
+                rows[event.queueItemId]?.workedSeconds += event.workedSeconds
             }
             return HistoryDay(
                 day: day,
                 pomodoros: events.count,
                 workMinutes: events.reduce(0) { $0 + $1.workMinutes },
+                workedSeconds: events.reduce(0) { $0 + $1.workedSeconds },
                 rows: rowOrder.compactMap { rows[$0] }
             )
         }
@@ -635,12 +710,13 @@ public struct Session: Equatable, Codable {
             settleDoneDay(now: now, calendar: calendar, force: false)
             return
         }
+        let worked = elapsedWorkSeconds(at: now)
         settleDoneDay(now: now, calendar: calendar, force: true)
         let finished = queue[index]
         activeDescription = finished.description
         queue[index].count = max(0, queue[index].count - 1)
         queue[index].completed += 1
-        recordFinishedPomodoro(from: finished, at: now)
+        recordFinishedPomodoro(from: finished, at: now, workedSeconds: worked)
         let breakDuration = lockedBreakDuration ?? finished.intensity.breakDuration
         if queue[index].count <= 0 {
             queue.remove(at: index)
@@ -648,17 +724,31 @@ public struct Session: Equatable, Codable {
         beginBreak(duration: breakDuration, itemID: id, now: now)
     }
 
-    private mutating func recordFinishedPomodoro(from item: QueueItem, at now: Date) {
+    /// Planned work minus the time still left. Pauses and time the app was closed stay in `remaining`.
+    private func elapsedWorkSeconds(at now: Date) -> Int {
+        let left: TimeInterval
+        if isRunning, let endsAt {
+            left = max(0, endsAt.timeIntervalSince(now))
+        } else {
+            left = max(0, remaining)
+        }
+        let seconds = (phaseDuration - left).rounded()
+        return max(1, Int(seconds))
+    }
+
+    private mutating func recordFinishedPomodoro(from item: QueueItem, at now: Date, workedSeconds: Int) {
         history.append(HistoryEvent(
             id: UUID(),
             timestamp: now,
             queueItemId: item.id,
             taskName: item.description,
             mode: item.intensity,
-            workMinutes: item.intensity.mode.workMinutes
+            workMinutes: item.intensity.mode.workMinutes,
+            workedSeconds: workedSeconds
         ))
         if let index = done.lastIndex(where: { $0.sourceID == item.id }) {
             done[index].count += 1
+            done[index].workedSeconds += workedSeconds
             return
         }
         done.append(QueueItem(
@@ -666,7 +756,8 @@ public struct Session: Equatable, Codable {
             intensity: item.intensity,
             description: item.description,
             count: 1,
-            sourceID: item.id
+            sourceID: item.id,
+            workedSeconds: workedSeconds
         ))
     }
 
@@ -703,6 +794,29 @@ public struct Session: Equatable, Codable {
         endsAt = nil
         lockedBreakDuration = nil
     }
+
+    /// Idle queue and Done list shown during the tour. It is never saved.
+    public static func tourSample() -> Session {
+        var session = Session()
+        session.queue = [
+            QueueItem(id: TourSample.outline, intensity: .focus, description: "Write project outline", count: 2),
+            QueueItem(id: TourSample.emails, intensity: .regular, description: "Answer emails", count: 1),
+            QueueItem(id: TourSample.contract, intensity: .intense, description: "Review contract", count: 1),
+        ]
+        session.done = [
+            QueueItem(id: TourSample.plannedWeek, intensity: .regular, description: "Plan the week", count: 1, workedSeconds: 25 * 60),
+        ]
+        session.didMigrateHistory = true
+        session.didMigrateWorkedSeconds = true
+        return session
+    }
+}
+
+public enum TourSample {
+    public static let outline = UUID(uuidString: "C2000001-0000-4000-8000-000000000001")!
+    public static let emails = UUID(uuidString: "C2000001-0000-4000-8000-000000000002")!
+    public static let contract = UUID(uuidString: "C2000001-0000-4000-8000-000000000003")!
+    public static let plannedWeek = UUID(uuidString: "C2000001-0000-4000-8000-000000000004")!
 }
 
 #if SLIMPOMO_DEV
@@ -713,11 +827,13 @@ extension Session {
         done = doneToday
         doneDay = day
         didMigrateHistory = true
+        didMigrateWorkedSeconds = true
     }
 
     public mutating func devClearHistory() {
         history = []
         didMigrateHistory = true
+        didMigrateWorkedSeconds = true
     }
 
     /// Done belongs to an earlier day, and the timer is idle, so launch can clear it.
@@ -725,6 +841,7 @@ extension Session {
         done = rows
         doneDay = day
         didMigrateHistory = true
+        didMigrateWorkedSeconds = true
         becomeIdle()
     }
 }

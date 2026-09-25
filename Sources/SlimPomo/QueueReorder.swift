@@ -134,7 +134,7 @@ final class QueueGripView: NSView {
     override var isOpaque: Bool { false }
 
     override func resetCursorRects() {
-        guard enabled else { return }
+        guard enabled, !AppRuntime.model.isTouring else { return }
         addCursorRect(bounds, cursor: .openHand)
     }
 

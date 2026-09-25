@@ -6,7 +6,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 usage() {
-    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset]" >&2
+    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour]" >&2
     exit 1
 }
 
@@ -18,6 +18,7 @@ case "${1:-}" in
     --clear-history) flag="-clearHistory" ;;
     --stale-done) flag="-staleDone" ;;
     --reset) flag="-resetAll" ;;
+    --tour) flag="-resetTour" ;;
     *) usage ;;
 esac
 if [[ $# -gt 1 ]]; then

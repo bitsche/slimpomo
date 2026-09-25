@@ -545,6 +545,9 @@ struct SessionTests {
         #expect(session.history[0].taskName == "Write")
         #expect(session.history[0].mode == .focus)
         #expect(session.history[0].workMinutes == 50)
+        #expect(session.history[0].workedSeconds == 50 * 60)
+        #expect(session.done[0].workedSeconds == 50 * 60)
+        #expect(session.phaseDuration == 10 * 60)
         #expect(session.history[0].queueItemId == session.done[0].sourceID)
         #expect(session.history[0].timestamp == finished)
 
@@ -595,6 +598,8 @@ struct SessionTests {
         let today = calendar.startOfDay(for: finished)
         #expect(session.groupedHistory(calendar: calendar)[0].day == today)
         #expect(session.groupedHistory(calendar: calendar)[0].workMinutes == 25)
+        #expect(session.history[0].workedSeconds == 25 * 60)
+        #expect(session.groupedHistory(calendar: calendar)[0].workedSeconds == 25 * 60)
     }
 
     @Test func breakAcrossMidnightClearsDoneWhenTheBreakEnds() {
@@ -717,6 +722,21 @@ struct SessionTests {
         #expect(session.history.count == 3)
     }
 
+    @Test func tourSampleStaysOutOfHistory() {
+        let sample = Session.tourSample()
+        #expect(sample.phase == .idle)
+        #expect(sample.isRunning == false)
+        #expect(sample.history.isEmpty)
+        #expect(sample.queue.map(\.id) == [TourSample.outline, TourSample.emails, TourSample.contract])
+        #expect(sample.queue.map(\.description) == ["Write project outline", "Answer emails", "Review contract"])
+        #expect(sample.queue.map(\.intensity) == [.focus, .regular, .intense])
+        #expect(sample.queue.map(\.count) == [2, 1, 1])
+        #expect(sample.done.map(\.description) == ["Plan the week"])
+        #expect(sample.done.map(\.intensity) == [.regular])
+        #expect(sample.done.map(\.count) == [1])
+        #expect(sample.done[0].workedSeconds == 25 * 60)
+    }
+
     @Test func existingDoneMigratesOnce() throws {
         let calendar = HistoryClock.calendar
         let source = UUID()
@@ -736,6 +756,118 @@ struct SessionTests {
         })
         session.migrateHistoryIfNeeded(now: launched.addingTimeInterval(3600), calendar: calendar)
         #expect(session.history.count == 2)
+        session.migrateWorkedSecondsIfNeeded()
+        #expect(session.didMigrateWorkedSeconds)
+        #expect(session.history.count == 2)
+        #expect(session.history.allSatisfy { $0.workedSeconds == 50 * 60 })
+        #expect(session.done[0].workedSeconds == 50 * 60 * 2)
+        session.migrateWorkedSecondsIfNeeded()
+        #expect(session.history.count == 2)
+        #expect(session.done[0].workedSeconds == 50 * 60 * 2)
+    }
+
+    @Test func missingWorkedSecondsMigrateOnceWithoutNewEvents() throws {
+        let event = UUID()
+        let source = UUID()
+        let row = UUID()
+        let json = """
+        {"isRunning":false,"phase":"idle","phaseDuration":0,"queue":[],"remaining":0,"didMigrateHistory":true,"history":[{"id":"\(event.uuidString)","timestamp":100,"queueItemId":"\(source.uuidString)","taskName":"Write","mode":"regular","workMinutes":25}],"done":[{"id":"\(row.uuidString)","intensity":"regular","description":"Write","count":2,"sourceID":"\(source.uuidString)"}]}
+        """
+        var session = try JSONDecoder().decode(Session.self, from: Data(json.utf8))
+        #expect(session.didMigrateWorkedSeconds == false)
+        #expect(session.history[0].workedSeconds == 0)
+        #expect(session.done[0].workedSeconds == 0)
+        session.migrateWorkedSecondsIfNeeded()
+        #expect(session.didMigrateWorkedSeconds)
+        #expect(session.history.count == 1)
+        #expect(session.history[0].workedSeconds == 25 * 60)
+        #expect(session.history[0].workMinutes == 25)
+        #expect(session.done[0].count == 2)
+        #expect(session.done[0].workedSeconds == 25 * 60 * 2)
+        let saved = try JSONEncoder().encode(session)
+        var restored = try JSONDecoder().decode(Session.self, from: saved)
+        restored.migrateWorkedSecondsIfNeeded()
+        #expect(restored.history.count == 1)
+        #expect(restored.history[0].workedSeconds == 25 * 60)
+        #expect(restored.done[0].workedSeconds == 25 * 60 * 2)
+    }
+
+    @Test func earlyFinishRecordsElapsedWorkAndAFullRunAddsToIt() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        let start = HistoryClock.date(2026, 9, 24, 9, 0)
+        _ = session.start(now: start, calendar: calendar)
+        let paused = start.addingTimeInterval(10 * 60)
+        _ = session.pause(now: paused)
+        #expect(session.remaining == 15 * 60)
+        #expect(session.markDone(now: paused, calendar: calendar) == .workDone)
+        #expect(session.history.count == 1)
+        #expect(session.history[0].workMinutes == 25)
+        #expect(session.history[0].workedSeconds == 10 * 60)
+        #expect(session.done[0].count == 1)
+        #expect(session.done[0].workedSeconds == 10 * 60)
+        #expect(session.phase == .breakTime)
+        #expect(session.phaseDuration == 5 * 60)
+        #expect(TimeSpan.text(TimeInterval(session.done[0].workedSeconds)) == "10m")
+
+        session.requeue(id: session.done[0].id)
+        #expect(session.queue.last?.count == 1)
+        #expect(session.queue.last?.workedSeconds == 0)
+
+        _ = session.skipBreak(now: paused, calendar: calendar)
+        let fullEnd = paused.addingTimeInterval(25 * 60)
+        _ = session.reconcile(now: fullEnd, calendar: calendar)
+        #expect(session.history[1].workedSeconds == 25 * 60)
+        #expect(session.history[1].workMinutes == 25)
+        #expect(session.done[0].count == 2)
+        #expect(session.done[0].workedSeconds == 35 * 60)
+        let day = session.groupedHistory(calendar: calendar)[0]
+        #expect(day.pomodoros == 2)
+        #expect(day.workedSeconds == 35 * 60)
+        #expect(day.rows[0].count == 2)
+        #expect(day.rows[0].workedSeconds == 35 * 60)
+        #expect(TimeSpan.text(TimeInterval(day.workedSeconds)) == "35m")
+    }
+
+    @Test func shortFinishCountsAsOnePomodoro() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let start = HistoryClock.date(2026, 9, 24, 9, 0)
+        _ = session.start(now: start, calendar: calendar)
+        let paused = start.addingTimeInterval(20)
+        _ = session.pause(now: paused)
+        #expect(session.markDone(now: paused, calendar: calendar) == .workDone)
+        #expect(session.history.count == 1)
+        #expect(session.history[0].workedSeconds == 20)
+        #expect(session.done[0].count == 1)
+        #expect(session.done[0].workedSeconds == 20)
+        #expect(TimeSpan.text(20) == "<1m")
+        #expect(TimeSpan.text(40) == "1m")
+        #expect(TimeSpan.text(0) == "0m")
+        #expect(TimeSpan.text(30) == "1m")
+        #expect(TimeSpan.text(75 * 60) == "1h 15m")
+    }
+
+    @Test func relaunchThenFinishKeepsOnlyTimeThatRan() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let start = HistoryClock.date(2026, 9, 24, 9, 0)
+        _ = session.start(now: start, calendar: calendar)
+        let paused = start.addingTimeInterval(10 * 60)
+        _ = session.pause(now: paused)
+        let saved = try! JSONEncoder().encode(session.snapshot(at: paused))
+        var restored = try! JSONDecoder().decode(Session.self, from: saved)
+        restored.restoreAsPaused()
+        let later = HistoryClock.date(2026, 9, 24, 18, 0)
+        #expect(restored.markDone(now: later, calendar: calendar) == .workDone)
+        #expect(restored.history.count == 1)
+        #expect(restored.history[0].workedSeconds == 10 * 60)
+        #expect(restored.done[0].count == 1)
+        #expect(restored.done[0].workedSeconds == 10 * 60)
+        #expect(restored.phaseDuration == 5 * 60)
     }
 }
 

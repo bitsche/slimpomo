@@ -15,4 +15,5 @@ scripts/dev.sh --seed-large     the same sample, plus about three years of histo
 scripts/dev.sh --clear-history  empty history; leave the queue and Done
 scripts/dev.sh --stale-done     leave yesterday's Done list so launch clears it
 scripts/dev.sh --reset          wipe the dev store and its remembered settings
+scripts/dev.sh --tour           show the first-run tour again
 ```
