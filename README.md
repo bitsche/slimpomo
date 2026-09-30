@@ -1,6 +1,6 @@
 # SlimPomo
 
-A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay on this machine. There is no account, sync, or settings window.
+A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay on this machine. There is no account, sync, or settings window. Default size 550×600, minimum 400×550.
 
 No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
 

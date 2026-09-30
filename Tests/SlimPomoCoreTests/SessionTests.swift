@@ -396,6 +396,10 @@ struct SessionTests {
         #expect(QueueDrop.releaseLandsInQueue(pointerX: 40, pointerY: 20, listWidth: 300, listHeight: 160))
         #expect(QueueDrop.releaseLandsInQueue(pointerX: 40, pointerY: 200, listWidth: 300, listHeight: 160) == false)
         #expect(QueueDrop.releaseLandsInQueue(pointerX: -80, pointerY: -20, listWidth: 300, listHeight: 160) == false)
+        #expect(QueueDrop.pointerIsInScrollArea(yFromTop: 0))
+        #expect(QueueDrop.pointerIsInScrollArea(yFromTop: 12))
+        #expect(QueueDrop.pointerIsInScrollArea(yFromTop: -1) == false)
+        #expect(QueueDrop.pointerIsInScrollArea(yFromTop: -40) == false)
     }
 
     @Test func reorderBeforeTheBreakFollowsTheNewFront() {

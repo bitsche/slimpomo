@@ -26,6 +26,10 @@ final class AppModel {
     var textFocusNonce = 0
     var reduceMotion = false
     var queueDrag: QueueDragController?
+    /// True while the queue, LATER, or Done has scrolled under the add row.
+    var listsScrolled = false
+    /// Set when a new queue row should be brought into view. Cleared by the list.
+    var scrollQueueItemID: UUID?
     /// Sample queue shown while the tour is up. Never written to the store.
     var tourSample: Session?
     var tour: TourProgress?
@@ -200,10 +204,34 @@ final class AppModel {
 
     func addDraftItem() {
         guard tour == nil else { return }
+        let countBefore = session.queue.count
         addItem(description: draftDescription, intensity: draftIntensity, count: 1)
+        if session.queue.count > countBefore {
+            scrollQueueItemID = session.queue.last?.id
+        }
         if !draftDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draftDescription = ""
         }
+    }
+
+    func noteListScroll(offset: CGFloat) {
+        let scrolled = offset < -0.5
+        guard listsScrolled != scrolled else { return }
+        listsScrolled = scrolled
+    }
+
+    /// True when the row is missing or any part of it sits outside the list scroller.
+    func queueRowIsOffscreen(_ id: UUID) -> Bool {
+        guard let anchor = queueListAnchor,
+              let clip = anchor.enclosingScrollView?.contentView,
+              let index = session.queue.firstIndex(where: { $0.id == id })
+        else { return true }
+        let rowHeight = queueRowHeight(anchor: anchor)
+        let top = clip.convert(CGPoint(x: 0, y: CGFloat(index) * rowHeight), from: anchor)
+        let bottom = clip.convert(CGPoint(x: 0, y: CGFloat(index + 1) * rowHeight), from: anchor)
+        let minY = min(top.y, bottom.y)
+        let maxY = max(top.y, bottom.y)
+        return minY < clip.bounds.minY + 1 || maxY > clip.bounds.maxY - 1
     }
 
     func addItem(description: String, intensity: Intensity, count: Int) {
@@ -1051,12 +1079,18 @@ final class AppModel {
         guard let anchor = queueListAnchor, let window = anchor.window else { return false }
         let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         let inAnchor = anchor.convert(inWindow, from: nil)
-        return QueueDrop.releaseLandsInQueue(
+        guard QueueDrop.releaseLandsInQueue(
             pointerX: inAnchor.x,
             pointerY: inAnchor.y,
             listWidth: anchor.bounds.width,
             listHeight: anchor.bounds.height
-        )
+        ) else { return false }
+        guard let clip = queueScrollView?.contentView else { return true }
+        let inClip = clip.convert(inWindow, from: nil)
+        let yFromTop = clip.isFlipped
+            ? inClip.y - clip.bounds.minY
+            : clip.bounds.maxY - inClip.y
+        return QueueDrop.pointerIsInScrollArea(yFromTop: yFromTop)
     }
 
     private func viewportPoint(forListPoint point: CGPoint) -> CGPoint {

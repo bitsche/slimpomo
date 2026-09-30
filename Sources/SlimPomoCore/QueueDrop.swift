@@ -44,4 +44,10 @@ public enum QueueDrop {
         let horizontal = pointerX >= -32 && pointerX <= listWidth + 32
         return horizontal && pointerY <= listHeight + 12
     }
+
+    /// `yFromTop` is the pointer's distance below the top of the list scroller.
+    /// Negative means the pointer is on the add row or higher, which is not a drop.
+    public static func pointerIsInScrollArea(yFromTop: CGFloat) -> Bool {
+        yFromTop >= 0
+    }
 }

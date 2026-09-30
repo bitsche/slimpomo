@@ -46,7 +46,7 @@ enum TourStep: Hashable {
     /// Targets that live in the queue scroller and may sit below the fold.
     var scrolls: Bool {
         switch self {
-        case .addTask, .depth, .count, .reorder, .done: true
+        case .count, .reorder, .done: true
         default: false
         }
     }

@@ -32,7 +32,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             window.alphaValue = 0
             let hosting = NSHostingController(rootView: MainWindow(model: model))
             // SwiftUI's default sizing options replace the restored frame with the
-            // view's intrinsic size, which the minimum then clamps to 400×450.
+            // view's intrinsic size, which the minimum then clamps to 400×550.
             hosting.sizingOptions = []
             window.contentViewController = hosting
             enforceMinimumSize(of: window)
@@ -157,14 +157,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
               let height = (raw["height"] as? NSNumber)?.doubleValue,
               width.isFinite, height.isFinite
         else { return fallback }
-        if width < WindowMetrics.minSize.width || height < WindowMetrics.minSize.height {
-            return fallback
-        }
         let screen = NSScreen.main?.visibleFrame.size ?? fallback
         if width > screen.width || height > screen.height {
             return fallback
         }
-        return NSSize(width: width, height: height)
+        // A height saved before the 550 minimum is raised. The width stays.
+        return fitToScreen(NSSize(width: width, height: height))
     }
 
     private static func fitToScreen(_ size: NSSize) -> NSSize {
@@ -206,34 +204,12 @@ struct MainWindow: View {
             todoHeader
                 .padding(.horizontal, 18)
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        queueBlock
-                        if !shown.later.isEmpty {
-                            laterBlock
-                        }
-                        if !shown.done.isEmpty {
-                            doneBlock
-                                .tourTarget(.doneSection)
-                        }
-                    }
+            VStack(spacing: 0) {
+                addRow
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .scrollDisabled(model.isTouring)
-                .onChange(of: model.tourScrollRequest) { _, _ in
-                    guard let target = model.tour?.step.anchor else { return }
-                    withAnimation(model.reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.3)) {
-                        proxy.scrollTo(target, anchor: .center)
-                    }
-                    model.scheduleTourScrollFinish()
-                }
+                listScroller
             }
-            .overlay(alignment: .topLeading) {
-                queueDragFloat
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Palette.canvas)
@@ -383,45 +359,118 @@ struct MainWindow: View {
             .frame(height: 1)
     }
 
-    private var queueBlock: some View {
-        VStack(spacing: 0) {
-            addRow
-                .padding(.bottom, showsDepthHint ? 7 : 14)
-
-            if showsDepthHint {
-                DepthHint(model: model)
+    private var listScroller: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if showsDepthHint {
+                        DepthHint(model: model)
+                    }
+                    if !shown.queue.isEmpty {
+                        queueRows
+                    }
+                    if !shown.later.isEmpty {
+                        laterBlock
+                    }
+                    if !shown.done.isEmpty {
+                        doneBlock
+                            .tourTarget(.doneSection)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, showsDepthHint ? 7 : 14)
+                .padding(.bottom, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(alignment: .top) {
+                    ScrollOffsetProbe { offset in
+                        model.noteListScroll(offset: offset)
+                    }
+                    .frame(height: 0)
+                }
             }
-            if !shown.queue.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(queueSlots) { slot in
-                        switch slot.kind {
-                        case .item(let item):
-                            QueueLine(
-                                item: item,
-                                isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
-                                finish: shown.finishDates(at: model.now)[item.id],
-                                model: model,
-                                gripVisible: model.tourGripItemID == item.id
-                                    || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
-                            )
-                        case .gap:
-                            QueueGapOutline(
-                                height: model.queueDrag?.rowHeight ?? 48,
-                                visible: model.queueDrag?.showsOutline ?? false
-                            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scrollDisabled(model.isTouring)
+            .onChange(of: model.tourScrollRequest) { _, _ in
+                guard let target = model.tour?.step.anchor else { return }
+                withAnimation(model.reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                model.scheduleTourScrollFinish()
+            }
+            .onChange(of: model.scrollQueueItemID) { _, id in
+                guard let id else { return }
+                model.scrollQueueItemID = nil
+                Task { @MainActor in
+                    if model.queueRowIsOffscreen(id) {
+                        withAnimation(QueueMotion.slide(model.reduceMotion)) {
+                            proxy.scrollTo(id, anchor: .bottom)
                         }
                     }
+                    draftFocused = true
                 }
-                .animation(QueueMotion.slide(model.reduceMotion), value: model.queueDrag?.gapIndex)
-                .animation(
-                    model.queueDrag == nil && model.tour == nil ? QueueMotion.slide(model.reduceMotion) : nil,
-                    value: shown.queue.map(\.id)
-                )
-                .background {
-                    QueueListAnchor { anchor in
-                        model.attachQueueList(anchor)
-                    }
+            }
+            .overlay(alignment: .top) {
+                scrollEdge
+            }
+            .overlay(alignment: .topLeading) {
+                queueDragFloat
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .clipped()
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// A hairline and a short shadow while list content sits under the add row.
+    private var scrollEdge: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.white.opacity(0.22))
+                .frame(height: 1)
+            LinearGradient(
+                colors: [Color.black.opacity(0.35), Color.black.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 10)
+        }
+        .opacity(model.listsScrolled ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: model.listsScrolled)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var queueRows: some View {
+        VStack(spacing: 0) {
+            ForEach(queueSlots) { slot in
+                switch slot.kind {
+                case .item(let item):
+                    QueueLine(
+                        item: item,
+                        isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
+                        finish: shown.finishDates(at: model.now)[item.id],
+                        model: model,
+                        gripVisible: model.tourGripItemID == item.id
+                            || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
+                    )
+                    .id(item.id)
+                case .gap:
+                    QueueGapOutline(
+                        height: model.queueDrag?.rowHeight ?? 48,
+                        visible: model.queueDrag?.showsOutline ?? false
+                    )
                 }
+            }
+        }
+        .animation(QueueMotion.slide(model.reduceMotion), value: model.queueDrag?.gapIndex)
+        .animation(
+            model.queueDrag == nil && model.tour == nil ? QueueMotion.slide(model.reduceMotion) : nil,
+            value: shown.queue.map(\.id)
+        )
+        .background {
+            QueueListAnchor { anchor in
+                model.attachQueueList(anchor)
             }
         }
     }
@@ -444,7 +493,10 @@ struct MainWindow: View {
                     RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
                         .stroke(Palette.field, lineWidth: 1)
                 )
-                .onSubmit { model.addDraftItem() }
+                .onSubmit {
+                    model.addDraftItem()
+                    draftFocused = true
+                }
                 .tourTarget(.addField)
         }
         .padding(.leading, 18)
@@ -1053,9 +1105,74 @@ private struct DoneLine: View {
     }
 }
 
+private struct ScrollOffsetProbe: NSViewRepresentable {
+    var onOffset: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ScrollOffsetProbeView {
+        let view = ScrollOffsetProbeView()
+        view.onOffset = onOffset
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollOffsetProbeView, context: Context) {
+        nsView.onOffset = onOffset
+    }
+}
+
+private final class ScrollOffsetProbeView: NSView {
+    var onOffset: ((CGFloat) -> Void)?
+    private var observing = false
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observeClip()
+        report()
+    }
+
+    override func layout() {
+        super.layout()
+        observeClip()
+        report()
+    }
+
+    private func observeClip() {
+        guard !observing, let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipBoundsChanged),
+            name: NSView.boundsDidChangeNotification,
+            object: clip
+        )
+        observing = true
+    }
+
+    @objc private func clipBoundsChanged() {
+        report()
+    }
+
+    /// Distance of this view below the visible top. Negative once the content has moved up.
+    private func report() {
+        guard let clip = enclosingScrollView?.contentView else { return }
+        let origin = clip.convert(bounds.origin, from: self)
+        let yFromTop = clip.isFlipped
+            ? origin.y - clip.bounds.minY
+            : clip.bounds.maxY - origin.y
+        onOffset?(yFromTop)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+}
+
 private enum WindowMetrics {
     static let defaultSize = NSSize(width: 550, height: 600)
-    static let minSize = NSSize(width: 400, height: 450)
+    static let minSize = NSSize(width: 400, height: 550)
     static let sizeKey = "SlimPomo.windowSize"
     static let minConstraintID = "SlimPomo.minSize"
 }
