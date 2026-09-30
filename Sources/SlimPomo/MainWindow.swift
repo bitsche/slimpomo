@@ -195,14 +195,15 @@ struct MainWindow: View {
     private var shown: Session { model.windowSession }
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 0) {
             timerCard
                 .padding(.horizontal, 14)
                 .padding(.top, 6)
+                .padding(.bottom, 14)
                 .tourTarget(.timerCard)
 
             todoHeader
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 14)
 
             VStack(spacing: 0) {
                 addRow
@@ -293,67 +294,40 @@ struct MainWindow: View {
     }
 
     private var todoHeader: some View {
-        centeredSectionTitle(
-            todoTitle,
+        SectionHeader(
+            label: "TODO",
+            stats: SectionStats.pomodoros(todoCount, seconds: todoWork),
             help: "Pomodoros still in the queue, and the work time they add up to"
         ) {
-            SquareIconButton(systemName: "questionmark.circle", help: "Tour") {
+            SquareIconButton(systemName: "questionmark.circle", slot: IconMetrics.column, help: "Tour") {
                 model.replayTour()
             }
             .tourTarget(.tourButton)
-            SquareIconButton(systemName: "clock.arrow.circlepath", help: "History") {
+            SquareIconButton(systemName: "clock.arrow.circlepath", slot: IconMetrics.column, help: "History") {
                 model.showHistory()
             }
             .tourTarget(.historyButton)
         }
     }
 
-    /// The title stays on the window's center line. Trailing buttons sit over the right rule
-    /// instead of pushing the title off that line.
-    private func centeredSectionTitle<Buttons: View>(
-        _ title: String,
-        help: String? = nil,
-        @ViewBuilder buttons: () -> Buttons
-    ) -> some View {
-        HStack(spacing: 12) {
-            hairline
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-                .fixedSize()
-                .modifier(SectionTitleHelp(text: help))
-            hairline
-        }
-        .overlay(alignment: .trailing) {
-            HStack(spacing: 12) {
-                buttons()
-            }
-            .padding(.leading, 12)
-            .background(Palette.canvas)
-        }
-    }
-
-    private var hairline: some View {
-        Rectangle()
-            .fill(Palette.hairline)
-            .frame(height: 1)
-    }
-
     private var listScroller: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 0) {
                     if showsDepthHint {
                         DepthHint(model: model)
                     }
                     if !shown.queue.isEmpty {
                         queueRows
+                            .padding(.top, showsDepthHint ? 18 : 0)
                     }
                     if !shown.later.isEmpty {
                         laterBlock
+                            .padding(.top, showsDepthHint || !shown.queue.isEmpty ? 18 : 0)
                     }
                     if !shown.done.isEmpty {
                         doneBlock
+                            .padding(.top, showsDepthHint || !shown.queue.isEmpty || !shown.later.isEmpty ? 18 : 0)
                             .tourTarget(.doneSection)
                     }
                 }
@@ -423,7 +397,7 @@ struct MainWindow: View {
 
     private var queueRows: some View {
         VStack(spacing: 0) {
-            ForEach(displayedQueue) { item in
+            ForEach(Array(displayedQueue.enumerated()), id: \.element.id) { index, item in
                 let held = model.queueDrag?.itemID == item.id
                 QueueLine(
                     item: item,
@@ -431,7 +405,8 @@ struct MainWindow: View {
                     finish: shown.finishDates(at: model.now)[item.id],
                     model: model,
                     gripVisible: model.tourGripItemID == item.id
-                        || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
+                        || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id)),
+                    showsDivider: index < displayedQueue.count - 1
                 )
                 .id(item.id)
                 .opacity(held ? 0 : 1)
@@ -459,8 +434,9 @@ struct MainWindow: View {
     }
 
     private var addRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: RowGrid.spacing) {
             ModeMenu(model: model, describesHint: showsDepthHint)
+                .frame(width: RowGrid.gauge, alignment: .leading)
                 .tourTarget(.addChip)
             TextField(
                 "Describe the task, press Return to add",
@@ -482,8 +458,8 @@ struct MainWindow: View {
                 }
                 .tourTarget(.addField)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
+        .padding(.leading, RowGrid.leading)
+        .padding(.trailing, RowGrid.trailing)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -492,29 +468,33 @@ struct MainWindow: View {
     }
 
     private var laterBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            centeredSectionTitle("LATER · \(shown.later.count)") {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(label: "LATER", stats: SectionStats.tasks(shown.later.count)) {
                 SquareIconButton(
-                    systemName: model.laterExpanded ? "chevron.down" : "chevron.right",
+                    systemName: "chevron.right",
                     size: 11,
                     weight: .semibold,
                     opacity: 0.7,
+                    slot: IconMetrics.column,
                     help: model.laterExpanded ? "Collapse later" : "Expand later"
                 ) {
                     model.toggleLaterExpanded()
                 }
+                .rotationEffect(.degrees(model.laterExpanded ? 90 : 0))
+                .animation(model.reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.laterExpanded)
             }
             if model.laterExpanded {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(shown.laterGroups(), id: \.day) { group in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(shown.laterGroups().enumerated()), id: \.element.day) { groupIndex, group in
                         VStack(alignment: .leading, spacing: 0) {
                             Text(laterHeading(group.day))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Color.white.opacity(0.45))
-                                .padding(.leading, 18)
-                                .padding(.bottom, 4)
-                            ForEach(group.items) { item in
-                                LaterLine(item: item, model: model)
+                                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                                .foregroundStyle(Palette.muted)
+                                .padding(.leading, RowGrid.leading)
+                                .padding(.top, groupIndex == 0 ? 4 : 12)
+                                .padding(.bottom, 2)
+                            ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
+                                LaterLine(item: item, model: model, showsDivider: index < group.items.count - 1)
                             }
                         }
                     }
@@ -536,13 +516,14 @@ struct MainWindow: View {
     }
 
     private var doneBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            centeredSectionTitle(doneTitle) {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(label: "DONE", stats: SectionStats.pomodoros(doneCount, seconds: TimeInterval(doneSeconds))) {
                 SquareIconButton(
                     systemName: "trash",
                     size: 11,
                     weight: .medium,
                     opacity: 0.7,
+                    slot: IconMetrics.column,
                     help: "Clear the done list"
                 ) {
                     model.clearDone()
@@ -552,16 +533,12 @@ struct MainWindow: View {
         }
     }
 
-    private var doneTitle: String {
-        let count = shown.done.reduce(0) { $0 + max(0, $1.count) }
-        let noun = count == 1 ? "pomodoro" : "pomodoros"
-        let seconds = shown.done.reduce(0) { $0 + max(0, $1.workedSeconds) }
-        return "DONE · \(count) \(noun) · \(TimeFormat.span(TimeInterval(seconds))) work"
+    private var doneCount: Int {
+        shown.done.reduce(0) { $0 + max(0, $1.count) }
     }
 
-    private var todoTitle: String {
-        let noun = todoCount == 1 ? "pomodoro" : "pomodoros"
-        return "TODO · \(todoCount) \(noun) · \(TimeFormat.span(todoWork)) work"
+    private var doneSeconds: Int {
+        shown.done.reduce(0) { $0 + max(0, $1.workedSeconds) }
     }
 
     private var todoCount: Int {
@@ -799,6 +776,128 @@ private struct QueueGapOutline: View {
     }
 }
 
+/// Fixed columns shared by Queue, LATER, Done, and History.
+enum RowGrid {
+    static let gauge: CGFloat = 80
+    /// 56 pt clips a 12-hour short time ("12:50 AM" is 58 pt at 13 pt).
+    static let clock: CGFloat = 60
+    static let count: CGFloat = 40
+    static let action: CGFloat = 28
+    static let spacing: CGFloat = 8
+    static let height: CGFloat = 40
+    /// Room for the drag grip before the gauge.
+    static let leading: CGFloat = 18
+    static let trailing: CGFloat = 8
+}
+
+enum SectionStats {
+    static func pomodoros(_ count: Int, seconds: TimeInterval) -> String {
+        let noun = count == 1 ? "pomodoro" : "pomodoros"
+        return "\(count) \(noun) · \(TimeFormat.span(seconds))"
+    }
+
+    static func tasks(_ count: Int) -> String {
+        count == 1 ? "1 task" : "\(count) tasks"
+    }
+}
+
+enum WorkedGaugeCopy {
+    static func help(intensity: Intensity, count: Int, seconds: Int) -> String {
+        if count <= 1 {
+            let minutes = max(0, Int((Double(seconds) / 60).rounded()))
+            return "\(intensity.label) · worked \(minutes) of \(intensity.mode.workMinutes) min"
+        }
+        return "\(intensity.label) · \(count) pomodoros · \(TimeFormat.span(TimeInterval(seconds))) worked"
+    }
+}
+
+struct SectionHeader<Buttons: View>: View {
+    var label: String
+    var stats: String
+    var help: String? = nil
+    @ViewBuilder var buttons: () -> Buttons
+
+    var body: some View {
+        HStack(spacing: RowGrid.spacing) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    labelText
+                    statsText
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                labelText
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(SectionTitleHelp(text: help))
+
+            HStack(spacing: 2) {
+                buttons()
+            }
+            .fixedSize()
+        }
+        .padding(.leading, RowGrid.leading)
+        .padding(.trailing, RowGrid.trailing)
+        .padding(.bottom, 2)
+    }
+
+    private var labelText: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .tracking(0.66)
+            .textCase(.uppercase)
+            .foregroundStyle(Palette.muted)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var statsText: some View {
+        Text(stats)
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundStyle(Palette.muted.opacity(0.7))
+            .lineLimit(1)
+    }
+}
+
+struct ListRow<Gauge: View, Name: View, Clock: View, Count: View, Action: View>: View {
+    var showsDivider = false
+    @ViewBuilder var gauge: () -> Gauge
+    @ViewBuilder var name: () -> Name
+    @ViewBuilder var clock: () -> Clock
+    @ViewBuilder var count: () -> Count
+    @ViewBuilder var action: () -> Action
+
+    var body: some View {
+        HStack(spacing: RowGrid.spacing) {
+            gauge()
+                .frame(width: RowGrid.gauge, alignment: .leading)
+                .layoutPriority(1)
+            name()
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(-1)
+            clock()
+                .frame(width: RowGrid.clock, alignment: .trailing)
+                .layoutPriority(1)
+            count()
+                .frame(width: RowGrid.count, alignment: .center)
+                .layoutPriority(1)
+            action()
+                .frame(width: RowGrid.action, alignment: .center)
+                .layoutPriority(1)
+        }
+        .frame(height: RowGrid.height)
+        .overlay(alignment: .bottom) {
+            if showsDivider {
+                Rectangle()
+                    .fill(Palette.hairline)
+                    .frame(height: 1)
+                    .padding(.leading, RowGrid.gauge + RowGrid.spacing)
+            }
+        }
+        .padding(.leading, RowGrid.leading)
+        .padding(.trailing, RowGrid.trailing)
+    }
+}
+
 private struct QueueLine: View {
     var item: QueueItem
     var isCurrent: Bool
@@ -806,6 +905,7 @@ private struct QueueLine: View {
     var model: AppModel
     var gripVisible: Bool
     var floating = false
+    var showsDivider = false
 
     @FocusState private var descriptionFocused: Bool
 
@@ -818,7 +918,7 @@ private struct QueueLine: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        ListRow(showsDivider: showsDivider) {
             IntensitySwitch(
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
@@ -826,7 +926,7 @@ private struct QueueLine: View {
             ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
-
+        } name: {
             TextField("Short description", text: descriptionBinding)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -840,10 +940,10 @@ private struct QueueLine: View {
                     descriptionFocused = false
                     NSApp.keyWindow?.makeFirstResponder(nil)
                 }
-
+        } clock: {
             FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
                 .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
-
+        } count: {
             CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
                 guard item.count < Session.maxPomodoros else { return }
                 model.setCount(id: item.id, count: item.count + 1)
@@ -852,17 +952,10 @@ private struct QueueLine: View {
                 model.setCount(id: item.id, count: item.count - 1)
             }
             .tourTarget(item.id == TourSample.outline ? .taskCount : nil)
+        } action: {
             rowMenu
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
-        .padding(.vertical, 7)
         .background(isCurrent ? Color.white.opacity(0.05) : Color.clear)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Palette.hairline)
-                .frame(height: 1)
-        }
         .overlay(alignment: .leading) {
             grip
                 .padding(.leading, 1)
@@ -937,28 +1030,25 @@ private struct QueueLine: View {
 private struct LaterLine: View {
     var item: LaterItem
     var model: AppModel
+    var showsDivider = false
 
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        ListRow(showsDivider: showsDivider) {
             DepthGauge(intensity: item.intensity, reduceMotion: model.reduceMotion)
                 .opacity(0.55)
-
-            Text(taskName)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(1)
-                .layoutPriority(-1)
-
-            Spacer(minLength: 8)
-
+        } name: {
+            TruncatingName(text: taskName, color: Palette.muted)
+        } clock: {
+            Color.clear.accessibilityHidden(true)
+        } count: {
             CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min")
-                .opacity(0.7)
+                .opacity(0.55)
                 .allowsHitTesting(false)
-
+        } action: {
             EllipsisMenuButton(
                 help: "Return, reschedule, or delete",
                 label: "Actions for \(taskName)"
@@ -972,14 +1062,6 @@ private struct LaterLine: View {
                     .item("Delete") { model.deleteLater(id: item.id) },
                 ]
             }
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
-        .padding(.vertical, 7)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Palette.hairline)
-                .frame(height: 1)
         }
     }
 }
@@ -1044,7 +1126,7 @@ private struct EllipsisMenuButton: View {
                 IconPlate(toolTip: help, onLeft: { PopUpMenu.show(entries()) })
             }
             .fixedSize()
-            .iconSlot(IconMetrics.rowIcon)
+            .iconSlot(IconMetrics.column)
             .help(help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
@@ -1063,8 +1145,8 @@ private struct DoneRows: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(items) { item in
-                DoneLine(item: item, model: model)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                DoneLine(item: item, model: model, showsDivider: index < items.count - 1)
                     .transition(rowTransition)
             }
         }
@@ -1091,6 +1173,7 @@ private struct DoneRows: View {
 private struct DoneLine: View {
     var item: QueueItem
     var model: AppModel
+    var showsDivider = false
 
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
@@ -1103,40 +1186,33 @@ private struct DoneLine: View {
 
     var body: some View {
         row
-            .padding(.leading, 18)
-            .padding(.trailing, 8)
-            .padding(.vertical, 7)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Palette.hairline)
-                    .frame(height: 1)
-            }
     }
 
     private var row: some View {
-        let stack = HStack(spacing: 10) {
-            DepthGauge(intensity: item.intensity, reduceMotion: model.reduceMotion)
-                .opacity(0.7)
-
-            TruncatingName(text: taskName, color: .white.opacity(0.75))
-
+        let stack = ListRow(showsDivider: showsDivider) {
+            DepthGauge(
+                intensity: item.intensity,
+                reduceMotion: model.reduceMotion,
+                caption: TimeFormat.span(TimeInterval(item.workedSeconds)),
+                captionHelp: WorkedGaugeCopy.help(intensity: item.intensity, count: item.count, seconds: item.workedSeconds),
+                colorOpacity: 0.6
+            )
+        } name: {
+            TruncatingName(text: taskName, color: Palette.muted)
+        } clock: {
             FinishClock(text: ClockFormat.time(item.finishedAt), help: FinishClock.finishedHelp(item.finishedAt))
-
-            WorkedTimeLabel(seconds: item.workedSeconds)
-
-            CountBadge(count: item.count, detail: "\(item.count) finished × \(item.intensity.mode.workMinutes) min")
-                .layoutPriority(1)
-
+        } count: {
+            CountText(count: item.count)
+        } action: {
             SquareIconButton(
                 systemName: "arrow.uturn.backward",
                 weight: .semibold,
                 opacity: 0.9,
-                slot: IconMetrics.rowIcon,
+                slot: IconMetrics.column,
                 help: "Copy to the end of the queue"
             ) {
                 model.requeue(id: item.id)
             }
-            .layoutPriority(1)
         }
         return Group {
             if model.reduceMotion {
@@ -1235,26 +1311,34 @@ struct DepthGauge: View {
     var reduceMotion = false
     /// When a parent control supplies the tooltip, the gauge stays quiet so the two don't compete.
     var showsTooltip = true
+    /// Replaces the minutes mark. Done and History pass the worked time.
+    var caption: String? = nil
+    /// Replaces the summary tooltip and the spoken label when set.
+    var captionHelp: String? = nil
+    /// Share of the mode color that shows. Done and History use 0.6.
+    var colorOpacity: Double = 1
 
     static let diameter: CGFloat = 20
-    static let columnWidth: CGFloat = 56
     static let hitHeight: CGFloat = 28
+    /// Inset so the circle sits inside the hover, the same on every row.
+    static let pad: CGFloat = 4
 
     /// Slightly lighter than the window background, so the empty part of the circle reads as a bowl.
     private static let bowl = Color(white: 0.2)
 
-    var body: some View {
-        HStack(spacing: 4) {
-            HStack(spacing: 6) {
-                bowlMark
-                Text(intensity.workMark)
-                    .font(.system(size: 12, design: .monospaced).monospacedDigit())
-                    .foregroundStyle(intensity.chipColor)
-                    .contentTransition(reduceMotion ? .identity : .opacity)
-                    .lineLimit(1)
-            }
-            .frame(width: Self.columnWidth, alignment: .center)
+    private var label: String { caption ?? intensity.workMark }
+    private var ink: Color { intensity.chipColor.opacity(colorOpacity) }
+    private var tip: String { captionHelp ?? intensity.summary }
+    private var spokenLabel: String { captionHelp ?? intensity.spoken }
 
+    var body: some View {
+        HStack(spacing: 6) {
+            bowlMark
+            Text(label)
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(ink)
+                .contentTransition(reduceMotion ? .identity : .opacity)
+                .lineLimit(1)
             if showsChevron {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
@@ -1262,10 +1346,11 @@ struct DepthGauge: View {
                     .accessibilityHidden(true)
             }
         }
+        .padding(.horizontal, Self.pad)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: intensity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(intensity.spoken)
-        .modifier(GaugeTooltip(text: showsTooltip ? intensity.summary : nil))
+        .accessibilityLabel(spokenLabel)
+        .modifier(GaugeTooltip(text: showsTooltip ? tip : nil))
     }
 
     private var bowlMark: some View {
@@ -1273,10 +1358,10 @@ struct DepthGauge: View {
             Circle()
                 .fill(Self.bowl)
             DepthWater(level: intensity.waterLevel)
-                .fill(intensity.chipColor)
+                .fill(ink)
                 .clipShape(Circle())
             Circle()
-                .strokeBorder(intensity.chipColor, lineWidth: 1.5)
+                .strokeBorder(ink, lineWidth: 1.5)
         }
         .frame(width: Self.diameter, height: Self.diameter)
         .accessibilityHidden(true)
@@ -1419,7 +1504,7 @@ private struct DepthHint: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.leading, 18 + DepthGauge.diameter / 2 - Self.arrowWidth / 2)
+        .padding(.leading, RowGrid.leading + DepthGauge.pad + DepthGauge.diameter / 2 - Self.arrowWidth / 2)
         .padding(.trailing, 8)
         .focused($focused)
         .focusEffectDisabled()
@@ -1537,9 +1622,10 @@ struct FinishClock: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 13, design: .monospaced).monospacedDigit())
+            .font(.system(size: 13).monospacedDigit())
             .foregroundStyle(Palette.muted)
-            .frame(width: 52, alignment: .trailing)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .trailing)
             .layoutPriority(1)
             .contentTransition(fadesWithText ? .opacity : .identity)
             .help(help)
@@ -1567,17 +1653,16 @@ struct TruncatingName: View {
     }
 }
 
-struct WorkedTimeLabel: View {
-    var seconds: Int
+struct CountText: View {
+    var count: Int
 
     var body: some View {
-        Text(TimeFormat.span(TimeInterval(seconds)))
-            .font(.system(size: 13, design: .monospaced).monospacedDigit())
+        Text("×\(max(0, count))")
+            .font(.system(size: 12).monospacedDigit())
             .foregroundStyle(Palette.muted)
             .lineLimit(1)
-            .frame(width: 68, alignment: .trailing)
-            .layoutPriority(1)
-            .accessibilityLabel("\(TimeFormat.span(TimeInterval(seconds))) worked")
+            .frame(maxWidth: .infinity, alignment: .center)
+            .accessibilityLabel("\(count) pomodoros")
     }
 }
 
@@ -1587,10 +1672,11 @@ enum IconMetrics {
     static let hover = NSColor(white: 1, alpha: 0.06)
     static let pressed = NSColor(white: 1, alpha: 0.10)
     static let ring: CGFloat = 22
-    /// Layout slots the icons already occupy. The 28 pt target is centered on these.
+    /// Layout slot the header icons used before they filled the action column.
     static let header = CGSize(width: 22, height: 18)
-    static let rowIcon = CGSize(width: 26, height: 22)
     static let count = CGSize(width: 22, height: 22)
+    /// The shared action column. The 28 pt hit fills it.
+    static let column = CGSize(width: 28, height: 28)
 }
 
 extension View {

@@ -179,9 +179,10 @@ struct HistoryWindow: View {
                     .padding(20)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 18) {
-                        ForEach(model.historyDays) { day in
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(model.historyDays.enumerated()), id: \.element.id) { index, day in
                             HistoryDaySection(day: day, now: model.now, model: model)
+                                .padding(.top, index == 0 ? 0 : 18)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -209,33 +210,25 @@ private struct HistoryDaySection: View {
     var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                hairline
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.88))
-                    .fixedSize()
-                hairline
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(label: HistoryDayTitle.text(for: day.day, now: now), stats: stats) {
+                EmptyView()
             }
             VStack(spacing: 0) {
-                ForEach(day.rows) { row in
-                    HistoryLine(day: day.day, row: row, model: model)
+                ForEach(Array(day.rows.enumerated()), id: \.element.id) { index, row in
+                    HistoryLine(
+                        day: day.day,
+                        row: row,
+                        model: model,
+                        showsDivider: index < day.rows.count - 1
+                    )
                 }
             }
         }
     }
 
-    private var title: String {
-        let noun = day.pomodoros == 1 ? "pomodoro" : "pomodoros"
-        let work = TimeFormat.span(TimeInterval(day.workedSeconds))
-        return "\(HistoryDayTitle.text(for: day.day, now: now)) · \(day.pomodoros) \(noun) · \(work) work"
-    }
-
-    private var hairline: some View {
-        Rectangle()
-            .fill(Palette.hairline)
-            .frame(height: 1)
+    private var stats: String {
+        SectionStats.pomodoros(day.pomodoros, seconds: TimeInterval(day.workedSeconds))
     }
 }
 
@@ -243,41 +236,36 @@ private struct HistoryLine: View {
     var day: Date
     var row: HistoryRow
     var model: AppModel
+    var showsDivider = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            DepthGauge(intensity: row.mode, reduceMotion: model.reduceMotion)
-                .opacity(0.7)
-
+        ListRow(showsDivider: showsDivider) {
+            DepthGauge(
+                intensity: row.mode,
+                reduceMotion: model.reduceMotion,
+                caption: TimeFormat.span(TimeInterval(row.workedSeconds)),
+                captionHelp: WorkedGaugeCopy.help(intensity: row.mode, count: row.count, seconds: row.workedSeconds),
+                colorOpacity: 0.6
+            )
+        } name: {
             TruncatingName(
                 text: row.taskName.isEmpty ? "Untitled" : row.taskName,
-                color: .white.opacity(0.75)
+                color: Palette.muted
             )
-
+        } clock: {
             FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
-
-            WorkedTimeLabel(seconds: row.workedSeconds)
-
-            CountBadge(count: row.count, detail: "\(row.count) finished × \(row.mode.mode.workMinutes) min")
-                .layoutPriority(1)
-
+        } count: {
+            CountText(count: row.count)
+        } action: {
             SquareIconButton(
                 systemName: "arrow.uturn.backward",
                 weight: .semibold,
                 opacity: 0.9,
-                slot: IconMetrics.rowIcon,
+                slot: IconMetrics.column,
                 help: "Copy to the end of the queue"
             ) {
                 model.requeueHistory(queueItemId: row.queueItemId, day: day)
             }
-            .layoutPriority(1)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Palette.hairline)
-                .frame(height: 1)
         }
     }
 }
@@ -296,7 +284,7 @@ enum HistoryDayTitle {
         formatter.locale = calendar.locale ?? .current
         formatter.timeZone = calendar.timeZone
         let sameYear = calendar.component(.year, from: day) == calendar.component(.year, from: now)
-        formatter.setLocalizedDateFormatFromTemplate(sameYear ? "EEEdMMM" : "EEEdMMMy")
+        formatter.dateFormat = sameYear ? "EEE d MMM" : "EEE d MMM yyyy"
         return formatter.string(from: day)
     }
 }

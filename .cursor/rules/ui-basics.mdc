@@ -29,6 +29,16 @@ Every new or changed UI element must meet these rules. Check them before finishi
 - Numbers and times use monospaced digits and fixed-width columns so rows line up.
 - Keep existing spacing, font sizes, and colors. Reuse existing components instead of new styling.
 
+## Row grid
+- All list rows (Queue, LATER, Done, History) use the shared columns: Gauge (80 pt) · Name (flex, only this truncates) · Clock (60 pt, right-aligned) · Count (40 pt) · Action (28 pt square). The clock is 60 pt so a 12-hour time such as "12:50 AM" is not clipped.
+- Same column = same meaning. Never place a different kind of value in a column.
+- Count circles are controls. Display-only counts use plain text `×n`.
+- Dividers: 1 pt, between rows only, starting at the Name column. No lines around section headers.
+
+## Section headers
+- Left-aligned, uppercase 11 pt medium label plus muted stats. Header icons sit in the Action column.
+- Numbers use SF Pro with monospaced digits, never SF Mono.
+
 ## Motion
 - Animations are short (150–300 ms) and play once. Never a second "catch-up" animation.
 - Lists use stable ids. Reordering animates as a move, never remove + insert.
