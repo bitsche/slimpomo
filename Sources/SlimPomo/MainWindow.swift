@@ -821,7 +821,8 @@ private struct QueueLine: View {
         HStack(spacing: 10) {
             IntensitySwitch(
                 intensity: item.intensity,
-                locked: model.session.phase != .idle && item.id == model.session.activeItemID
+                locked: model.session.phase != .idle && item.id == model.session.activeItemID,
+                reduceMotion: model.reduceMotion
             ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
@@ -943,9 +944,8 @@ private struct LaterLine: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            IntensityMark(intensity: item.intensity)
+            DepthGauge(intensity: item.intensity, reduceMotion: model.reduceMotion)
                 .opacity(0.55)
-                .accessibilityHidden(true)
 
             Text(taskName)
                 .font(.system(size: 13))
@@ -1115,7 +1115,7 @@ private struct DoneLine: View {
 
     private var row: some View {
         let stack = HStack(spacing: 10) {
-            IntensityMark(intensity: item.intensity)
+            DepthGauge(intensity: item.intensity, reduceMotion: model.reduceMotion)
                 .opacity(0.7)
 
             TruncatingName(text: taskName, color: .white.opacity(0.75))
@@ -1226,100 +1226,125 @@ enum Metrics {
     /// Wide enough for RESUME and FINISH at the card button's tracking.
     static let actionWidth: CGFloat = 132
     static let actionHeight: CGFloat = 34
-    /// Fixed so 25′, 50′, and 75′ occupy the same chip, including the ratio bar.
-    static let intensityWidth: CGFloat = 64
-    static let intensityHeight: CGFloat = 34
     static let corner: CGFloat = 4
 }
 
-struct IntensityMark: View {
+struct DepthGauge: View {
     var intensity: Intensity
-    var helpText: String?
-    var showsMenuChevron = false
+    var showsChevron = false
+    var reduceMotion = false
+    /// When a parent control supplies the tooltip, the gauge stays quiet so the two don't compete.
+    var showsTooltip = true
 
-    init(intensity: Intensity, helpText: String? = nil, showsMenuChevron: Bool = false) {
-        self.intensity = intensity
-        self.helpText = helpText
-        self.showsMenuChevron = showsMenuChevron
-    }
+    static let diameter: CGFloat = 20
+    static let columnWidth: CGFloat = 56
+    static let hitHeight: CGFloat = 28
 
-    private static let ink = Color(red: 0.16, green: 0.13, blue: 0.12)
+    /// Slightly lighter than the window background, so the empty part of the circle reads as a bowl.
+    private static let bowl = Color(white: 0.2)
 
     var body: some View {
-        VStack(spacing: 3) {
-            HStack(spacing: 4) {
+        HStack(spacing: 4) {
+            HStack(spacing: 6) {
+                bowlMark
                 Text(intensity.workMark)
-                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                if showsMenuChevron {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Self.ink.opacity(0.7))
-                        .accessibilityHidden(true)
-                }
+                    .font(.system(size: 12, design: .monospaced).monospacedDigit())
+                    .foregroundStyle(intensity.chipColor)
+                    .contentTransition(reduceMotion ? .identity : .opacity)
+                    .lineLimit(1)
             }
-            SessionRatioBar(intensity: intensity)
+            .frame(width: Self.columnWidth, alignment: .center)
+
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+                    .accessibilityHidden(true)
+            }
         }
-        .foregroundStyle(Self.ink)
-        .frame(minWidth: Metrics.intensityWidth, maxWidth: Metrics.intensityWidth)
-        .frame(height: Metrics.intensityHeight)
-        .background(
-            RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
-                .fill(intensity.chipColor)
-        )
-        .help(helpText ?? intensity.summary)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: intensity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(helpText ?? intensity.summary)
+        .accessibilityLabel(intensity.spoken)
+        .modifier(GaugeTooltip(text: showsTooltip ? intensity.summary : nil))
+    }
+
+    private var bowlMark: some View {
+        ZStack {
+            Circle()
+                .fill(Self.bowl)
+            DepthWater(level: intensity.waterLevel)
+                .fill(intensity.chipColor)
+                .clipShape(Circle())
+            Circle()
+                .strokeBorder(intensity.chipColor, lineWidth: 1.5)
+        }
+        .frame(width: Self.diameter, height: Self.diameter)
+        .accessibilityHidden(true)
     }
 }
 
-private struct SessionRatioBar: View {
-    var intensity: Intensity
+/// Applies a tooltip only when there is one, so an empty help string never appears.
+private struct GaugeTooltip: ViewModifier {
+    var text: String?
 
-    var body: some View {
-        GeometryReader { geo in
-            let full = max(0, geo.size.width - 8)
-            let length = full * intensity.sessionScale / Intensity.intense.sessionScale
-            let work = length * intensity.workShare
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color.black.opacity(0.38))
-                    .frame(width: work)
-                Rectangle()
-                    .fill(Color.black.opacity(0.16))
-                    .frame(width: max(0, length - work))
-            }
-            .frame(width: full, height: 3, alignment: .leading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    func body(content: Content) -> some View {
+        if let text {
+            content.help(text)
+        } else {
+            content
         }
-        .frame(height: 3)
-        .accessibilityHidden(true)
+    }
+}
+
+private struct DepthWater: Shape {
+    var level: CGFloat
+
+    var animatableData: CGFloat {
+        get { level }
+        set { level = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let fraction = min(max(level, 0), 1)
+        let height = rect.height * fraction
+        return Path(CGRect(x: rect.minX, y: rect.maxY - height, width: rect.width, height: height))
     }
 }
 
 private struct IntensitySwitch: View {
     var intensity: Intensity
     var locked: Bool = false
+    var reduceMotion = false
     var action: () -> Void
 
     private static let lockedHelp = "Intensity can't be changed while the timer is running"
 
     var body: some View {
         Button(action: action) {
-            IntensityMark(intensity: intensity, helpText: locked ? Self.lockedHelp : nil)
+            DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false)
                 .opacity(locked ? 0.4 : 1)
-                .contentShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
+                .frame(height: DepthGauge.hitHeight)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay {
                     if locked {
                         DeniedCursor()
                     } else {
-                        HoverPlate(cornerRadius: Metrics.corner, color: NSColor(white: 0, alpha: 0.1))
+                        HoverPlate(cornerRadius: 6, color: NSColor(white: 1, alpha: 0.06))
+                    }
+                }
+                .overlay {
+                    if !locked {
+                        PointingCursor()
                     }
                 }
         }
         .buttonStyle(.plain)
         .disabled(locked)
-        .accessibilityLabel(locked ? Self.lockedHelp : intensity.summary)
-        .accessibilityHint(locked ? "" : "Cycles to \(intensity.next.workMark)")
+        .fixedSize()
+        .help(locked ? Self.lockedHelp : intensity.summary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(intensity.spoken)
+        .accessibilityHint(locked ? Self.lockedHelp : "Click to change")
     }
 }
 
@@ -1329,30 +1354,27 @@ private struct ModeMenu: View {
     @FocusState private var focused: Bool
 
     private var hot: Bool { model.depthControlHot }
-    private static let ink = Color(red: 0.16, green: 0.13, blue: 0.12)
 
     var body: some View {
         Button {
             model.showDepthPicker()
         } label: {
-            IntensityMark(intensity: model.draftIntensity, showsMenuChevron: true)
-                .accessibilityHidden(true)
+            DepthGauge(intensity: model.draftIntensity, showsChevron: true, reduceMotion: model.reduceMotion)
+                .frame(height: DepthGauge.hitHeight)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
-                        .fill(Color.white.opacity(hot ? 0.2 : 0))
-                    RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
-                        .strokeBorder(Self.ink.opacity(hot ? 0.4 : 0), lineWidth: 1)
+                    HoverPlate(cornerRadius: 6, color: NSColor(white: 1, alpha: 0.06))
                 }
                 .overlay {
                     if focused {
-                        RoundedRectangle(cornerRadius: Metrics.corner + 1, style: .continuous)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Color.white, lineWidth: 2)
-                            .padding(-3)
                     }
                 }
                 .overlay { PointingCursor() }
         }
         .buttonStyle(.plain)
+        .fixedSize()
         .focused($focused)
         .focusEffectDisabled()
         .onChange(of: focused) { _, value in
@@ -1361,8 +1383,8 @@ private struct ModeMenu: View {
         .onHover { model.depthChipHover = $0 }
         .animation(.easeOut(duration: 0.12), value: hot)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Session length: \(model.draftIntensity.mode.workMinutes) minutes")
-        .accessibilityHint(describesHint ? DepthHint.sentence : "Shows every mode")
+        .accessibilityLabel(model.draftIntensity.spoken)
+        .accessibilityHint(describesHint ? DepthHint.sentence : "Click to change")
         .accessibilityIdentifier("depth-picker")
         .accessibilityAddTraits(.isButton)
         .popover(isPresented: $model.modePickerOpen, arrowEdge: .bottom) {
@@ -1397,7 +1419,7 @@ private struct DepthHint: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.leading, 8 + Metrics.intensityWidth / 2 - Self.arrowWidth / 2)
+        .padding(.leading, 18 + DepthGauge.diameter / 2 - Self.arrowWidth / 2)
         .padding(.trailing, 8)
         .focused($focused)
         .focusEffectDisabled()
@@ -1425,7 +1447,7 @@ private struct ModeChoices: View {
             }
         }
         .padding(6)
-        .frame(width: 268)
+        .frame(width: 320)
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
@@ -1472,16 +1494,15 @@ private struct ModeChoiceButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(mode.chipColor)
-                    .frame(width: 8, height: 16)
+                DepthGauge(intensity: mode, reduceMotion: true, showsTooltip: false)
                 Text(mode.label)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                     .frame(width: 72, alignment: .leading)
-                Text("\(mode.mode.workMinutes) min + \(mode.mode.breakMinutes) break")
+                Text("\(mode.mode.workMinutes) min + \(mode.mode.breakMinutes) min break")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -1497,7 +1518,8 @@ private struct ModeChoiceButton: View {
         .focusEffectDisabled()
         .overlay { HoverPlate(cornerRadius: 4, color: NSColor(white: 1, alpha: 0.12)) }
         .overlay { PointingCursor() }
-        .accessibilityLabel(mode.summary)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(mode.spoken)
     }
 }
 
@@ -2121,5 +2143,18 @@ private extension Intensity {
     var chipColor: Color {
         if self == .regular { return Palette.cardBreak }
         return Color(red: mode.red, green: mode.green, blue: mode.blue)
+    }
+
+    /// Share of the circle that is water. Deep dive stops short of the rim.
+    var waterLevel: CGFloat {
+        switch self {
+        case .regular: 1.0 / 3.0
+        case .focus: 2.0 / 3.0
+        case .intense: 7.0 / 8.0
+        }
+    }
+
+    var spoken: String {
+        "Intensity: \(label), \(mode.workMinutes) minutes work, \(mode.breakMinutes) minutes break"
     }
 }

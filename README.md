@@ -10,6 +10,10 @@ Done is today's finished work. Past days live in History (read-only, local, kept
 
 Unfinished tasks stay in the queue across days until they are finished, deleted, or snoozed. From a task's ••• menu, move it to tomorrow or next Monday. It leaves the queue and waits in LATER, then returns to the top of the queue at the start of that day.
 
+## Modes
+
+A small round gauge shows the depth: the water level rises from Dip to Dive to Deep dive.
+
 ## Menu bar
 
 Left-click the icon to open the menu: the current status, Show Window, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.

@@ -246,7 +246,7 @@ private struct HistoryLine: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            IntensityMark(intensity: row.mode)
+            DepthGauge(intensity: row.mode, reduceMotion: model.reduceMotion)
                 .opacity(0.7)
 
             TruncatingName(
