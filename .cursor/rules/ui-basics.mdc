@@ -1,9 +1,9 @@
 ---
-description: SlimPomo UI basics. Apply to every UI change.
+description: Deeeep UI basics. Apply to every UI change.
 alwaysApply: true
 ---
 
-# SlimPomo UI basics
+# Deeeep UI basics
 
 Every new or changed UI element must meet these rules. Check them before finishing any task.
 
@@ -26,14 +26,18 @@ Every new or changed UI element must meet these rules. Check them before finishi
 ## Layout
 - The window is at least 450×550. Every element must fit there with nothing clipped.
 - In rows, only the task name truncates (trailing "…"). Times, counts, and icons never truncate.
-- Numbers and times use monospaced digits and fixed-width columns so rows line up.
+- Numbers and times use monospaced digits so they line up.
 - Keep existing spacing, font sizes, and colors. Reuse existing components instead of new styling.
 
 ## Row grid
-- All list rows (Queue, LATER, Done, History) use the shared columns: Gauge (80 pt) · Name (flex, only this truncates) · Clock (60 pt, right-aligned) · Count (40 pt) · Action (28 pt square). The clock is 60 pt so a 12-hour time such as "12:50 AM" is not clipped.
+- All list rows (Queue, LATER, Done, History) start with the gauge column (28 pt: 20 pt gauge + 8 pt gap) and a name that takes the rest of the row. An essential value may sit at the right edge. Names truncate with a trailing "…".
 - Same column = same meaning. Never place a different kind of value in a column.
 - Count circles are controls. Display-only counts use plain text `×n`.
-- Dividers: 1 pt, between rows only, starting at the Name column. No lines around section headers.
+- Queue and LATER rows are cards without dividers. Done and History rows are flat without dividers.
+- Rows show only the essentials at rest (gauge, name, non-default values). Secondary values and row actions appear on hover.
+- Hover controls appear as a right-aligned overlay with a 24 pt left fade. The gauge and name start never move. Names truncate with "…".
+- Every hover-only action is also reachable by right-click (context menu), keyboard, and VoiceOver.
+- A count of 1 is the default and is not shown at rest.
 
 ## Section headers
 - Left-aligned, uppercase 11 pt medium label plus muted stats. Header icons sit in the Action column.
@@ -44,12 +48,27 @@ Every new or changed UI element must meet these rules. Check them before finishi
 - Lists use stable ids. Reordering animates as a move, never remove + insert.
 - Respect Reduce Motion: replace movement and scaling with a simple fade.
 
-## Look
-- Dark window, flat design. Use existing tokens and colors. No new colors without being asked.
-- Sentence case for UI text. The menu bar follows standard macOS conventions.
+## Look ("Deep water")
+- Colors come only from the named tokens in `Theme.swift`. Never hard-code colors.
+- Mode colors: Dip `#9EE0D8`, Dive `#5FC2C9`, Deep dive `#4F86D9` (surface); matching `water` tones for the tank. Break uses the sand tokens.
+- Base `#0E1A21`. Queue and LATER rows are rounded cards (`bgCard`, radius 10, 5 pt gaps). Done and History rows are flat.
+- Timer digits: SF Pro Rounded. Everything else: SF Pro with monospaced digits.
+- Primary actions are pills in the mode color. Secondary actions are text links.
+- The tank's waves animate only while a session is running. They freeze while paused and stay still while idle, while the window isn't visible, or when Reduce Motion is on.
+- The entire visible area of a control is clickable (`contentShape`). Hover area = click area.
+
+## Performance
+- Continuous decorative motion uses Core Animation transform animations, never per-frame redraws.
+- Timer text and state are driven by the model tick, never by an animation.
+- Persistence runs off the main thread, debounced; History is append-only.
+- Every user action must update the UI within 100 ms, also with `dev.sh --seed-large`.
+
+## Cursors (addition)
+- All clickable controls use the shared pointing-hand style or modifier. `scripts/check-cursors.sh` must pass before finishing a task.
 
 ## Before you finish
 - [ ] Cursor, hover, and disabled states correct on every touched control
+- [ ] `scripts/check-cursors.sh` passes
 - [ ] Tooltip and accessibility label on icon-only controls
 - [ ] Checked at 450×550 and at the default size
 - [ ] Checked with Reduce Motion on

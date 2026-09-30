@@ -13,6 +13,15 @@ final class AppModel {
     var draftIntensity = Intensity.regular
     var descriptionDrafts: [UUID: String] = [:]
     var hoveredQueueID: UUID?
+    var hoveredLaterID: UUID?
+    var hoveredDoneID: UUID?
+    var hoveredHistoryID: String?
+    var doneHeaderHovered = false
+    /// True while keyboard focus is on a control inside Done other than the trash button.
+    var doneSectionFocused = false
+    /// The full Done list. Not saved, so a relaunch starts with the latest three.
+    var doneListExpanded = false
+    var suppressDoneAnimation = false
     var modePickerOpen = false
     var modeHighlight = Intensity.regular
     var depthHintDismissed = false
@@ -39,6 +48,8 @@ final class AppModel {
     var tourViewport = CGSize.zero
     var tourCardSize = CGSize.zero
     var tourScrollRequest = 0
+    /// LATER starts open during the tour so the sample row is visible. The chevron changes this, and the choice is saved.
+    var tourLaterExpanded = true
     @ObservationIgnored private var tourHoldSpotlight = false
     @ObservationIgnored private var tourScrollStep: TourStep?
     @ObservationIgnored private var tourScrollTask: Task<Void, Never>?
@@ -99,11 +110,13 @@ final class AppModel {
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         syncBreakMessage()
         store.save(loaded)
+        store.flush()
         observeDayChanges()
         scheduleMidnight()
         installKeyMonitor()
         installFocusMonitor()
         installTourCursorMonitor()
+        PointingHand.install()
         if !store.tourSeen {
             beginTour()
         }
@@ -117,6 +130,27 @@ final class AppModel {
     var tourGripItemID: UUID? {
         guard tour?.step == .reorder else { return nil }
         return TourSample.emails
+    }
+
+    /// Sample row whose hover-only details the current tour step is pointing at.
+    var tourQueueRevealID: UUID? {
+        switch tour?.step {
+        case .count, .markFinished:
+            TourSample.outline
+        case .reorder:
+            TourSample.emails
+        default:
+            nil
+        }
+    }
+
+    var tourLaterRevealID: UUID? {
+        tour?.step == .later ? TourSample.notes : nil
+    }
+
+    var tourDoneRevealID: UUID? {
+        guard tour?.step == .done else { return nil }
+        return windowSession.done.first?.id
     }
 
     /// Ends editing when a click misses every text field. Buttons still receive the click.
@@ -274,7 +308,12 @@ final class AppModel {
     }
 
     func toggleLaterExpanded() {
-        laterExpanded.toggle()
+        if isTouring {
+            tourLaterExpanded.toggle()
+            laterExpanded = tourLaterExpanded
+        } else {
+            laterExpanded.toggle()
+        }
         UserDefaults.standard.set(laterExpanded, forKey: Self.laterExpandedKey)
     }
 
@@ -331,6 +370,38 @@ final class AppModel {
             hoveredQueueID = id
         } else if hoveredQueueID == id {
             hoveredQueueID = nil
+        }
+    }
+
+    func setLaterHover(_ id: UUID, hovering: Bool) {
+        if hovering {
+            hoveredLaterID = id
+        } else if hoveredLaterID == id {
+            hoveredLaterID = nil
+        }
+    }
+
+    func setDoneHover(_ id: UUID, hovering: Bool) {
+        if hovering {
+            hoveredDoneID = id
+        } else if hoveredDoneID == id {
+            hoveredDoneID = nil
+        }
+    }
+
+    func setHistoryHover(_ id: String, hovering: Bool) {
+        if hovering {
+            hoveredHistoryID = id
+        } else if hoveredHistoryID == id {
+            hoveredHistoryID = nil
+        }
+    }
+
+    func toggleDoneList() {
+        suppressDoneAnimation = true
+        doneListExpanded.toggle()
+        Task { @MainActor in
+            suppressDoneAnimation = false
         }
     }
 
@@ -458,6 +529,8 @@ final class AppModel {
     }
 
     func clearDone() {
+        doneHeaderHovered = false
+        doneSectionFocused = false
         apply { session in
             session.clearDone()
             return .none
@@ -487,11 +560,14 @@ final class AppModel {
 
     var historyDays: [HistoryDay] {
         let zone = Calendar.current.timeZone.identifier
-        if historyCacheCount != session.history.count || historyCacheZone != zone {
+        let count = session.history.count
+        if historyCacheZone != zone || historyCacheCount < 0 || count < historyCacheCount {
             historyCache = session.groupedHistory()
-            historyCacheCount = session.history.count
-            historyCacheZone = zone
+        } else if count > historyCacheCount {
+            session.mergingNewHistory(into: &historyCache, from: historyCacheCount)
         }
+        historyCacheCount = count
+        historyCacheZone = zone
         return historyCache
     }
 
@@ -503,6 +579,7 @@ final class AppModel {
         paused.restoreAsPaused()
         session = paused
         store.save(session)
+        store.flush()
         NSApplication.shared.terminate(nil)
     }
 
@@ -575,9 +652,40 @@ final class AppModel {
                 MainActor.assumeIsolated {
                     self?.refreshDoneDay()
                     self?.scheduleMidnight()
+                    self?.catchUpVisibleClock()
                 }
             }
         )
+        let windowNames: [Notification.Name] = [
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.didDeminiaturizeNotification,
+        ]
+        for name in windowNames {
+            dayObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if name == NSWindow.didChangeOcclusionStateNotification {
+                        let showing = NSApp.windows.contains { window in
+                            window.occlusionState.contains(.visible) && !window.isMiniaturized
+                        }
+                        guard showing else { return }
+                    }
+                    self.catchUpVisibleClock()
+                }
+            })
+        }
+    }
+
+    /// Digits follow `now`. Showing the window or waking must not wait for the next timer fire.
+    private func catchUpVisibleClock() {
+        now = Date()
+        guard session.isRunning else { return }
+        let effect = session.reconcile(now: now)
+        guard effect != .none else { return }
+        bell.play(effect)
+        syncBreakMessage()
+        store.save(session.snapshot(at: now))
+        ensureTicker()
     }
 
     private func bringBackDueLater(animated: Bool) {
@@ -617,6 +725,7 @@ final class AppModel {
         tourHoldSpotlight = false
         tourScrollStep = nil
         tourCardSize = .zero
+        tourLaterExpanded = true
         tour = TourProgress(step: .welcome, spotlight: nil)
         syncTourCursors()
     }

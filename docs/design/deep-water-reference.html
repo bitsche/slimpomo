@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Water Reference</title>
+<style>
+:root{
+  --bgBase:#0E1A21;--bgCard:#13262E;--bgCardHover:#183640;--bgCardActive:#17343F;--bgField:#0B161C;--lineField:#22404A;
+  --tankAir:#15303A;--gaugeInner:#1D3640;--textStrong:#FFFFFF;--textPrimary:#E6F2F3;--textOnWater:#CFE9EC;
+  --textSecondary:#7FA7AD;--textTertiary:#58808A;--textHeaderLabel:#A9CDD1;--textMuted:#6F9AA0;--link:#8FC9CF;
+  --linkDisabled:#2F4C55;--countRing:#CFE6E8;
+  --dipS:#9EE0D8;--dipW:#2E8C86;--diveS:#5FC2C9;--diveW:#1F6C78;--deepS:#4F86D9;--deepW:#24497F;
+  --breakCard:#F1DFB8;--breakWater:#DCBD82;--breakSurface:#C9A868;--breakText:#2A2415;--breakPill:#E8CF9E;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#2b2b2e;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--textPrimary);padding:24px}
+.frames{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.cap{font:600 12px/1.3 -apple-system,system-ui,sans-serif;color:#bbb;margin:0 0 8px}
+.win{width:493px;background:var(--bgBase);border-radius:12px;padding:12px 20px 16px;position:relative}
+.traffic{display:flex;gap:8px;height:16px;margin:0 0 6px -6px}
+.traffic i{width:12px;height:12px;border-radius:50%;background:#3a4a50;display:block}
+
+/* tank */
+.tank{position:relative;height:150px;border-radius:14px;overflow:hidden;background:var(--tankAir)}
+.water{position:absolute;left:0;right:0;bottom:0}
+.wv{position:absolute;left:0;width:200%;height:12px;top:-11px;animation:wv 6s linear infinite}
+.wv.back{top:-14px;animation-duration:9s;animation-direction:reverse}
+.still .wv{animation-play-state:paused}
+@keyframes wv{to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion:reduce){.wv{animation:none}}
+.z{position:absolute;z-index:2}
+.time{left:16px;top:14px;font:500 40px/1 ui-rounded,"SF Pro Rounded",-apple-system,system-ui,sans-serif;color:var(--textStrong)}
+.pause{display:inline-flex;gap:3px;margin-left:8px;vertical-align:middle}
+.pause i{width:4px;height:16px;border-radius:1px;background:currentColor;display:block}
+.bottom{left:18px;right:64px;bottom:28px;font:500 13px/1.2 -apple-system,system-ui,sans-serif;color:var(--textStrong);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scale{right:12px;top:30px;bottom:12px;width:40px;font-size:10px;color:var(--link)}
+.scale .top{position:absolute;right:0;top:0}
+.scale .mid{position:absolute;right:0;top:50%;width:6px;height:1px;background:var(--link);opacity:.6}
+.scale .zero{position:absolute;right:0;bottom:0}
+.dev{right:12px;top:10px;font:600 9px/1 -apple-system,system-ui,sans-serif;letter-spacing:.08em;color:rgba(255,255,255,.5)}
+
+/* controls */
+.ctl{display:flex;align-items:center;gap:16px;margin:10px 0 0}
+.pill{height:28px;min-width:96px;padding:0 22px;border-radius:999px;border:0;font:600 12px/28px -apple-system,system-ui,sans-serif;color:var(--bgBase);cursor:pointer}
+.lnk{font:400 12px -apple-system,system-ui,sans-serif;color:var(--link);cursor:pointer}
+.lnk.off{color:var(--linkDisabled);cursor:default}
+
+/* headers */
+.hd{display:flex;align-items:center;gap:8px;height:24px;margin:14px 0 6px;font-size:11px;color:var(--textMuted)}
+.hd.tight{margin-top:4px}
+.hd [data-i=chevr] svg,.hd [data-i=chevd] svg{width:12px;height:12px}
+.hd b{font-weight:500;letter-spacing:.06em;color:var(--textHeaderLabel)}
+.sp{flex:1}
+.ib{width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--textMuted);cursor:pointer}
+.ib:hover{background:rgba(255,255,255,.06)}
+
+/* rows */
+.list{position:relative}
+.add{display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;border-radius:10px;background:var(--bgField);border:.5px solid var(--lineField);font-size:13px}
+.chip{display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer}
+.ph{color:var(--textTertiary)}
+.row{position:relative;display:flex;align-items:center;height:36px;padding:0 8px;border-radius:10px;background:var(--bgCard);margin-bottom:5px;font-size:13px}
+.row.hover{background:var(--bgCardHover)}
+.row.active{background:var(--bgCardActive);box-shadow:inset 3px 0 0 var(--diveS)}
+.row.active .nm{color:var(--textStrong);font-weight:600}
+.gz{width:28px;flex:none;display:flex;align-items:center}
+.gz svg{display:block}
+.nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.col{flex:none;display:flex;align-items:center;justify-content:flex-end;font-size:12px;color:var(--textSecondary)}
+.c-work{width:44px}.c-clock{width:44px}.c-count{width:36px;justify-content:center}.c-act{width:28px;justify-content:center}
+.h{visibility:hidden}
+.cc{width:20px;height:20px;border:1.5px solid var(--countRing);border-radius:50%;font-size:11px;display:flex;align-items:center;justify-content:center;color:var(--textPrimary)}
+.rest{flex:none;display:flex;align-items:center;justify-content:flex-end;min-width:28px;font-size:12px;margin-left:8px}
+.hov{position:absolute;right:8px;top:0;bottom:0;display:flex;align-items:center;padding-left:28px;border-radius:0 10px 10px 0;background:linear-gradient(to right,rgba(24,54,64,0),var(--bgCardHover) 24px)}
+.done .hov{background:linear-gradient(to right,rgba(14,26,33,0),#132228 24px)}
+.grip{position:absolute;left:-15px;top:11px;width:10px;height:14px;color:var(--link)}
+.later .row{opacity:.6}
+.group{font-size:11px;color:var(--textMuted);margin:0 0 4px 8px}
+.done .row{background:none;color:var(--textSecondary);height:30px;margin-bottom:2px}
+.done .c-work{color:var(--mut)}
+.more{font-size:11px;color:var(--textMuted);padding:2px 8px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="frames">
+
+<!-- Frame 1: idle, same content as the current build -->
+<div>
+<p class="cap">Break paused · same content as the current build</p>
+<div class="win">
+  <div class="traffic"><i></i><i></i><i></i></div>
+  <div class="tank still" style="background:var(--breakCard)">
+    <div class="water" data-w="--breakWater" data-s="--breakSurface" style="height:62%"></div>
+    <div class="z dev" style="color:rgba(42,36,21,.45)">DEV</div>
+    <div class="z time" style="color:var(--breakText)">3:16<span class="pause"><i></i><i></i></span></div>
+    <div class="z scale" style="color:#7A6A45"><span class="top">5′</span><span class="mid" style="background:#7A6A45"></span><span class="zero">0</span></div>
+    <div class="z bottom" style="color:var(--breakText)">Break · Listen for the quietest sound in the room</div>
+  </div>
+  <div class="ctl"><button class="pill" style="background:var(--breakPill)">Resume</button><span class="lnk">Skip</span></div>
+
+  <div class="hd"><b>TODO</b>4h 35m · done by 4:56<span class="sp"></span><span class="ib" title="Tour" data-i="help"></span><span class="ib" title="History" data-i="history"></span></div>
+  <div class="add"><span class="chip" style="color:var(--diveS)"><span data-g="dive"></span>50′<span data-i="chev" style="color:var(--textMuted)"></span></span><span class="ph" style="margin-left:6px">Describe the task, press Return to add</span></div>
+  <div style="height:8px"></div>
+  <div class="list">
+    <div class="row"><span class="gz" data-g="deep"></span><span class="nm">test5 realy long gong gonsfn sfsdf</span></div>
+    <div class="row hover"><span class="grip" data-i="grip"></span><span class="gz" data-g="dip"></span><span class="nm">test 123456</span><span class="hov"><span class="col c-clock">1:36</span><span class="col c-count"><span class="cc">1</span></span><span class="col c-act" data-i="more"></span></span></div>
+    <div class="row"><span class="gz" data-g="dive"></span><span class="nm">test5 realy long gong gonsfn sfsdf</span><span class="rest"><span class="cc">2</span></span></div>
+    <div class="row"><span class="gz" data-g="deep"></span><span class="nm">test5 realy long gong gonsfn sfsdf</span></div>
+  </div>
+  <div class="hd"><b>LATER</b>1<span class="sp"></span><span class="ib" data-i="chevr"></span></div>
+  <div class="hd tight"><b>DONE</b>4h 15m<span class="sp"></span></div>
+  <div class="done">
+    <div class="row"><span class="gz" data-g="dip" data-m="1"></span><span class="nm">test 123456</span><span class="rest" style="color:var(--mDip)">25m</span></div>
+    <div class="row"><span class="gz" data-g="dip" data-m="1"></span><span class="nm">test</span><span class="rest" style="color:var(--mDip)">&lt;1m</span></div>
+    <div class="row"><span class="gz" data-g="deep" data-m="1"></span><span class="nm">test5 realy long gong gonsfn sfsdf and even longer</span><span class="rest" style="color:var(--mDeep)">&lt;1m</span></div>
+    <div class="more">Show 13 more</div>
+  </div>
+</div></div>
+
+<!-- Frame 2: running + break -->
+<div>
+<p class="cap">Work running (Dive) · running row active · Done row hovered</p>
+<div class="win">
+  <div class="traffic"><i></i><i></i><i></i></div>
+  <div class="tank">
+    <div class="water" data-w="--diveW" data-s="--diveS" style="height:38%"></div>
+    <div class="z dev">DEV</div>
+    <div class="z time">32:14</div>
+    <div class="z scale"><span class="top">50′</span><span class="mid"></span><span class="zero">0</span></div>
+    <div class="z bottom">Write project outline</div>
+  </div>
+  <div class="ctl"><button class="pill" style="background:var(--diveS)">Pause</button><span class="lnk">Reset</span></div>
+  <div class="hd"><b>TODO</b>2h 40m · done by 13:52<span class="sp"></span><span class="ib" data-i="help"></span><span class="ib" data-i="history"></span></div>
+  <div class="add"><span class="chip" style="color:var(--dipS)"><span data-g="dip"></span>25′<span data-i="chev" style="color:var(--textMuted)"></span></span><span class="ph" style="margin-left:6px">Describe the task, press Return to add</span></div>
+  <div style="height:8px"></div>
+  <div class="list">
+    <div class="row active"><span class="gz" data-g="dive" style="opacity:.4"></span><span class="nm">Write project outline</span><span class="rest"><span class="cc">2</span></span></div>
+    <div class="row"><span class="gz" data-g="dip"></span><span class="nm">Answer emails</span></div>
+    <div class="row"><span class="gz" data-g="deep"></span><span class="nm">Review contract</span></div>
+  </div>
+  <div class="hd"><b>DONE</b>1h 15m<span class="sp"></span><span class="ib" data-i="trash"></span></div>
+  <div class="done">
+    <div class="row"><span class="gz" data-g="dip" data-m="1"></span><span class="nm">Inbox zero</span><span class="hov"><span class="col c-clock" style="color:var(--textTertiary)">09:12</span><span class="col c-work" style="color:var(--mDip)">50m</span><span class="col c-count" style="color:var(--textMuted);font-size:11px">×2</span><span class="col c-act" data-i="back"></span></span></div>
+    <div class="row"><span class="gz" data-g="dip" data-m="1"></span><span class="nm">Plan the week</span><span class="rest" style="color:var(--mDip)">25m</span></div>
+  </div>
+</div>
+
+<p class="cap" style="margin-top:22px">Idle</p>
+<div class="win" style="padding-top:12px">
+  <div class="tank still">
+    <div class="water" data-w="--dipW" data-s="--dipS" style="height:5%"></div>
+    <div class="z time" style="color:var(--textOnWater)">25:00</div>
+    <div class="z scale"><span class="top">25′</span><span class="mid"></span><span class="zero">0</span></div>
+    <div class="z bottom">Next: test 123456</div>
+  </div>
+  <div class="ctl"><button class="pill" style="background:var(--dipS)">Start</button><span class="lnk off">Reset</span></div>
+</div>
+</div>
+
+</div>
+<script>
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function mix(hex,a,bg){const p=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));const c=p(hex),b=p(bg);return '#'+c.map((v,i)=>Math.round(v*a+b[i]*(1-a)).toString(16).padStart(2,'0')).join('')}
+const bg=css('--bgBase');
+document.documentElement.style.setProperty('--mDip',mix(css('--dipS'),.6,bg));
+document.documentElement.style.setProperty('--mDive',mix(css('--diveS'),.6,bg));
+document.documentElement.style.setProperty('--mDeep',mix(css('--deepS'),.6,bg));
+const lvl={dip:.30,dive:.55,deep:.78}; /* share of the height inside the outline */let n=0;
+document.querySelectorAll('[data-g]').forEach(e=>{const k=e.dataset.g;let c=css('--'+k+'S');if(e.dataset.m)c=mix(c,.6,bg);
+ const id='g'+(n++),inner=17.5,top=3.25,y=top+inner*(1-lvl[k]);
+ e.insertAdjacentHTML('afterbegin',`<svg width="20" height="20" viewBox="0 0 24 24"><defs><clipPath id="${id}"><circle cx="12" cy="12" r="9.5"/></clipPath></defs><circle cx="12" cy="12" r="9.5" fill="${css('--gaugeInner')}"/><rect x="0" y="${y}" width="24" height="24" fill="${c}" clip-path="url(#${id})"/><circle cx="12" cy="12" r="9.5" fill="none" stroke="${c}" stroke-width="1.5"/></svg>`)});
+const d="M0 6 Q25 0 50 6 T100 6 T150 6 T200 6 T250 6 T300 6 T350 6 T400 6 V12 H0Z", line="M0 6 Q25 0 50 6 T100 6 T150 6 T200 6 T250 6 T300 6 T350 6 T400 6";
+document.querySelectorAll('.water').forEach(w=>{const W=css(w.dataset.w),S=css(w.dataset.s);w.style.background=W;
+ w.innerHTML=`<svg class="wv back" viewBox="0 0 400 12" preserveAspectRatio="none"><path d="${d}" fill="${S}" opacity=".7"/></svg><svg class="wv" viewBox="0 0 400 12" preserveAspectRatio="none"><path d="${d}" fill="${W}"/><path d="${line}" fill="none" stroke="${S}" stroke-width="1.5" stroke-opacity=".55" vector-effect="non-scaling-stroke"/></svg>`});
+const I={help:'<circle cx="8" cy="8" r="6.5"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4"/><circle cx="8" cy="11.6" r=".5" fill="currentColor"/>',
+history:'<path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8"/><path d="M2.4 2.6v2.6h2.6"/><path d="M8 5.2V8l1.9 1.3"/>',
+trash:'<path d="M3 4.5h10M6.3 4.5V3h3.4v1.5M4.3 4.5l.6 8.5h6.2l.6-8.5"/>',chev:'<path d="M5 6.5l3 3 3-3"/>',chevd:'<path d="M4.5 6l3.5 3.5L11.5 6"/>',chevr:'<path d="M6.5 4.5L10 8l-3.5 3.5"/>',
+more:'<circle cx="4" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12" cy="8" r=".9" fill="currentColor"/>',
+back:'<path d="M6 4L3 7l3 3"/><path d="M3 7h6a3.5 3.5 0 0 1 0 7H7"/>',grip:'<path d="M2 4h8M2 7h8M2 10h8"/>'};
+document.querySelectorAll('[data-i]').forEach(e=>{const s=e.dataset.i==='grip'?[10,14]:[15,15];e.insertAdjacentHTML('beforeend',`<svg width="${s[0]}" height="${s[1]}" viewBox="0 0 ${e.dataset.i==='grip'?'12 14':'16 16'}" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${I[e.dataset.i]}</svg>`);
+ if(e.classList.contains('c-act'))e.style.color='var(--link)'});
+</script>
+</body>
+</html>

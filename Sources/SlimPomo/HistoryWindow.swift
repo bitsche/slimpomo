@@ -19,11 +19,11 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
                 defer: false
             )
             window.title = "History"
-            window.titleVisibility = .hidden
+            window.titleVisibility = .visible
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
             window.appearance = NSAppearance(named: .darkAqua)
-            window.backgroundColor = Palette.canvasNS
+            window.backgroundColor = Theme.bgBaseNS
             window.isReleasedWhenClosed = false
             window.isRestorable = false
             window.hidesOnDeactivate = false
@@ -174,7 +174,7 @@ struct HistoryWindow: View {
             if model.historyDays.isEmpty {
                 Text("Finished pomodoros show up here, day by day.")
                     .font(.system(size: 13))
-                    .foregroundStyle(Palette.muted)
+                    .foregroundStyle(Theme.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(20)
             } else {
@@ -182,25 +182,18 @@ struct HistoryWindow: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(model.historyDays.enumerated()), id: \.element.id) { index, day in
                             HistoryDaySection(day: day, now: model.now, model: model)
-                                .padding(.top, index == 0 ? 0 : 18)
+                                .padding(.top, index == 0 ? 0 : 14 - RowGrid.doneGap)
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.top, 12)
+                    .padding(.horizontal, PageInset.horizontal)
+                    .padding(.top, 14)
                     .padding(.bottom, 16)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Palette.canvas)
+        .background(Theme.bgBase.ignoresSafeArea())
         .preferredColorScheme(.dark)
-        #if SLIMPOMO_DEV
-        .overlay(alignment: .topTrailing) {
-            DevBadge(color: Palette.muted)
-                .padding(.top, 8)
-                .padding(.trailing, 12)
-        }
-        #endif
     }
 }
 
@@ -211,61 +204,81 @@ private struct HistoryDaySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(label: HistoryDayTitle.text(for: day.day, now: now), stats: stats) {
+            SectionHeader(label: HistoryDayTitle.text(for: day.day, now: now), stats: TimeFormat.span(TimeInterval(day.workedSeconds))) {
                 EmptyView()
             }
             VStack(spacing: 0) {
-                ForEach(Array(day.rows.enumerated()), id: \.element.id) { index, row in
-                    HistoryLine(
-                        day: day.day,
-                        row: row,
-                        model: model,
-                        showsDivider: index < day.rows.count - 1
-                    )
+                ForEach(day.rows, id: \.id) { row in
+                    HistoryLine(day: day.day, row: row, model: model)
                 }
             }
+            .padding(.top, 6)
         }
     }
 
-    private var stats: String {
-        SectionStats.pomodoros(day.pomodoros, seconds: TimeInterval(day.workedSeconds))
-    }
 }
 
 private struct HistoryLine: View {
     var day: Date
     var row: HistoryRow
     var model: AppModel
-    var showsDivider = false
+    private var revealed: Bool {
+        model.hoveredHistoryID == hoverID
+    }
+
+    private var hoverID: String {
+        "\(day.timeIntervalSinceReferenceDate)-\(row.id.uuidString)"
+    }
 
     var body: some View {
-        ListRow(showsDivider: showsDivider) {
+        ListRow(height: RowGrid.doneHeight) {
             DepthGauge(
                 intensity: row.mode,
                 reduceMotion: model.reduceMotion,
-                caption: TimeFormat.span(TimeInterval(row.workedSeconds)),
+                showsMark: false,
                 captionHelp: WorkedGaugeCopy.help(intensity: row.mode, count: row.count, seconds: row.workedSeconds),
                 colorOpacity: 0.6
             )
         } name: {
             TruncatingName(
                 text: row.taskName.isEmpty ? "Untitled" : row.taskName,
-                color: Palette.muted
+                color: Theme.textSecondary
             )
-        } clock: {
-            FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
-        } count: {
-            CountText(count: row.count)
-        } action: {
-            SquareIconButton(
-                systemName: "arrow.uturn.backward",
-                weight: .semibold,
-                opacity: 0.9,
-                slot: IconMetrics.column,
-                help: "Copy to the end of the queue"
+        } rest: {
+            WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
+                .padding(.leading, 8)
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(revealed ? Theme.bgCard : Color.clear)
+        }
+        .overlay(alignment: .trailing) {
+            HoverCluster(
+                shown: revealed,
+                reduceMotion: model.reduceMotion,
+                fill: Theme.bgCard,
+                cornerRadius: 8
             ) {
-                model.requeueHistory(queueItemId: row.queueItemId, day: day)
+                FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
+                WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
+                    .accessibilityHidden(true)
+                CountText(count: row.count)
+                SquareIconButton(
+                    systemName: "arrow.uturn.backward",
+                    weight: .semibold,
+                    tint: Theme.link,
+                    slot: IconMetrics.column,
+                    help: "Copy to the end of the queue"
+                ) {
+                    model.requeueHistory(queueItemId: row.queueItemId, day: day)
+                }
             }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.bottom, RowGrid.doneGap)
+        .onHover { model.setHistoryHover(hoverID, hovering: $0) }
+        .accessibilityAction(named: "Copy to the end of the queue") {
+            model.requeueHistory(queueItemId: row.queueItemId, day: day)
         }
     }
 }
