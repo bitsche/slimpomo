@@ -1,0 +1,10 @@
+---
+description: Build and restart the SlimPomo dev app after code changes.
+alwaysApply: true
+---
+
+# Build the dev app
+
+After changing SlimPomo, build and restart only the dev app before finishing. Running tests is not a substitute, and the release app is not part of this step.
+
+Run `scripts/dev.sh` with no flags. It rebuilds `SlimPomo Dev.app`, quits a running copy, and launches it again. Do not pass `--seed`, `--reset`, or any other flag unless asked.

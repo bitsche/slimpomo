@@ -210,18 +210,27 @@ private final class Builder {
 
     func doneRows(on today: Date) -> [QueueItem] {
         var order: [UUID] = []
-        var rows: [UUID: (name: String, mode: Intensity, count: Int, worked: Int)] = [:]
+        var rows: [UUID: (name: String, mode: Intensity, count: Int, worked: Int, finished: Date)] = [:]
         for event in events where calendar.isDate(event.timestamp, inSameDayAs: today) {
             if rows[event.queueItemId] == nil {
                 order.append(event.queueItemId)
-                rows[event.queueItemId] = (event.taskName, event.mode, 0, 0)
+                rows[event.queueItemId] = (event.taskName, event.mode, 0, 0, event.timestamp)
             }
             rows[event.queueItemId]?.name = event.taskName
             rows[event.queueItemId]?.mode = event.mode
             rows[event.queueItemId]?.count += 1
             rows[event.queueItemId]?.worked += event.workedSeconds
+            if event.timestamp >= (rows[event.queueItemId]?.finished ?? .distantPast) {
+                rows[event.queueItemId]?.finished = event.timestamp
+            }
         }
-        return order.map { id in
+        return order.enumerated().sorted { lhs, rhs in
+            let left = rows[lhs.element]!.finished
+            let right = rows[rhs.element]!.finished
+            if left != right { return left > right }
+            return lhs.offset < rhs.offset
+        }.map { pair in
+            let id = pair.element
             let row = rows[id]!
             return QueueItem(
                 id: rng.uuid(),
@@ -229,7 +238,8 @@ private final class Builder {
                 description: row.name,
                 count: row.count,
                 sourceID: id,
-                workedSeconds: row.worked
+                workedSeconds: row.worked,
+                finishedAt: row.finished
             )
         }
     }

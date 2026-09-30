@@ -342,15 +342,7 @@ private struct TourCard: View {
                     }
                 } else {
                     HStack(spacing: 8) {
-                        Button { model.endTour() } label: {
-                            Text("Skip tour")
-                                .font(.system(size: 12))
-                                .underline()
-                                .foregroundStyle(Color.white.opacity(0.5))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Skip tour")
-                        .overlay { TourPointer() }
+                        SkipTourLink { model.endTour() }
                         Spacer(minLength: 4)
                         TourButton(title: "Back", prominent: false) { model.tourBack() }
                         TourButton(title: step.nextTitle, prominent: true) { model.tourAdvance() }
@@ -506,5 +498,31 @@ private struct TourButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         .overlay { TourPointer() }
+        .overlay {
+            HoverPlate(
+                cornerRadius: 6,
+                color: NSColor(white: 1, alpha: prominent ? 0.08 : 0.06),
+                activeDuringTour: true
+            )
+        }
+    }
+}
+
+private struct SkipTourLink: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("Skip tour")
+                .font(.system(size: 12))
+                .underline()
+                .foregroundStyle(Color.white.opacity(0.5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Skip tour")
+        .overlay { TourPointer() }
+        .overlay {
+            HoverPlate(cornerRadius: 6, color: NSColor(white: 1, alpha: 0.06), activeDuringTour: true)
+        }
     }
 }

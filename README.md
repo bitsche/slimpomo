@@ -1,6 +1,6 @@
 # SlimPomo
 
-A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay on this machine. There is no account, sync, or settings window. Default size 550×600, minimum 400×550.
+A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay on this machine. There is no account, sync, or settings window. Default size 550×600, minimum 450×550.
 
 No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
 
@@ -15,6 +15,8 @@ Unfinished tasks stay in the queue across days until they are finished, deleted,
 Left-click the icon to open the menu: the current status, Show Window, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.
 
 ## Dev build
+
+UI changes follow `.cursor/rules/ui-basics.mdc`.
 
 `scripts/dev.sh` builds and launches SlimPomo Dev.app. It keeps its own queue, Done list, and history, and it never reads or writes the release app's data.
 

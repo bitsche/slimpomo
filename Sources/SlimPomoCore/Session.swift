@@ -64,8 +64,10 @@ public struct QueueItem: Identifiable, Equatable, Codable {
     public var sourceID: UUID?
     /// Seconds actually worked across this done row's completions. Queue rows leave it at 0.
     public var workedSeconds: Int
+    /// When this done row last finished. Queue rows leave it unset.
+    public var finishedAt: Date?
 
-    public init(id: UUID, intensity: Intensity, description: String, count: Int, completed: Int = 0, sourceID: UUID? = nil, workedSeconds: Int = 0) {
+    public init(id: UUID, intensity: Intensity, description: String, count: Int, completed: Int = 0, sourceID: UUID? = nil, workedSeconds: Int = 0, finishedAt: Date? = nil) {
         self.id = id
         self.intensity = intensity
         self.description = description
@@ -73,10 +75,11 @@ public struct QueueItem: Identifiable, Equatable, Codable {
         self.completed = completed
         self.sourceID = sourceID
         self.workedSeconds = workedSeconds
+        self.finishedAt = finishedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, intensity, description, count, completed, sourceID, workedSeconds
+        case id, intensity, description, count, completed, sourceID, workedSeconds, finishedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -88,6 +91,7 @@ public struct QueueItem: Identifiable, Equatable, Codable {
         completed = try container.decodeIfPresent(Int.self, forKey: .completed) ?? 0
         sourceID = try container.decodeIfPresent(UUID.self, forKey: .sourceID)
         workedSeconds = try container.decodeIfPresent(Int.self, forKey: .workedSeconds) ?? 0
+        finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -99,6 +103,7 @@ public struct QueueItem: Identifiable, Equatable, Codable {
         try container.encode(completed, forKey: .completed)
         try container.encodeIfPresent(sourceID, forKey: .sourceID)
         try container.encode(workedSeconds, forKey: .workedSeconds)
+        try container.encodeIfPresent(finishedAt, forKey: .finishedAt)
     }
 }
 
@@ -187,6 +192,8 @@ public struct HistoryRow: Identifiable, Equatable, Sendable {
     public var mode: Intensity
     public var count: Int
     public var workedSeconds: Int
+    /// Latest completion of this task on this day.
+    public var finishedAt: Date
 
     public var id: UUID { queueItemId }
 }
@@ -688,7 +695,7 @@ public struct Session: Equatable, Codable {
         }
     }
 
-    /// Newest day first. Rows follow the order the task first finished that day.
+    /// Newest day first. Within a day, the task with the latest completion is first.
     public func groupedHistory(calendar: Calendar = .current) -> [HistoryDay] {
         var dayOrder: [Date] = []
         var eventsByDay: [Date: [HistoryEvent]] = [:]
@@ -702,30 +709,40 @@ public struct Session: Equatable, Codable {
         }
         return dayOrder.map { day in
             let events = eventsByDay[day] ?? []
-            var rowOrder: [UUID] = []
             var rows: [UUID: HistoryRow] = [:]
-            for event in events {
+            var lastIndex: [UUID: Int] = [:]
+            for (offset, event) in events.enumerated() {
                 if rows[event.queueItemId] == nil {
-                    rowOrder.append(event.queueItemId)
                     rows[event.queueItemId] = HistoryRow(
                         queueItemId: event.queueItemId,
                         taskName: event.taskName,
                         mode: event.mode,
                         count: 0,
-                        workedSeconds: 0
+                        workedSeconds: 0,
+                        finishedAt: event.timestamp
                     )
+                    lastIndex[event.queueItemId] = offset
                 }
                 rows[event.queueItemId]?.taskName = event.taskName
                 rows[event.queueItemId]?.mode = event.mode
                 rows[event.queueItemId]?.count += 1
                 rows[event.queueItemId]?.workedSeconds += event.workedSeconds
+                let previous = rows[event.queueItemId]?.finishedAt ?? .distantPast
+                if event.timestamp >= previous {
+                    rows[event.queueItemId]?.finishedAt = event.timestamp
+                    lastIndex[event.queueItemId] = offset
+                }
+            }
+            let ordered = rows.values.sorted { lhs, rhs in
+                if lhs.finishedAt != rhs.finishedAt { return lhs.finishedAt > rhs.finishedAt }
+                return (lastIndex[lhs.queueItemId] ?? 0) > (lastIndex[rhs.queueItemId] ?? 0)
             }
             return HistoryDay(
                 day: day,
                 pomodoros: events.count,
                 workMinutes: events.reduce(0) { $0 + $1.workMinutes },
                 workedSeconds: events.reduce(0) { $0 + $1.workedSeconds },
-                rows: rowOrder.compactMap { rows[$0] }
+                rows: ordered
             )
         }
         .sorted { $0.day > $1.day }
@@ -878,6 +895,33 @@ public struct Session: Equatable, Codable {
         done.removeAll()
     }
 
+    /// Puts today's Done list newest-first and fills missing finish times from history.
+    /// Rows already stamped keep that time. Equal times keep their current order.
+    public mutating func orderDoneNewestFirst(calendar: Calendar = .current) {
+        guard !done.isEmpty else { return }
+        for index in done.indices where done[index].finishedAt == nil {
+            done[index].finishedAt = latestFinish(for: done[index], calendar: calendar)
+        }
+        let ranked = done.enumerated().sorted { lhs, rhs in
+            let left = lhs.element.finishedAt ?? .distantPast
+            let right = rhs.element.finishedAt ?? .distantPast
+            if left != right { return left > right }
+            return lhs.offset < rhs.offset
+        }
+        done = ranked.map(\.element)
+    }
+
+    private func latestFinish(for item: QueueItem, calendar: Calendar) -> Date? {
+        let source = item.sourceID ?? item.id
+        var latest: Date?
+        for event in history where event.queueItemId == source {
+            if let doneDay, !calendar.isDate(event.timestamp, inSameDayAs: doneDay) { continue }
+            if let known = latest, event.timestamp < known { continue }
+            latest = event.timestamp
+        }
+        return latest
+    }
+
     public mutating func move(from source: IndexSet, to destination: Int) {
         let indexes = source.sorted()
         guard !indexes.isEmpty, indexes.allSatisfy({ queue.indices.contains($0) }) else { return }
@@ -1026,16 +1070,21 @@ public struct Session: Equatable, Codable {
         if let index = done.lastIndex(where: { $0.sourceID == item.id }) {
             done[index].count += 1
             done[index].workedSeconds += workedSeconds
+            done[index].finishedAt = now
+            guard index != 0 else { return }
+            let row = done.remove(at: index)
+            done.insert(row, at: 0)
             return
         }
-        done.append(QueueItem(
+        done.insert(QueueItem(
             id: UUID(),
             intensity: item.intensity,
             description: item.description,
             count: 1,
             sourceID: item.id,
-            workedSeconds: workedSeconds
-        ))
+            workedSeconds: workedSeconds,
+            finishedAt: now
+        ), at: 0)
     }
 
     private mutating func finishBreak(now: Date, calendar: Calendar) {
@@ -1081,7 +1130,7 @@ public struct Session: Equatable, Codable {
             QueueItem(id: TourSample.contract, intensity: .intense, description: "Review contract", count: 1),
         ]
         session.done = [
-            QueueItem(id: TourSample.plannedWeek, intensity: .regular, description: "Plan the week", count: 1, workedSeconds: 25 * 60),
+            QueueItem(id: TourSample.plannedWeek, intensity: .regular, description: "Plan the week", count: 1, workedSeconds: 25 * 60, finishedAt: Date()),
         ]
         session.didMigrateHistory = true
         session.didMigrateWorkedSeconds = true

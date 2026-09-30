@@ -84,6 +84,7 @@ final class AppModel {
         loaded.migrateHistoryIfNeeded(now: moment)
         loaded.migrateWorkedSecondsIfNeeded()
         loaded.refreshDoneDay(now: moment)
+        loaded.orderDoneNewestFirst()
         loaded.returnDueLater(now: moment)
         session = loaded
         if let raw = UserDefaults.standard.string(forKey: Self.draftIntensityKey),

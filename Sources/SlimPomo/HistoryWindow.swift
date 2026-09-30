@@ -249,30 +249,28 @@ private struct HistoryLine: View {
             IntensityMark(intensity: row.mode)
                 .opacity(0.7)
 
-            Text(row.taskName.isEmpty ? "Untitled" : row.taskName)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.75))
-                .lineLimit(1)
-                .layoutPriority(-1)
+            TruncatingName(
+                text: row.taskName.isEmpty ? "Untitled" : row.taskName,
+                color: .white.opacity(0.75)
+            )
 
-            Spacer(minLength: 8)
+            FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
 
             WorkedTimeLabel(seconds: row.workedSeconds)
 
             CountBadge(count: row.count, detail: "\(row.count) finished × \(row.mode.mode.workMinutes) min")
+                .layoutPriority(1)
 
-            Button {
+            SquareIconButton(
+                systemName: "arrow.uturn.backward",
+                weight: .semibold,
+                opacity: 0.9,
+                slot: IconMetrics.rowIcon,
+                help: "Copy to the end of the queue"
+            ) {
                 model.requeueHistory(queueItemId: row.queueItemId, day: day)
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 26, height: 22)
-                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
             }
-            .buttonStyle(.plain)
-            .help("Copy to the end of the queue")
-            .accessibilityLabel("Copy to the end of the queue")
+            .layoutPriority(1)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)

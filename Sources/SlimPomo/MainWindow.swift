@@ -32,7 +32,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             window.alphaValue = 0
             let hosting = NSHostingController(rootView: MainWindow(model: model))
             // SwiftUI's default sizing options replace the restored frame with the
-            // view's intrinsic size, which the minimum then clamps to 400×550.
+            // view's intrinsic size, which the minimum then clamps to 450×550.
             hosting.sizingOptions = []
             window.contentViewController = hosting
             enforceMinimumSize(of: window)
@@ -161,7 +161,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         if width > screen.width || height > screen.height {
             return fallback
         }
-        // A height saved before the 550 minimum is raised. The width stays.
+        // A saved edge below the minimum is raised: width to 450, height to 550.
         return fitToScreen(NSSize(width: width, height: height))
     }
 
@@ -297,33 +297,13 @@ struct MainWindow: View {
             todoTitle,
             help: "Pomodoros still in the queue, and the work time they add up to"
         ) {
-            Button {
+            SquareIconButton(systemName: "questionmark.circle", help: "Tour") {
                 model.replayTour()
-            } label: {
-                Image(systemName: "questionmark.circle")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.75))
-                    .frame(width: 22, height: 18)
-                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
             }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .help("Tour")
-            .accessibilityLabel("Tour")
             .tourTarget(.tourButton)
-            Button {
+            SquareIconButton(systemName: "clock.arrow.circlepath", help: "History") {
                 model.showHistory()
-            } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.75))
-                    .frame(width: 22, height: 18)
-                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
             }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .help("History")
-            .accessibilityLabel("History")
             .tourTarget(.historyButton)
         }
     }
@@ -514,19 +494,15 @@ struct MainWindow: View {
     private var laterBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             centeredSectionTitle("LATER · \(shown.later.count)") {
-                Button {
+                SquareIconButton(
+                    systemName: model.laterExpanded ? "chevron.down" : "chevron.right",
+                    size: 11,
+                    weight: .semibold,
+                    opacity: 0.7,
+                    help: model.laterExpanded ? "Collapse later" : "Expand later"
+                ) {
                     model.toggleLaterExpanded()
-                } label: {
-                    Image(systemName: model.laterExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.7))
-                        .frame(width: 22, height: 18)
-                        .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
                 }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help(model.laterExpanded ? "Collapse later" : "Expand later")
-                .accessibilityLabel(model.laterExpanded ? "Collapse later" : "Expand later")
             }
             if model.laterExpanded {
                 VStack(alignment: .leading, spacing: 12) {
@@ -562,25 +538,17 @@ struct MainWindow: View {
     private var doneBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             centeredSectionTitle(doneTitle) {
-                Button {
+                SquareIconButton(
+                    systemName: "trash",
+                    size: 11,
+                    weight: .medium,
+                    opacity: 0.7,
+                    help: "Clear the done list"
+                ) {
                     model.clearDone()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.7))
-                        .frame(width: 22, height: 18)
-                        .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
-                }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help("Clear the done list")
-                .accessibilityLabel("Clear the done list")
-            }
-            VStack(spacing: 0) {
-                ForEach(shown.done) { item in
-                    DoneLine(item: item, model: model)
                 }
             }
+            DoneRows(items: shown.done, model: model)
         }
     }
 
@@ -872,13 +840,7 @@ private struct QueueLine: View {
                     NSApp.keyWindow?.makeFirstResponder(nil)
                 }
 
-            Text(finishText)
-                .font(.system(size: 13, design: .monospaced).monospacedDigit())
-                .foregroundStyle(Palette.muted)
-                .frame(width: 52, alignment: .trailing)
-                .help(finishHelp)
-                .accessibilityLabel(finishHelp)
-                .contentTransition(.opacity)
+            FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
                 .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
 
             CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
@@ -935,43 +897,32 @@ private struct QueueLine: View {
     }
 
     private var rowMenu: some View {
-        Menu {
-            Button("Mark as finished") { model.markFinished(id: item.id) }
-                .disabled(item.count == 0)
-            Divider()
-            Button("Move up") { model.moveUp(id: item.id) }
-                .disabled(!model.session.canMoveUp(id: item.id))
-            Button("Move down") { model.moveDown(id: item.id) }
-                .disabled(!model.session.canMoveDown(id: item.id))
-            let snoozeLocked = !model.session.canSnooze(id: item.id)
-            ForEach(Snooze.offers(on: model.now)) { offer in
-                Button(offer.title) { model.snooze(id: item.id, returnDay: offer.returnDay) }
-                    .disabled(snoozeLocked)
+            EllipsisMenuButton(
+                help: "Mark finished, reorder, snooze, or delete",
+                label: "Actions for \(taskName)"
+            ) {
+                let snoozeLocked = !model.session.canSnooze(id: item.id)
+                return [
+                    .item("Mark as finished", enabled: item.count != 0) { model.markFinished(id: item.id) },
+                    .separator,
+                    .item("Move up", enabled: model.session.canMoveUp(id: item.id)) { model.moveUp(id: item.id) },
+                    .item("Move down", enabled: model.session.canMoveDown(id: item.id)) { model.moveDown(id: item.id) },
+                ] + Snooze.offers(on: model.now).map { offer in
+                    .item(offer.title, enabled: !snoozeLocked) { model.snooze(id: item.id, returnDay: offer.returnDay) }
+                } + [
+                    .separator,
+                    .item("Delete") { model.remove(id: item.id) },
+                ]
             }
-
-            Divider()
-
-            Button("Delete", role: .destructive) {
-                model.remove(id: item.id)
-            }
-        } label: {
-            EllipsisMenuLabel()
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Mark finished, reorder, snooze, or delete")
     }
 
     private var finishText: String {
-        guard let finish else { return "—" }
-        return finish.formatted(date: .omitted, time: .shortened)
+        ClockFormat.time(finish)
     }
 
     private var finishHelp: String {
         guard let finish else { return "No finish time yet" }
-        let clock = finish.formatted(date: .omitted, time: .shortened)
-        return "Work ends at \(clock), when the break starts"
+        return "Work ends at \(ClockFormat.time(finish)), when the break starts"
     }
 
     private var descriptionBinding: Binding<String> {
@@ -1008,22 +959,19 @@ private struct LaterLine: View {
                 .opacity(0.7)
                 .allowsHitTesting(false)
 
-            Menu {
-                Button("Back to queue") { model.returnLater(id: item.id) }
-                ForEach(Snooze.offers(on: model.now, excluding: item.returnDay)) { offer in
-                    Button(offer.title) { model.retargetLater(id: item.id, returnDay: offer.returnDay) }
-                }
-                Divider()
-                Button("Delete", role: .destructive) {
-                    model.deleteLater(id: item.id)
-                }
-            } label: {
-                EllipsisMenuLabel()
+            EllipsisMenuButton(
+                help: "Return, reschedule, or delete",
+                label: "Actions for \(taskName)"
+            ) {
+                [
+                    .item("Back to queue") { model.returnLater(id: item.id) },
+                ] + Snooze.offers(on: model.now, excluding: item.returnDay).map { offer in
+                    MenuEntry.item(offer.title) { model.retargetLater(id: item.id, returnDay: offer.returnDay) }
+                } + [
+                    .separator,
+                    .item("Delete") { model.deleteLater(id: item.id) },
+                ]
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Return, reschedule, or delete")
         }
         .padding(.leading, 18)
         .padding(.trailing, 8)
@@ -1036,18 +984,107 @@ private struct LaterLine: View {
     }
 }
 
-private struct EllipsisMenuLabel: View {
+private struct MenuEntry {
+    var title = ""
+    var enabled = true
+    var separator = false
+    var action: () -> Void = {}
+
+    static func item(_ title: String, enabled: Bool = true, action: @escaping () -> Void) -> MenuEntry {
+        MenuEntry(title: title, enabled: enabled, action: action)
+    }
+
+    static var separator: MenuEntry { MenuEntry(separator: true) }
+}
+
+private final class MenuActionTarget: NSObject {
+    let action: () -> Void
+
+    init(_ action: @escaping () -> Void) {
+        self.action = action
+    }
+
+    @objc func fire(_ sender: Any?) {
+        action()
+    }
+}
+
+private enum PopUpMenu {
+    static func show(_ entries: [MenuEntry]) {
+        let menu = NSMenu()
+        var targets: [MenuActionTarget] = []
+        for entry in entries {
+            if entry.separator {
+                menu.addItem(.separator())
+                continue
+            }
+            let item = NSMenuItem(title: entry.title, action: #selector(MenuActionTarget.fire(_:)), keyEquivalent: "")
+            let target = MenuActionTarget(entry.action)
+            targets.append(target)
+            item.target = target
+            item.isEnabled = entry.enabled
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        _ = targets
+    }
+}
+
+private struct EllipsisMenuButton: View {
+    var help: String
+    var label: String
+    var entries: () -> [MenuEntry]
+
     var body: some View {
         Image(systemName: "ellipsis")
             .font(.system(size: 12, weight: .bold))
             .foregroundStyle(.white.opacity(0.9))
-            .frame(width: 26, height: 22)
-            .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
-            .overlay(
-                RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous)
-                    .stroke(Color.white.opacity(0.55), lineWidth: 1)
-                    .allowsHitTesting(false)
-            )
+            .frame(width: IconMetrics.side, height: IconMetrics.side)
+            .overlay {
+                IconPlate(toolTip: help, onLeft: { PopUpMenu.show(entries()) })
+            }
+            .fixedSize()
+            .iconSlot(IconMetrics.rowIcon)
+            .help(help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityHint(help)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) { PopUpMenu.show(entries()) }
+    }
+}
+
+/// Done rows keep a stable id. A new id fades or slides in; an existing id moves.
+private struct DoneRows: View {
+    var items: [QueueItem]
+    var model: AppModel
+
+    private var order: [UUID] { items.map(\.id) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(items) { item in
+                DoneLine(item: item, model: model)
+                    .transition(rowTransition)
+            }
+        }
+        .animation(listAnimation, value: order)
+    }
+
+    /// One animation for the order change. Reduce Motion fades a new row and does not slide.
+    private var listAnimation: Animation? {
+        guard model.tour == nil, !model.reduceMotion else { return nil }
+        return .easeOut(duration: 0.2)
+    }
+
+    private var rowTransition: AnyTransition {
+        if model.reduceMotion {
+            return .opacity.animation(.easeOut(duration: 0.2))
+        }
+        return .asymmetric(
+            insertion: .move(edge: .top).combined(with: .opacity),
+            removal: .opacity
+        )
     }
 }
 
@@ -1055,43 +1092,60 @@ private struct DoneLine: View {
     var item: QueueItem
     var model: AppModel
 
+    private var taskName: String {
+        item.description.isEmpty ? "Untitled" : item.description
+    }
+
+    /// Changes when the row's clock, worked time, or count changes.
+    private var fadeToken: String {
+        "\(item.count)|\(item.workedSeconds)|\(item.finishedAt?.timeIntervalSinceReferenceDate ?? -1)"
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        row
+            .padding(.leading, 18)
+            .padding(.trailing, 8)
+            .padding(.vertical, 7)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Palette.hairline)
+                    .frame(height: 1)
+            }
+    }
+
+    private var row: some View {
+        let stack = HStack(spacing: 10) {
             IntensityMark(intensity: item.intensity)
                 .opacity(0.7)
 
-            Text(item.description.isEmpty ? "Untitled" : item.description)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.75))
-                .lineLimit(1)
-                .layoutPriority(-1)
+            TruncatingName(text: taskName, color: .white.opacity(0.75))
 
-            Spacer(minLength: 8)
+            FinishClock(text: ClockFormat.time(item.finishedAt), help: FinishClock.finishedHelp(item.finishedAt))
 
             WorkedTimeLabel(seconds: item.workedSeconds)
 
             CountBadge(count: item.count, detail: "\(item.count) finished × \(item.intensity.mode.workMinutes) min")
+                .layoutPriority(1)
 
-            Button {
+            SquareIconButton(
+                systemName: "arrow.uturn.backward",
+                weight: .semibold,
+                opacity: 0.9,
+                slot: IconMetrics.rowIcon,
+                help: "Copy to the end of the queue"
+            ) {
                 model.requeue(id: item.id)
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .frame(width: 26, height: 22)
-                    .modifier(FullHit(cornerRadius: Metrics.corner, hover: Palette.hover))
             }
-            .buttonStyle(.plain)
-            .help("Copy to the end of the queue")
-            .accessibilityLabel("Copy to the end of the queue")
+            .layoutPriority(1)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
-        .padding(.vertical, 7)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Palette.hairline)
-                .frame(height: 1)
+        return Group {
+            if model.reduceMotion {
+                stack
+                    .contentTransition(.opacity)
+                    .animation(.easeOut(duration: 0.2), value: fadeToken)
+            } else {
+                stack
+            }
         }
     }
 }
@@ -1163,7 +1217,7 @@ private final class ScrollOffsetProbeView: NSView {
 
 private enum WindowMetrics {
     static let defaultSize = NSSize(width: 550, height: 600)
-    static let minSize = NSSize(width: 400, height: 550)
+    static let minSize = NSSize(width: 450, height: 550)
     static let sizeKey = "SlimPomo.windowSize"
     static let minConstraintID = "SlimPomo.minSize"
 }
@@ -1252,7 +1306,7 @@ private struct IntensitySwitch: View {
     var body: some View {
         Button(action: action) {
             IntensityMark(intensity: intensity, helpText: locked ? Self.lockedHelp : nil)
-                .opacity(locked ? 0.45 : 1)
+                .opacity(locked ? 0.4 : 1)
                 .contentShape(RoundedRectangle(cornerRadius: Metrics.corner, style: .continuous))
                 .overlay {
                     if locked {
@@ -1365,34 +1419,9 @@ private struct ModeChoices: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Intensity.allCases, id: \.self) { mode in
-                Button {
+                ModeChoiceButton(mode: mode, highlighted: model.modeHighlight == mode) {
                     choose(mode)
-                } label: {
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(mode.chipColor)
-                            .frame(width: 8, height: 16)
-                        Text(mode.label)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(1)
-                            .frame(width: 72, alignment: .leading)
-                        Text("\(mode.mode.workMinutes) min + \(mode.mode.breakMinutes) break")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(model.modeHighlight == mode ? Color.white.opacity(0.12) : Color.white.opacity(0.001))
-                    )
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
-                .focusEffectDisabled()
-                .accessibilityLabel(mode.summary)
             }
         }
         .padding(6)
@@ -1435,6 +1464,87 @@ private struct ModeChoices: View {
     }
 }
 
+private struct ModeChoiceButton: View {
+    var mode: Intensity
+    var highlighted: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(mode.chipColor)
+                    .frame(width: 8, height: 16)
+                Text(mode.label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(width: 72, alignment: .leading)
+                Text("\(mode.mode.workMinutes) min + \(mode.mode.breakMinutes) break")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(highlighted ? Color.white.opacity(0.12) : Color.white.opacity(0.001))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .focusEffectDisabled()
+        .overlay { HoverPlate(cornerRadius: 4, color: NSColor(white: 1, alpha: 0.12)) }
+        .overlay { PointingCursor() }
+        .accessibilityLabel(mode.summary)
+    }
+}
+
+enum ClockFormat {
+    static func time(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+struct FinishClock: View {
+    var text: String
+    var help: String
+    var fadesWithText = false
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13, design: .monospaced).monospacedDigit())
+            .foregroundStyle(Palette.muted)
+            .frame(width: 52, alignment: .trailing)
+            .layoutPriority(1)
+            .contentTransition(fadesWithText ? .opacity : .identity)
+            .help(help)
+            .accessibilityLabel(help)
+    }
+
+    static func finishedHelp(_ date: Date?) -> String {
+        guard let date else { return "No finish time yet" }
+        return "Finished at \(ClockFormat.time(date))"
+    }
+}
+
+struct TruncatingName: View {
+    var text: String
+    var color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(-1)
+    }
+}
+
 struct WorkedTimeLabel: View {
     var seconds: Int
 
@@ -1446,6 +1556,69 @@ struct WorkedTimeLabel: View {
             .frame(width: 68, alignment: .trailing)
             .layoutPriority(1)
             .accessibilityLabel("\(TimeFormat.span(TimeInterval(seconds))) worked")
+    }
+}
+
+enum IconMetrics {
+    static let side: CGFloat = 28
+    static let radius: CGFloat = 6
+    static let hover = NSColor(white: 1, alpha: 0.06)
+    static let pressed = NSColor(white: 1, alpha: 0.10)
+    static let ring: CGFloat = 22
+    /// Layout slots the icons already occupy. The 28 pt target is centered on these.
+    static let header = CGSize(width: 22, height: 18)
+    static let rowIcon = CGSize(width: 26, height: 22)
+    static let count = CGSize(width: 22, height: 22)
+}
+
+extension View {
+    /// Reports the icon's existing slot. The 28 pt control stays centered and overflows that slot.
+    func iconSlot(_ slot: CGSize) -> some View {
+        IconSlotLayout(slot: slot) { self }
+    }
+}
+
+private struct IconSlotLayout: Layout {
+    var slot: CGSize
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        slot
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        child.place(
+            at: CGPoint(x: bounds.midX, y: bounds.midY),
+            anchor: .center,
+            proposal: ProposedViewSize(width: IconMetrics.side, height: IconMetrics.side)
+        )
+    }
+}
+
+struct SquareIconButton: View {
+    var systemName: String
+    var size: CGFloat = 12
+    var weight: Font.Weight = .medium
+    var opacity: Double = 0.75
+    var slot: CGSize = IconMetrics.header
+    var help: String
+    var action: () -> Void
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: weight))
+            .foregroundStyle(Color.white.opacity(opacity))
+            .frame(width: IconMetrics.side, height: IconMetrics.side)
+            .overlay {
+                IconPlate(toolTip: help, onLeft: action)
+            }
+            .fixedSize()
+            .iconSlot(slot)
+            .help(help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(help)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) { action() }
     }
 }
 
@@ -1462,54 +1635,109 @@ struct CountBadge: View {
         self.onDecrement = onDecrement
     }
 
+    private var interactive: Bool { onIncrement != nil || onDecrement != nil }
+
+    private var tip: String {
+        interactive ? "\(detail). Click to add a pomodoro, right-click to remove one." : detail
+    }
+
     var body: some View {
-        Text("\(max(0, count))")
-            .font(.system(size: 12, weight: .medium).monospacedDigit())
-            .foregroundStyle(.white)
-            .frame(width: 22, height: 22)
-            .background {
-                if onIncrement != nil || onDecrement != nil {
-                    Circle().fill(Color.white.opacity(0.001))
-                }
+        Group {
+            if interactive {
+                Text("\(max(0, count))")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .frame(width: IconMetrics.side, height: IconMetrics.side)
+                    .overlay {
+                        IconPlate(
+                            shape: .circle,
+                            toolTip: tip,
+                            drawsRing: true,
+                            onLeft: { onIncrement?() },
+                            onRight: { onDecrement?() }
+                        )
+                    }
+                    .fixedSize()
+                    .iconSlot(IconMetrics.count)
+            } else {
+                Text("\(max(0, count))")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .frame(width: IconMetrics.count.width, height: IconMetrics.count.height)
+                    .overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1).allowsHitTesting(false))
             }
-            .overlay(Circle().stroke(Color.white.opacity(0.85), lineWidth: 1).allowsHitTesting(false))
-            .overlay {
-                if onIncrement != nil || onDecrement != nil {
-                    MouseClick(onLeft: { onIncrement?() }, onRight: { onDecrement?() })
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(count) pomodoros")
-            .accessibilityAddTraits(onIncrement == nil ? [] : .isButton)
-            .accessibilityAction(named: "Add pomodoro") { onIncrement?() }
-            .accessibilityAction(named: "Remove pomodoro") { onDecrement?() }
-            .help(onIncrement == nil ? detail : "\(detail). Click to add a pomodoro, right-click to remove one.")
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(count) pomodoros")
+        .accessibilityAddTraits(interactive ? .isButton : [])
+        .accessibilityAction(named: "Add pomodoro") { onIncrement?() }
+        .accessibilityAction(named: "Remove pomodoro") { onDecrement?() }
+        .help(tip)
     }
 }
 
-private struct MouseClick: NSViewRepresentable {
-    var onLeft: () -> Void
-    var onRight: () -> Void
+struct IconPlate: NSViewRepresentable {
+    enum Shape {
+        case square
+        case circle
+    }
 
-    func makeNSView(context: Context) -> ClickView {
-        let view = ClickView()
-        view.onLeft = onLeft
-        view.onRight = onRight
+    var shape: Shape = .square
+    var toolTip: String? = nil
+    var swallowsCursor = false
+    var drawsRing = false
+    var onLeft: (() -> Void)? = nil
+    var onRight: (() -> Void)? = nil
+
+    func makeNSView(context: Context) -> PlateView {
+        let view = PlateView()
+        view.setAccessibilityElement(false)
+        apply(to: view)
         return view
     }
 
-    func updateNSView(_ nsView: ClickView, context: Context) {
-        nsView.onLeft = onLeft
-        nsView.onRight = onRight
+    func updateNSView(_ nsView: PlateView, context: Context) {
+        apply(to: nsView)
     }
 
-    final class ClickView: NSView {
+    private func apply(to view: PlateView) {
+        view.shape = shape
+        view.drawsRing = drawsRing
+        view.onLeft = onLeft
+        view.onRight = onRight
+        view.toolTip = toolTip
+        if view.swallowsCursor != swallowsCursor {
+            view.swallowsCursor = swallowsCursor
+            view.syncMonitor()
+        }
+        view.needsDisplay = true
+    }
+
+    final class PlateView: NSView {
+        var shape: IconPlate.Shape = .square
+        var drawsRing = false
+        var swallowsCursor = false
         var onLeft: (() -> Void)?
         var onRight: (() -> Void)?
+        private var monitor: Any?
         private var hovering = false
-        private var pushedCursor = false
+        private var pressed = false
+        private var tourObserver: NSObjectProtocol?
 
         override var isOpaque: Bool { false }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func resetCursorRects() {
+            discardCursorRects()
+            guard !touring else { return }
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+
+        override func cursorUpdate(with event: NSEvent) {
+            guard !touring else { return }
+            NSCursor.pointingHand.set()
+        }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -1518,7 +1746,7 @@ private struct MouseClick: NSViewRepresentable {
             }
             addTrackingArea(NSTrackingArea(
                 rect: bounds,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                options: [.mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
                 owner: self,
                 userInfo: nil
             ))
@@ -1526,37 +1754,169 @@ private struct MouseClick: NSViewRepresentable {
 
         override func mouseEntered(with event: NSEvent) {
             watchTour()
-            if AppRuntime.model.isTouring {
-                clearHover()
+            guard !touring else {
+                setHovering(false)
                 return
             }
-            hovering = true
-            needsDisplay = true
-            guard !pushedCursor else { return }
-            NSCursor.pointingHand.push()
-            pushedCursor = true
+            setHovering(true)
+            NSCursor.pointingHand.set()
         }
 
         override func mouseExited(with event: NSEvent) {
-            clearHover()
+            setHovering(false)
         }
 
-        override func draw(_ dirtyRect: NSRect) {
-            guard hovering else { return }
-            NSColor(white: 1, alpha: 0.16).setFill()
-            NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5)).fill()
+        override func layout() {
+            super.layout()
+            window?.invalidateCursorRects(for: self)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            watchTour()
+            syncMonitor()
+            window?.invalidateCursorRects(for: self)
         }
 
         override func viewWillMove(toWindow newWindow: NSWindow?) {
             super.viewWillMove(toWindow: newWindow)
             if newWindow == nil {
-                clearHover()
-            } else {
-                watchTour()
+                removeMonitor()
+                setHovering(false)
+                setPressed(false)
             }
         }
 
-        private var tourObserver: NSObjectProtocol?
+        func syncMonitor() {
+            removeMonitor()
+            guard swallowsCursor, window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .cursorUpdate]) { [weak self] event in
+                guard let self else { return event }
+                let eventWindow = event.window
+                let location = event.locationInWindow
+                guard let eventWindow, self.window === eventWindow else { return event }
+                if self.touring {
+                    self.setHovering(false)
+                    return event
+                }
+                let point = self.convert(location, from: nil)
+                let inside = self.bounds.contains(point) && !self.isHiddenOrHasHiddenAncestor
+                guard inside else {
+                    self.setHovering(false)
+                    return event
+                }
+                self.setHovering(true)
+                NSCursor.pointingHand.set()
+                return nil
+            }
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            if let fill = pressed ? IconMetrics.pressed : (hovering ? IconMetrics.hover : nil) {
+                fill.setFill()
+                hitPath.fill()
+            }
+            guard drawsRing else { return }
+            NSColor.white.withAlphaComponent(0.85).setStroke()
+            let ring = NSBezierPath(ovalIn: centered(IconMetrics.ring))
+            ring.lineWidth = 1
+            ring.stroke()
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if onLeft == nil && onRight == nil {
+                setPressed(true)
+                forwardClick(event)
+                setPressed(false)
+                return
+            }
+            setPressed(true)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+            setPressed(false)
+            guard inside else { return }
+            onLeft?()
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            guard let onRight else {
+                super.rightMouseDown(with: event)
+                return
+            }
+            setPressed(true)
+            onRight()
+        }
+
+        override func rightMouseUp(with event: NSEvent) {
+            setPressed(false)
+        }
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            onRight == nil ? super.menu(for: event) : nil
+        }
+
+        private var hitPath: NSBezierPath {
+            switch shape {
+            case .square:
+                NSBezierPath(roundedRect: bounds, xRadius: IconMetrics.radius, yRadius: IconMetrics.radius)
+            case .circle:
+                NSBezierPath(ovalIn: bounds)
+            }
+        }
+
+        private func centered(_ side: CGFloat) -> NSRect {
+            NSRect(
+                x: (bounds.width - side) / 2,
+                y: (bounds.height - side) / 2,
+                width: side,
+                height: side
+            )
+        }
+
+        private var touring: Bool { AppRuntime.model.isTouring }
+
+        private func setHovering(_ hovering: Bool) {
+            guard self.hovering != hovering else { return }
+            self.hovering = hovering
+            needsDisplay = true
+        }
+
+        private func setPressed(_ pressed: Bool) {
+            guard self.pressed != pressed else { return }
+            self.pressed = pressed
+            needsDisplay = true
+        }
+
+        private func forwardClick(_ event: NSEvent) {
+            guard let window else { return }
+            isHidden = true
+            let hit = window.contentView?.hitTest(event.locationInWindow)
+            let button = hit.flatMap { nearestButton(from: $0) }
+            if let button {
+                button.mouseDown(with: event)
+            } else if let hit, hit !== self {
+                hit.mouseDown(with: event)
+            }
+            isHidden = false
+        }
+
+        private func nearestButton(from view: NSView) -> NSButton? {
+            var current: NSView? = view
+            while let candidate = current {
+                if let button = candidate as? NSButton { return button }
+                current = candidate.superview
+            }
+            return nil
+        }
+
+        private func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
 
         private func watchTour() {
             guard tourObserver == nil else { return }
@@ -1566,33 +1926,17 @@ private struct MouseClick: NSViewRepresentable {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.clearHover()
+                    self?.setHovering(false)
+                    self?.setPressed(false)
                 }
             }
         }
 
-        private func clearHover() {
-            hovering = false
-            needsDisplay = true
-            guard pushedCursor else { return }
-            NSCursor.pop()
-            pushedCursor = false
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            onLeft?()
-        }
-
-        override func rightMouseDown(with event: NSEvent) {
-            onRight?()
-        }
-
-        override func menu(for event: NSEvent) -> NSMenu? {
-            nil
-        }
-
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-            true
+        isolated deinit {
+            removeMonitor()
+            if let tourObserver {
+                NotificationCenter.default.removeObserver(tourObserver)
+            }
         }
     }
 }
@@ -1651,7 +1995,7 @@ private struct DeniedCursor: NSViewRepresentable {
 
         override func resetCursorRects() {
             guard !AppRuntime.model.isTouring else { return }
-            addCursorRect(bounds, cursor: .operationNotAllowed)
+            addCursorRect(bounds, cursor: .arrow)
         }
 
         override func layout() {
@@ -1663,27 +2007,31 @@ private struct DeniedCursor: NSViewRepresentable {
     }
 }
 
-private struct HoverPlate: NSViewRepresentable {
+struct HoverPlate: NSViewRepresentable {
     var cornerRadius: CGFloat
     var color: NSColor
+    var activeDuringTour = false
 
     func makeNSView(context: Context) -> HoverTrackingView {
         let view = HoverTrackingView()
         view.cornerRadius = cornerRadius
         view.color = color
+        view.activeDuringTour = activeDuringTour
         return view
     }
 
     func updateNSView(_ nsView: HoverTrackingView, context: Context) {
         nsView.cornerRadius = cornerRadius
         nsView.color = color
+        nsView.activeDuringTour = activeDuringTour
         nsView.needsDisplay = true
     }
 }
 
-private final class HoverTrackingView: NSView {
+final class HoverTrackingView: NSView {
     var cornerRadius: CGFloat = 4
     var color: NSColor = .white.withAlphaComponent(0.14)
+    var activeDuringTour = false
     private var hovering = false
     private var pushedCursor = false
 
@@ -1707,7 +2055,7 @@ private final class HoverTrackingView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         watchTour()
-        if AppRuntime.model.isTouring {
+        if AppRuntime.model.isTouring, !activeDuringTour {
             clearHover()
             return
         }

@@ -985,17 +985,109 @@ struct SessionTests {
         let day = session.groupedHistory(calendar: calendar)[0]
         #expect(day.pomodoros == 3)
         #expect(day.workMinutes == 25 + 25 + 50)
-        #expect(day.rows.map(\.taskName) == ["Write more", "Review"])
-        #expect(day.rows.map(\.count) == [2, 1])
-        #expect(day.rows.map(\.mode) == [.regular, .focus])
+        #expect(day.rows.map(\.taskName) == ["Review", "Write more"])
+        #expect(day.rows.map(\.count) == [1, 2])
+        #expect(day.rows.map(\.mode) == [.focus, .regular])
+        #expect(day.rows[0].finishedAt == beginning.addingTimeInterval(40))
+        #expect(day.rows[1].finishedAt == beginning.addingTimeInterval(20))
 
-        let writeID = day.rows[0].queueItemId
+        let writeID = day.rows[1].queueItemId
         session.requeueHistory(queueItemId: writeID, day: day.day, calendar: calendar)
         #expect(session.queue.map(\.description) == ["Write more"])
         #expect(session.queue[0].count == 2)
         #expect(session.queue[0].intensity == .regular)
         #expect(session.queue[0].id != writeID)
         #expect(session.history.count == 3)
+    }
+
+    @Test func doneListsTheNewestCompletionFirst() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        let write = session.queue[0].id
+        let review = session.queue[1].id
+        let first = HistoryClock.date(2026, 9, 24, 9, 15)
+        let second = HistoryClock.date(2026, 9, 24, 10, 2)
+        let third = HistoryClock.date(2026, 9, 24, 11, 45)
+        #expect(session.markFinished(id: write, now: first, calendar: calendar) == .none)
+        let writeDone = session.done[0].id
+        #expect(session.done[0].finishedAt == first)
+        #expect(session.markFinished(id: review, now: second, calendar: calendar) == .none)
+        #expect(session.done.map(\.description) == ["Review", "Write"])
+        #expect(session.done[0].finishedAt == second)
+        #expect(session.done[1].id == writeDone)
+        #expect(session.markFinished(id: write, now: third, calendar: calendar) == .none)
+        #expect(session.done.map(\.description) == ["Write", "Review"])
+        #expect(session.done[0].id == writeDone)
+        #expect(session.done[0].count == 2)
+        #expect(session.done[0].finishedAt == third)
+        #expect(session.done[1].finishedAt == second)
+        let rows = session.groupedHistory(calendar: calendar)[0].rows
+        #expect(rows.map(\.taskName) == ["Write", "Review"])
+        #expect(rows[0].finishedAt == third)
+        #expect(rows[1].finishedAt == second)
+    }
+
+    @Test func historyKeepsEachDaysLatestFinish() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 3)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        let write = session.queue[0].id
+        let review = session.queue[1].id
+        let yesterdayEarly = HistoryClock.date(2026, 9, 24, 9, 0)
+        let yesterdayLate = HistoryClock.date(2026, 9, 24, 18, 10)
+        let reviewToday = HistoryClock.date(2026, 9, 25, 8, 5)
+        let writeToday = HistoryClock.date(2026, 9, 25, 11, 40)
+        #expect(session.markFinished(id: write, now: yesterdayEarly, calendar: calendar) == .none)
+        #expect(session.markFinished(id: write, now: yesterdayLate, calendar: calendar) == .none)
+        session.refreshDoneDay(now: HistoryClock.date(2026, 9, 25, 8, 0), calendar: calendar)
+        #expect(session.done.isEmpty)
+        #expect(session.markFinished(id: review, now: reviewToday, calendar: calendar) == .none)
+        #expect(session.markFinished(id: write, now: writeToday, calendar: calendar) == .none)
+        #expect(session.done.map(\.description) == ["Write", "Review"])
+        #expect(session.done[0].finishedAt == writeToday)
+        let days = session.groupedHistory(calendar: calendar)
+        #expect(days.map(\.day) == [
+            calendar.startOfDay(for: writeToday),
+            calendar.startOfDay(for: yesterdayLate),
+        ])
+        #expect(days[0].rows.map(\.taskName) == ["Write", "Review"])
+        #expect(days[0].rows[0].finishedAt == writeToday)
+        #expect(days[0].rows[1].finishedAt == reviewToday)
+        #expect(days[1].rows.map(\.taskName) == ["Write"])
+        #expect(days[1].rows[0].finishedAt == yesterdayLate)
+        #expect(days[1].rows[0].count == 2)
+    }
+
+    @Test func savedDoneWithoutFinishTimesSortsNewestFirst() throws {
+        let calendar = HistoryClock.calendar
+        let writeSource = UUID()
+        let reviewSource = UUID()
+        let writeRow = UUID()
+        let reviewRow = UUID()
+        let writeEvent = UUID()
+        let reviewEvent = UUID()
+        let day = HistoryClock.date(2026, 9, 24, 0, 0)
+        let writeAt = HistoryClock.date(2026, 9, 24, 9, 0)
+        let reviewAt = HistoryClock.date(2026, 9, 24, 15, 30)
+        func stamp(_ date: Date) -> String {
+            String(date.timeIntervalSinceReferenceDate)
+        }
+        let json = """
+        {"isRunning":false,"phase":"idle","phaseDuration":0,"queue":[],"remaining":0,"didMigrateHistory":true,"didMigrateWorkedSeconds":true,"doneDay":\(stamp(day)),"history":[{"id":"\(writeEvent.uuidString)","timestamp":\(stamp(writeAt)),"queueItemId":"\(writeSource.uuidString)","taskName":"Write","mode":"regular","workMinutes":25,"workedSeconds":1500},{"id":"\(reviewEvent.uuidString)","timestamp":\(stamp(reviewAt)),"queueItemId":"\(reviewSource.uuidString)","taskName":"Review","mode":"focus","workMinutes":50,"workedSeconds":3000}],"done":[{"id":"\(writeRow.uuidString)","intensity":"regular","description":"Write","count":1,"sourceID":"\(writeSource.uuidString)","workedSeconds":1500},{"id":"\(reviewRow.uuidString)","intensity":"focus","description":"Review","count":1,"sourceID":"\(reviewSource.uuidString)","workedSeconds":3000}]}
+        """
+        var session = try JSONDecoder().decode(Session.self, from: Data(json.utf8))
+        #expect(session.done.map(\.description) == ["Write", "Review"])
+        #expect(session.done[0].finishedAt == nil)
+        session.orderDoneNewestFirst(calendar: calendar)
+        #expect(session.done.map(\.description) == ["Review", "Write"])
+        #expect(session.done.map(\.id) == [reviewRow, writeRow])
+        #expect(abs(session.done[0].finishedAt!.timeIntervalSince(reviewAt)) < 0.001)
+        #expect(abs(session.done[1].finishedAt!.timeIntervalSince(writeAt)) < 0.001)
+        session.orderDoneNewestFirst(calendar: calendar)
+        #expect(session.done.map(\.id) == [reviewRow, writeRow])
     }
 
     @Test func tourSampleStaysOutOfHistory() {

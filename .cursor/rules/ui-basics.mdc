@@ -1,0 +1,47 @@
+---
+description: SlimPomo UI basics. Apply to every UI change.
+alwaysApply: true
+---
+
+# SlimPomo UI basics
+
+Every new or changed UI element must meet these rules. Check them before finishing any task.
+
+## Cursors
+- Pointing hand (`NSCursor.pointingHand`) on every clickable custom control: buttons, icon buttons, mode gauges, count circles, ••• menus, push-back icons, disclosure chevrons, header icons (History, Tour, trash).
+- I-beam on editable text. Open hand / closed hand for drag handles and while dragging.
+- Disabled or display-only elements keep the arrow cursor.
+- Standard `NSMenu` items and system controls keep their system cursors.
+
+## Hover and states
+- Every clickable custom control has a subtle hover state (e.g. a rounded background at white 6%, radius 6).
+- Icon-only buttons: square 28×28 pt hit area with the icon centered. The hover/pressed background fills the square (radius 6). Round controls get a 28 pt circular hover. The icon size and the layout never change.
+- Disabled: 40% opacity, no hover, a tooltip explaining why when that's useful.
+- Hover must never shift the layout (no size or padding changes).
+
+## Tooltips and accessibility
+- Every icon-only control has a tooltip and an accessibility label.
+- Custom controls expose the right accessibility role, and a hint when the click action isn't obvious.
+
+## Layout
+- The window is at least 450×550. Every element must fit there with nothing clipped.
+- In rows, only the task name truncates (trailing "…"). Times, counts, and icons never truncate.
+- Numbers and times use monospaced digits and fixed-width columns so rows line up.
+- Keep existing spacing, font sizes, and colors. Reuse existing components instead of new styling.
+
+## Motion
+- Animations are short (150–300 ms) and play once. Never a second "catch-up" animation.
+- Lists use stable ids. Reordering animates as a move, never remove + insert.
+- Respect Reduce Motion: replace movement and scaling with a simple fade.
+
+## Look
+- Dark window, flat design. Use existing tokens and colors. No new colors without being asked.
+- Sentence case for UI text. The menu bar follows standard macOS conventions.
+
+## Before you finish
+- [ ] Cursor, hover, and disabled states correct on every touched control
+- [ ] Tooltip and accessibility label on icon-only controls
+- [ ] Checked at 450×550 and at the default size
+- [ ] Checked with Reduce Motion on
+- [ ] No double animations or flicker
+- [ ] Icon-only buttons have a 28×28 square hit area and hover
