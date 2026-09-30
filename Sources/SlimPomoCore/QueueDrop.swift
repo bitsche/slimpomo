@@ -50,4 +50,15 @@ public enum QueueDrop {
     public static func pointerIsInScrollArea(yFromTop: CGFloat) -> Bool {
         yFromTop >= 0
     }
+
+    /// The list order while a row is held. The moved id stays in the list, at `gapIndex`
+    /// in the array after it is lifted out. Callers identify rows by that same id.
+    public static func workingOrder(ids: [UUID], moving id: UUID, to gapIndex: Int) -> [UUID] {
+        guard let from = ids.firstIndex(of: id) else { return ids }
+        var working = ids
+        working.remove(at: from)
+        let index = min(max(0, gapIndex), working.count)
+        working.insert(id, at: index)
+        return working
+    }
 }

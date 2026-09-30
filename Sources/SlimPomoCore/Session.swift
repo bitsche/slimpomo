@@ -606,6 +606,20 @@ public struct Session: Equatable, Codable {
         return .workDone
     }
 
+    /// Counts one pomodoro as done without running it.
+    /// The active work row uses `markDone`. Any other row records a full planned session and leaves the timer alone.
+    /// A count that reaches 0 leaves the queue, on every completion path.
+    public mutating func markFinished(id: UUID, now: Date, calendar: Calendar = .current) -> SessionEffect {
+        guard let index = queue.firstIndex(where: { $0.id == id }), queue[index].count > 0 else { return .none }
+        if phase == .work, activeItemID == id {
+            return markDone(now: now, calendar: calendar)
+        }
+        let planned = queue[index].intensity.mode.workMinutes * 60
+        settleDoneDay(now: now, calendar: calendar, force: true)
+        recordCompletion(at: index, now: now, workedSeconds: planned)
+        return .none
+    }
+
     /// Drops the running pomodoro without finishing it and returns to the unstarted queue.
     public mutating func stop(now: Date = Date(), calendar: Calendar = .current) -> SessionEffect {
         guard phase == .work, isRunning else { return .none }
@@ -971,14 +985,20 @@ public struct Session: Equatable, Codable {
         settleDoneDay(now: now, calendar: calendar, force: true)
         let finished = queue[index]
         activeDescription = finished.description
+        let breakDuration = lockedBreakDuration ?? finished.intensity.breakDuration
+        recordCompletion(at: index, now: now, workedSeconds: worked)
+        beginBreak(duration: breakDuration, itemID: id, now: now)
+    }
+
+    /// Records the completion, then removes the row when its count reaches 0.
+    private mutating func recordCompletion(at index: Int, now: Date, workedSeconds: Int) {
+        let finished = queue[index]
         queue[index].count = max(0, queue[index].count - 1)
         queue[index].completed += 1
-        recordFinishedPomodoro(from: finished, at: now, workedSeconds: worked)
-        let breakDuration = lockedBreakDuration ?? finished.intensity.breakDuration
+        recordFinishedPomodoro(from: finished, at: now, workedSeconds: workedSeconds)
         if queue[index].count <= 0 {
             queue.remove(at: index)
         }
-        beginBreak(duration: breakDuration, itemID: id, now: now)
     }
 
     /// Planned work minus the time still left. Pauses and time the app was closed stay in `remaining`.

@@ -19,8 +19,6 @@ enum QueueMotion {
 @MainActor
 @Observable
 final class QueueDragController {
-    static let gapID = UUID(uuidString: "00000000-0000-4000-8000-0000000000D2")!
-
     let itemID: UUID
     let originIndex: Int
     var gapIndex: Int

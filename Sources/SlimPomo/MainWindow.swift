@@ -443,30 +443,33 @@ struct MainWindow: View {
 
     private var queueRows: some View {
         VStack(spacing: 0) {
-            ForEach(queueSlots) { slot in
-                switch slot.kind {
-                case .item(let item):
-                    QueueLine(
-                        item: item,
-                        isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
-                        finish: shown.finishDates(at: model.now)[item.id],
-                        model: model,
-                        gripVisible: model.tourGripItemID == item.id
-                            || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
-                    )
-                    .id(item.id)
-                case .gap:
-                    QueueGapOutline(
-                        height: model.queueDrag?.rowHeight ?? 48,
-                        visible: model.queueDrag?.showsOutline ?? false
-                    )
+            ForEach(displayedQueue) { item in
+                let held = model.queueDrag?.itemID == item.id
+                QueueLine(
+                    item: item,
+                    isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
+                    finish: shown.finishDates(at: model.now)[item.id],
+                    model: model,
+                    gripVisible: model.tourGripItemID == item.id
+                        || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
+                )
+                .id(item.id)
+                .opacity(held ? 0 : 1)
+                .overlay {
+                    if held {
+                        QueueGapOutline(
+                            height: model.queueDrag?.rowHeight ?? 48,
+                            visible: model.queueDrag?.showsOutline ?? false
+                        )
+                    }
                 }
+                .accessibilityHidden(held)
+                .allowsHitTesting(!held)
             }
         }
-        .animation(QueueMotion.slide(model.reduceMotion), value: model.queueDrag?.gapIndex)
         .animation(
-            model.queueDrag == nil && model.tour == nil ? QueueMotion.slide(model.reduceMotion) : nil,
-            value: shown.queue.map(\.id)
+            model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
+            value: displayedQueue.map(\.id)
         )
         .background {
             QueueListAnchor { anchor in
@@ -612,28 +615,13 @@ struct MainWindow: View {
         "\(clockParts.0):\(clockParts.1)"
     }
 
-    private struct QueueSlot: Identifiable {
-        enum Kind {
-            case item(QueueItem)
-            case gap
-        }
-
-        var id: UUID
-        var kind: Kind
-    }
-
-    private var queueSlots: [QueueSlot] {
+    /// Session order, or the in-progress order while a row is held. The held id never leaves the list.
+    private var displayedQueue: [QueueItem] {
         let queue = shown.queue
-        guard let drag = model.queueDrag,
-              let from = queue.firstIndex(where: { $0.id == drag.itemID }) else {
-            return queue.map { QueueSlot(id: $0.id, kind: .item($0)) }
-        }
-        var rest = queue
-        rest.remove(at: from)
-        let gapAt = min(max(drag.gapIndex, 0), rest.count)
-        var slots = rest.map { QueueSlot(id: $0.id, kind: .item($0)) }
-        slots.insert(QueueSlot(id: QueueDragController.gapID, kind: .gap), at: gapAt)
-        return slots
+        guard let drag = model.queueDrag else { return queue }
+        let ids = QueueDrop.workingOrder(ids: queue.map(\.id), moving: drag.itemID, to: drag.gapIndex)
+        let byID = Dictionary(uniqueKeysWithValues: queue.map { ($0.id, $0) })
+        return ids.compactMap { byID[$0] }
     }
 
     @ViewBuilder
@@ -948,6 +936,9 @@ private struct QueueLine: View {
 
     private var rowMenu: some View {
         Menu {
+            Button("Mark as finished") { model.markFinished(id: item.id) }
+                .disabled(item.count == 0)
+            Divider()
             Button("Move up") { model.moveUp(id: item.id) }
                 .disabled(!model.session.canMoveUp(id: item.id))
             Button("Move down") { model.moveDown(id: item.id) }
@@ -969,7 +960,7 @@ private struct QueueLine: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Reorder, snooze, or delete")
+        .help("Mark finished, reorder, snooze, or delete")
     }
 
     private var finishText: String {

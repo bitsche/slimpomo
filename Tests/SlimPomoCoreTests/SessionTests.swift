@@ -104,6 +104,217 @@ struct SessionTests {
         #expect(session.displayedRemaining(at: start.addingTimeInterval(40)) == 10 * 60)
     }
 
+    @Test func markFinishedRecordsAFullDiveWithoutTouchingTheTimer() {
+        let calendar = HistoryClock.calendar
+        let now = HistoryClock.date(2026, 9, 25, 11, 0)
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 2)
+        _ = session.start(now: now, calendar: calendar)
+        let endsAt = session.endsAt
+        let remaining = session.displayedRemaining(at: now)
+        let review = session.queue[1].id
+        let beforeFinish = session.finishDates(at: now)[review]
+        #expect(session.markFinished(id: review, now: now, calendar: calendar) == .none)
+        #expect(session.queue[1].count == 1)
+        #expect(session.queue[1].id == review)
+        #expect(session.phase == .work)
+        #expect(session.isRunning)
+        #expect(session.endsAt == endsAt)
+        #expect(session.displayedRemaining(at: now) == remaining)
+        #expect(session.done.count == 1)
+        #expect(session.done[0].sourceID == review)
+        #expect(session.done[0].count == 1)
+        #expect(session.done[0].intensity == .focus)
+        #expect(session.done[0].workedSeconds == 50 * 60)
+        #expect(session.history.count == 1)
+        #expect(session.history[0].workedSeconds == 50 * 60)
+        #expect(session.history[0].workMinutes == 50)
+        #expect(session.history[0].timestamp == now)
+        #expect(session.history[0].queueItemId == review)
+        #expect(session.finishDates(at: now)[review] != beforeFinish)
+        #expect(session.groupedHistory(calendar: calendar)[0].pomodoros == 1)
+        #expect(session.groupedHistory(calendar: calendar)[0].workedSeconds == 50 * 60)
+
+        #expect(session.markFinished(id: review, now: now.addingTimeInterval(5), calendar: calendar) == .none)
+        #expect(session.queue.map(\.description) == ["Write"])
+        #expect(session.done[0].count == 2)
+        #expect(session.done[0].workedSeconds == 100 * 60)
+        #expect(session.history.count == 2)
+        #expect(session.finishDates(at: now)[review] == nil)
+        #expect(session.finishDates(at: now)[session.queue[0].id] != nil)
+        #expect(session.phase == .work)
+        #expect(session.endsAt == endsAt)
+    }
+
+    @Test func markFinishedRemovesANonActiveRowAtOne() {
+        let now = start
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        session.addItem(description: "Plan", intensity: .intense, count: 1)
+        let review = session.queue[1].id
+        let plan = session.queue[2].id
+        let planFinish = session.finishDates(at: now)[plan]
+        #expect(session.markFinished(id: review, now: now) == .none)
+        #expect(session.queue.map(\.description) == ["Write", "Plan"])
+        #expect(session.queue[0].count == 2)
+        #expect(session.done[0].sourceID == review)
+        #expect(session.done[0].count == 1)
+        #expect(session.done[0].workedSeconds == 50 * 60)
+        #expect(session.history[0].workedSeconds == 50 * 60)
+        #expect(session.history[0].workMinutes == 50)
+        #expect(session.phase == .idle)
+        #expect(session.finishDates(at: now)[review] == nil)
+        #expect(session.finishDates(at: now)[plan]! < planFinish!)
+        #expect(session.statusMenu(at: now).taskName == "Write")
+    }
+
+    @Test func markFinishedOnARunningLastPomodoroDropsTheRowAndNamesTheNextTask() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        _ = session.start(now: start)
+        let marked = start.addingTimeInterval(10 * 60)
+        let id = session.queue[0].id
+        #expect(session.markFinished(id: id, now: marked) == .workDone)
+        #expect(session.queue.map(\.description) == ["Review"])
+        #expect(session.phase == .breakTime)
+        #expect(session.phaseDuration == 5 * 60)
+        #expect(session.history[0].workedSeconds == 10 * 60)
+        #expect(session.done[0].workedSeconds == 10 * 60)
+        #expect(session.queue.first { $0.count > 0 }?.description == "Review")
+        #expect(session.finishDates(at: marked)[id] == nil)
+
+        var only = Session()
+        only.addItem(description: "Write", intensity: .regular, count: 1)
+        _ = only.start(now: start)
+        let end = start.addingTimeInterval(25 * 60)
+        #expect(only.reconcile(now: end) == .workDone)
+        #expect(only.queue.isEmpty)
+        #expect(only.phase == .breakTime)
+        #expect(only.done[0].count == 1)
+        #expect(only.history[0].workedSeconds == 25 * 60)
+    }
+
+    @Test func markFinishedOnTheRunningTaskMatchesPauseThenFinish() {
+        let calendar = HistoryClock.calendar
+        let start = HistoryClock.date(2026, 9, 25, 9, 0)
+        let marked = start.addingTimeInterval(10 * 60)
+        func started() -> Session {
+            var session = Session()
+            session.addItem(description: "Write", intensity: .regular, count: 2)
+            _ = session.start(now: start, calendar: calendar)
+            return session
+        }
+        var running = started()
+        let id = running.queue[0].id
+        #expect(running.markFinished(id: id, now: marked, calendar: calendar) == .workDone)
+        var paused = started()
+        _ = paused.pause(now: marked)
+        #expect(paused.markDone(now: marked, calendar: calendar) == .workDone)
+        #expect(running.phase == .breakTime)
+        #expect(running.phase == paused.phase)
+        #expect(running.isRunning == paused.isRunning)
+        #expect(running.queue[0].count == 1)
+        #expect(running.queue[0].count == paused.queue[0].count)
+        #expect(running.history[0].workedSeconds == 10 * 60)
+        #expect(paused.history[0].workedSeconds == 10 * 60)
+        #expect(running.history[0].workMinutes == 25)
+        #expect(running.done[0].workedSeconds == paused.done[0].workedSeconds)
+        #expect(running.phaseDuration == 5 * 60)
+        #expect(running.displayedRemaining(at: marked) == 5 * 60)
+        #expect(paused.displayedRemaining(at: marked) == 5 * 60)
+    }
+
+    @Test func markFinishedWhilePausedMatchesTheFinishButton() {
+        let calendar = HistoryClock.calendar
+        let start = HistoryClock.date(2026, 9, 25, 9, 0)
+        let marked = start.addingTimeInterval(10 * 60)
+        func pausedSession() -> Session {
+            var session = Session()
+            session.addItem(description: "Write", intensity: .regular, count: 1)
+            _ = session.start(now: start, calendar: calendar)
+            _ = session.pause(now: marked)
+            return session
+        }
+        var fromMenu = pausedSession()
+        var fromButton = pausedSession()
+        let id = fromMenu.queue[0].id
+        #expect(fromMenu.markFinished(id: id, now: marked, calendar: calendar) == .workDone)
+        #expect(fromButton.markDone(now: marked, calendar: calendar) == .workDone)
+        #expect(fromMenu.phase == fromButton.phase)
+        #expect(fromMenu.queue.isEmpty)
+        #expect(fromButton.queue.isEmpty)
+        #expect(fromMenu.history[0].workedSeconds == fromButton.history[0].workedSeconds)
+        #expect(fromMenu.done[0].workedSeconds == 10 * 60)
+        #expect(fromMenu.phaseDuration == fromButton.phaseDuration)
+        #expect(fromMenu.displayedRemaining(at: marked) == fromButton.displayedRemaining(at: marked))
+    }
+
+    @Test func markFinishedDuringABreakMovesNextToTheFollowingTask() {
+        let calendar = HistoryClock.calendar
+        let now = HistoryClock.date(2026, 9, 25, 9, 0)
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        session.addItem(description: "Plan", intensity: .intense, count: 1)
+        _ = session.start(now: now, calendar: calendar)
+        _ = session.markDone(now: now, calendar: calendar)
+        #expect(session.phase == .breakTime)
+        #expect(session.queue.first { $0.count > 0 }?.description == "Review")
+        let endsAt = session.endsAt
+        let remaining = session.displayedRemaining(at: now)
+        let review = session.queue[0].id
+        #expect(session.markFinished(id: review, now: now, calendar: calendar) == .none)
+        #expect(session.queue.map(\.description) == ["Plan"])
+        #expect(session.queue.first { $0.count > 0 }?.description == "Plan")
+        #expect(session.statusMenu(at: now).statusPrefix == "Break · 5 min left")
+        #expect(session.phase == .breakTime)
+        #expect(session.endsAt == endsAt)
+        #expect(session.displayedRemaining(at: now) == remaining)
+        #expect(session.done.contains { $0.sourceID == review && $0.count == 1 && $0.workedSeconds == 50 * 60 })
+        #expect(session.finishDates(at: now)[review] == nil)
+    }
+
+    @Test func markFinishedAtZeroDoesNothing() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        let id = session.queue[0].id
+        session.setCount(id: id, count: 0)
+        #expect(session.markFinished(id: id, now: start) == .none)
+        #expect(session.queue[0].count == 0)
+        #expect(session.done.isEmpty)
+        #expect(session.history.isEmpty)
+    }
+
+    @Test func markFinishedClearsStaleDoneBeforeRecording() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        let evening = HistoryClock.date(2026, 9, 24, 18, 0)
+        _ = session.start(now: evening, calendar: calendar)
+        _ = session.markDone(now: evening.addingTimeInterval(60), calendar: calendar)
+        _ = session.skipBreak(now: evening.addingTimeInterval(120), calendar: calendar)
+        #expect(session.phase == .work)
+        #expect(session.done.map(\.description) == ["Write"])
+        let morning = HistoryClock.date(2026, 9, 25, 9, 0)
+        session.refreshDoneDay(now: morning, calendar: calendar)
+        #expect(session.done.map(\.description) == ["Write"])
+        let review = session.queue.first { $0.description == "Review" }!.id
+        let endsAt = session.endsAt
+        #expect(session.markFinished(id: review, now: morning, calendar: calendar) == .none)
+        #expect(session.queue.map(\.description) == ["Write"])
+        #expect(session.done.map(\.description) == ["Review"])
+        #expect(session.done[0].workedSeconds == 50 * 60)
+        #expect(session.history.count == 2)
+        #expect(calendar.isDate(session.history[1].timestamp, inSameDayAs: morning))
+        #expect(session.phase == .work)
+        #expect(session.endsAt == endsAt)
+        #expect(session.groupedHistory(calendar: calendar)[0].day == calendar.startOfDay(for: morning))
+    }
+
     @Test func markDoneDoesNothingDuringBreak() {
         var session = Session()
         session.addItem(description: "Write", intensity: .regular, count: 1)
@@ -400,6 +611,13 @@ struct SessionTests {
         #expect(QueueDrop.pointerIsInScrollArea(yFromTop: 12))
         #expect(QueueDrop.pointerIsInScrollArea(yFromTop: -1) == false)
         #expect(QueueDrop.pointerIsInScrollArea(yFromTop: -40) == false)
+        let ids = [UUID(uuidString: "00000000-0000-4000-8000-000000000001")!,
+                   UUID(uuidString: "00000000-0000-4000-8000-000000000002")!,
+                   UUID(uuidString: "00000000-0000-4000-8000-000000000003")!]
+        #expect(QueueDrop.workingOrder(ids: ids, moving: ids[2], to: 0) == [ids[2], ids[0], ids[1]])
+        #expect(QueueDrop.workingOrder(ids: ids, moving: ids[0], to: 2) == [ids[1], ids[2], ids[0]])
+        #expect(QueueDrop.workingOrder(ids: ids, moving: ids[1], to: 1) == ids)
+        #expect(Set(QueueDrop.workingOrder(ids: ids, moving: ids[2], to: 1)) == Set(ids))
     }
 
     @Test func reorderBeforeTheBreakFollowsTheNewFront() {

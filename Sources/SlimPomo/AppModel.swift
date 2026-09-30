@@ -26,6 +26,8 @@ final class AppModel {
     var textFocusNonce = 0
     var reduceMotion = false
     var queueDrag: QueueDragController?
+    /// True for the frame that commits a drag, so the list does not animate a second time.
+    var suppressQueueAnimation = false
     /// True while the queue, LATER, or Done has scrolled under the add row.
     var listsScrolled = false
     /// Set when a new queue row should be brought into view. Cleared by the list.
@@ -167,6 +169,14 @@ final class AppModel {
     func markDone() {
         stopAlarm()
         apply { $0.markDone(now: now) }
+    }
+
+    func markFinished(id: UUID) {
+        if session.phase == .work, session.activeItemID == id {
+            markDone()
+            return
+        }
+        apply { $0.markFinished(id: id, now: now) }
     }
 
     func stop() {
@@ -977,11 +987,18 @@ final class AppModel {
         let drop = drag.drop
         let id = drag.itemID
         let destination = drag.gapIndex
+        // The floating row is already on the gap. Commit that order with no animation,
+        // in the same update that removes the floating copy.
+        suppressQueueAnimation = true
         queueDrag = nil
-        guard drop else { return }
-        apply { session in
-            session.reorder(id: id, to: destination)
-            return .none
+        if drop {
+            apply { session in
+                session.reorder(id: id, to: destination)
+                return .none
+            }
+        }
+        Task { @MainActor in
+            self.suppressQueueAnimation = false
         }
     }
 
