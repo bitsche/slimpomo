@@ -227,7 +227,7 @@ private struct HistoryLine: View {
     }
 
     private var hoverID: String {
-        "\(day.timeIntervalSinceReferenceDate)-\(row.id.uuidString)"
+        "\(day.timeIntervalSinceReferenceDate)-\(row.id)"
     }
 
     var body: some View {
@@ -270,7 +270,7 @@ private struct HistoryLine: View {
                     slot: IconMetrics.column,
                     help: "Copy to the end of the queue"
                 ) {
-                    model.requeueHistory(queueItemId: row.queueItemId, day: day)
+                    model.requeueHistory(rowID: row.id, day: day)
                 }
             }
         }
@@ -278,7 +278,7 @@ private struct HistoryLine: View {
         .padding(.bottom, RowGrid.doneGap)
         .onHover { model.setHistoryHover(hoverID, hovering: $0) }
         .accessibilityAction(named: "Copy to the end of the queue") {
-            model.requeueHistory(queueItemId: row.queueItemId, day: day)
+            model.requeueHistory(rowID: row.id, day: day)
         }
     }
 }

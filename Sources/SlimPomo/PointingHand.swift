@@ -196,7 +196,7 @@ private final class Center: @unchecked Sendable {
     private func keepsOwnCursor(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let view = current {
-            if view is QueueGripView || view is NSTextView || view is NSTextField { return true }
+            if view is QueueGripView || view is NameClickAreaView || view is NSTextView || view is NSTextField { return true }
             current = view.superview
         }
         return false

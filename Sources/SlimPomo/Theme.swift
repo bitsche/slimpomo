@@ -97,6 +97,8 @@ enum Theme {
     /// Icon hover and press from the UI basics: white at 6% and 10%.
     static let hoverWashNS = NSColor(white: 1, alpha: 0.06)
     static let pressedWashNS = NSColor(white: 1, alpha: 0.10)
+    /// Whole-row hover on a collapsible section header: white at 4%.
+    static let headerHoverWashNS = NSColor(white: 1, alpha: 0.04)
     /// Lifted queue card. Black at 35%.
     static let dragShadow = Color.black.opacity(0.35)
     /// Tour dim. Unchanged at about 55% black.

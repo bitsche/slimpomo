@@ -42,7 +42,7 @@ enum DevLaunch {
         if let id = Bundle.main.bundleIdentifier {
             defaults.removePersistentDomain(forName: id)
         }
-        for key in ["SlimPomo.draftIntensity", "SlimPomo.windowSize", "SlimPomo.historyWindowSize", "SlimPomo.depthHintDismissed", "SlimPomo.laterExpanded"] {
+        for key in ["SlimPomo.draftIntensity", "SlimPomo.windowSize", "SlimPomo.historyWindowSize", "SlimPomo.depthHintDismissed", "SlimPomo.laterExpanded", "SlimPomo.doneExpanded"] {
             defaults.removeObject(forKey: key)
         }
     }

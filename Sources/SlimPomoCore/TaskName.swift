@@ -10,6 +10,12 @@ public enum TaskName {
         public var rest: String
         /// Where `rest` starts in the raw name, in UTF-16 units. Zero when there is no label.
         public var restOffset: Int
+
+        public init(prefix: String?, rest: String, restOffset: Int) {
+            self.prefix = prefix
+            self.rest = rest
+            self.restOffset = restOffset
+        }
     }
 
     /// Labels are 1 to 12 characters without spaces or colons, then a colon and at least one space.

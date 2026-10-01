@@ -8,7 +8,9 @@ If Finder still shows the old icon, run `touch Deeeep.app` or `killall Finder`.
 
 No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
 
-Done is today's finished work. Past days live in History (read-only, local, kept indefinitely).
+Done is today's finished work. Past days live in History (read-only, local, kept indefinitely). Click the DONE or LATER header to collapse it; Deeeep remembers each. Rows with the same name and mode merge into one with a summed count and time.
+
+A name like `Acme: write the report` shows `Acme` as a muted prefix. Click a queue name to edit it; long names wrap to up to four lines while editing. Return saves, Esc cancels.
 
 ## Queue
 

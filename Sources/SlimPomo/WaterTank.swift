@@ -102,12 +102,25 @@ struct TankPaint: VectorArithmetic, Equatable {
     }
 }
 
+/// The line at the bottom of the timer card. A task name gets its muted project label; everything else is plain.
+struct TankTaskLine: Equatable {
+    /// Words before the task, such as "Next:".
+    var lead: String? = nil
+    var text: String
+    var isTask = false
+
+    /// What a screen reader says: the raw text, without the label styling.
+    var spoken: String {
+        [lead, text].compactMap { $0 }.joined(separator: " ")
+    }
+}
+
 struct WaterTank: View {
     var session: Session
     /// Model tick. Digits and the water level read this, never the wave clock.
     var now: Date
     var reduceMotion: Bool
-    var taskText: String
+    var taskLine: TankTaskLine
 
     var body: some View {
         ZStack {
@@ -153,11 +166,7 @@ struct WaterTank: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-            Text(taskText)
-                .font(.system(size: 13, weight: .medium).monospacedDigit())
-                .foregroundStyle(taskColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            taskLabel
                 .padding(.leading, 18)
                 .padding(.trailing, 64)
                 .padding(.bottom, 28)
@@ -171,6 +180,37 @@ struct WaterTank: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             #endif
         }
+    }
+
+    private var taskLabel: some View {
+        let parts = taskLine.isTask
+            ? TaskName.split(taskLine.text)
+            : TaskName.Parts(prefix: nil, rest: taskLine.text, restOffset: 0)
+        return HStack(spacing: 0) {
+            if let lead = taskLine.lead {
+                Text(lead)
+                    .font(.system(size: 13, weight: .medium).monospacedDigit())
+                    .foregroundStyle(taskColor)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.trailing, 5)
+            }
+            if let prefix = parts.prefix {
+                Text(prefix)
+                    .font(.system(size: 11).monospacedDigit().smallCaps())
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.trailing, LabelStyle.gap)
+            }
+            Text(parts.rest)
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .foregroundStyle(taskColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(taskLine.spoken)
     }
 
     /// Top label 30 pt down, zero 12 pt up, and an unlabeled tick halfway between them.
