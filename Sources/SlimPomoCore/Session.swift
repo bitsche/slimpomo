@@ -4,10 +4,6 @@ public struct IntensityMode: Equatable, Sendable {
     public var name: String
     public var workMinutes: Int
     public var breakMinutes: Int
-    /// Pale heat-scale fill: regular, focus, then intense.
-    public var red: Double
-    public var green: Double
-    public var blue: Double
 }
 
 public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
@@ -15,15 +11,15 @@ public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
     case focus
     case intense
 
-    /// Single source for a mode's name, durations, and chip color.
+    /// Single source for a mode's name and durations.
     public var mode: IntensityMode {
         switch self {
         case .regular:
-            IntensityMode(name: "Dip", workMinutes: 25, breakMinutes: 5, red: 0.73, green: 0.84, blue: 0.74)
+            IntensityMode(name: "Dip", workMinutes: 25, breakMinutes: 5)
         case .focus:
-            IntensityMode(name: "Dive", workMinutes: 50, breakMinutes: 10, red: 0.93, green: 0.80, blue: 0.58)
+            IntensityMode(name: "Dive", workMinutes: 50, breakMinutes: 10)
         case .intense:
-            IntensityMode(name: "Deep dive", workMinutes: 75, breakMinutes: 15, red: 0.95, green: 0.64, blue: 0.60)
+            IntensityMode(name: "Deep dive", workMinutes: 75, breakMinutes: 15)
         }
     }
 
@@ -34,8 +30,17 @@ public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
     /// Work minutes, as shown on the chip. The prime marks minutes.
     public var workMark: String { "\(mode.workMinutes)′" }
 
+    /// Share of the gauge's inner height that is water. Dip 30%, Dive 55%, Deep dive 78%.
+    public var gaugeFill: Double {
+        switch self {
+        case .regular: 0.30
+        case .focus: 0.55
+        case .intense: 0.78
+        }
+    }
+
     public var summary: String {
-        "\(mode.name) — \(mode.workMinutes) min work, \(mode.breakMinutes) min break"
+        "\(mode.name) · \(mode.workMinutes) min work, \(mode.breakMinutes) min break"
     }
 
     /// Full session length relative to regular. Regular is 1, focus 2, intense 3.
@@ -206,6 +211,34 @@ public struct HistoryDay: Identifiable, Equatable, Sendable {
     public var rows: [HistoryRow]
 
     public var id: Date { day }
+
+    fileprivate mutating func absorb(_ event: HistoryEvent) {
+        pomodoros += 1
+        workMinutes += event.workMinutes
+        workedSeconds += event.workedSeconds
+        if let index = rows.firstIndex(where: { $0.queueItemId == event.queueItemId }) {
+            rows[index].taskName = event.taskName
+            rows[index].mode = event.mode
+            rows[index].count += 1
+            rows[index].workedSeconds += event.workedSeconds
+            if event.timestamp >= rows[index].finishedAt {
+                rows[index].finishedAt = event.timestamp
+            }
+        } else {
+            rows.append(HistoryRow(
+                queueItemId: event.queueItemId,
+                taskName: event.taskName,
+                mode: event.mode,
+                count: 1,
+                workedSeconds: event.workedSeconds,
+                finishedAt: event.timestamp
+            ))
+        }
+        rows.sort { lhs, rhs in
+            if lhs.finishedAt != rhs.finishedAt { return lhs.finishedAt > rhs.finishedAt }
+            return lhs.queueItemId.uuidString > rhs.queueItemId.uuidString
+        }
+    }
 }
 
 /// The status-item menu's grey line and its Start, Pause, or Resume item.
@@ -748,6 +781,34 @@ public struct Session: Equatable, Codable {
         .sorted { $0.day > $1.day }
     }
 
+    /// Session file without the event log. History is stored separately and appended.
+    public func withoutHistory() -> Session {
+        var copy = self
+        copy.history = []
+        return copy
+    }
+
+    /// Replaces the event log after loading it from the append-only history file.
+    public mutating func installHistory(_ events: [HistoryEvent]) {
+        history = events
+    }
+
+    /// Folds events appended at `index` into an existing grouping. Earlier days stay as they are.
+    public func mergingNewHistory(into days: inout [HistoryDay], from index: Int, calendar: Calendar = .current) {
+        guard index >= 0, index < history.count else { return }
+        for event in history[index...] {
+            let day = calendar.startOfDay(for: event.timestamp)
+            if let existing = days.firstIndex(where: { $0.day == day }) {
+                days[existing].absorb(event)
+            } else {
+                var created = HistoryDay(day: day, pomodoros: 0, workMinutes: 0, workedSeconds: 0, rows: [])
+                created.absorb(event)
+                let insertAt = days.firstIndex(where: { $0.day < day }) ?? days.endIndex
+                days.insert(created, at: insertAt)
+            }
+        }
+    }
+
     public mutating func addItem(description: String, intensity: Intensity, count: Int) {
         let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -1121,7 +1182,7 @@ public struct Session: Equatable, Codable {
         lockedBreakDuration = nil
     }
 
-    /// Idle queue and Done list shown during the tour. It is never saved.
+    /// Idle queue, LATER, and Done list shown during the tour. It is never saved.
     public static func tourSample() -> Session {
         var session = Session()
         session.queue = [
@@ -1131,6 +1192,19 @@ public struct Session: Equatable, Codable {
         ]
         session.done = [
             QueueItem(id: TourSample.plannedWeek, intensity: .regular, description: "Plan the week", count: 1, workedSeconds: 25 * 60, finishedAt: Date()),
+        ]
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        session.later = [
+            LaterItem(
+                id: TourSample.notes,
+                intensity: .regular,
+                description: "Read the notes",
+                count: 1,
+                returnDay: CalendarDay.stamp(tomorrow, calendar: calendar),
+                snoozedAt: Date()
+            ),
         ]
         session.didMigrateHistory = true
         session.didMigrateWorkedSeconds = true
@@ -1143,6 +1217,7 @@ public enum TourSample {
     public static let emails = UUID(uuidString: "C2000001-0000-4000-8000-000000000002")!
     public static let contract = UUID(uuidString: "C2000001-0000-4000-8000-000000000003")!
     public static let plannedWeek = UUID(uuidString: "C2000001-0000-4000-8000-000000000004")!
+    public static let notes = UUID(uuidString: "C2000001-0000-4000-8000-000000000005")!
 }
 
 #if SLIMPOMO_DEV

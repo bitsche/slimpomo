@@ -10,6 +10,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, @unchecked Sendable 
     private var didStart = false
     private var presentingMenu = false
     private var openMenuSnapshot: String?
+    private var iconKey: MenuBarIconKey?
 
     @MainActor
     func start() {
@@ -23,7 +24,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, @unchecked Sendable 
             button.target = self
             button.action = #selector(handleClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.setAccessibilityLabel("SlimPomo")
+            button.setAccessibilityLabel("Deeeep")
         }
         statusItem = item
         syncIcon()
@@ -55,8 +56,14 @@ final class StatusItemController: NSObject, NSMenuDelegate, @unchecked Sendable 
     @MainActor
     private func syncIcon() {
         guard let button = statusItem?.button else { return }
-        button.image = MenuBarLabel.statusImage(model: AppRuntime.model)
-        button.setAccessibilityLabel("SlimPomo")
+        let session = AppRuntime.model.session
+        let now = AppRuntime.model.now
+        let key = MenuBarLabel.iconKey(session: session, now: now)
+        if key != iconKey {
+            iconKey = key
+            button.image = MenuBarLabel.statusImage(session: session, now: now)
+        }
+        button.setAccessibilityLabel("Deeeep")
     }
 
     @MainActor
@@ -151,7 +158,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, @unchecked Sendable 
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit SlimPomo", action: #selector(quitFromMenu(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Deeeep", action: #selector(quitFromMenu(_:)), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = .command
         quit.target = self
         menu.addItem(quit)
@@ -178,7 +185,7 @@ private enum StatusMenuMetrics {
         let action = NSMenuItem(title: "Resume", action: nil, keyEquivalent: "")
         menu.addItem(action)
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit SlimPomo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Deeeep", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.keyEquivalentModifierMask = .command
         menu.addItem(quit)
         menu.update()

@@ -7,8 +7,8 @@ final class Bell {
     private let breakOver: NSSound?
 
     init() {
-        workDone = Self.load("kalimba-work-done-short")
-        breakOver = Self.load("kalimba-break-over-short")
+        workDone = Self.load("glow-work-done")
+        breakOver = Self.load("glow-break-over")
     }
 
     func play(_ effect: SessionEffect) {
@@ -33,11 +33,12 @@ final class Bell {
 
     private static func load(_ name: String) -> NSSound? {
         guard let url = Bundle.main.url(forResource: name, withExtension: "wav"),
-              let sound = NSSound(contentsOf: url, byReference: true) else {
-            fputs("SlimPomo: unable to load \(name).wav\n", stderr)
+              let sound = NSSound(contentsOf: url, byReference: false) else {
+            fputs("Deeeep: unable to load \(name).wav\n", stderr)
             return nil
         }
-        sound.volume = 0.9
+        sound.volume = 1
+        _ = sound.duration
         return sound
     }
 }

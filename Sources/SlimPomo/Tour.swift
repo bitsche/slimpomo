@@ -8,6 +8,8 @@ enum TourTarget: Hashable {
     case taskCount
     case timerCard
     case reorderGrip
+    case rowMenu
+    case laterSection
     case doneSection
     case historyButton
     case tourButton
@@ -20,13 +22,15 @@ enum TourStep: Hashable {
     case count
     case timer
     case reorder
+    case markFinished
+    case later
     case menuBar
     case done
     case history
     case again
 
     static let spotlight: [TourStep] = [
-        .addTask, .depth, .count, .timer, .reorder, .menuBar, .done, .history, .again
+        .addTask, .depth, .count, .timer, .reorder, .markFinished, .later, .menuBar, .done, .history, .again
     ]
 
     var anchor: TourTarget? {
@@ -37,6 +41,8 @@ enum TourStep: Hashable {
         case .count: .taskCount
         case .timer: .timerCard
         case .reorder: .reorderGrip
+        case .markFinished: .rowMenu
+        case .later: .laterSection
         case .done: .doneSection
         case .history: .historyButton
         case .again: .tourButton
@@ -46,19 +52,21 @@ enum TourStep: Hashable {
     /// Targets that live in the queue scroller and may sit below the fold.
     var scrolls: Bool {
         switch self {
-        case .count, .reorder, .done: true
+        case .count, .reorder, .markFinished, .later, .done: true
         default: false
         }
     }
 
     var title: String {
         switch self {
-        case .welcome: "Welcome to SlimPomo"
+        case .welcome: "Welcome to Deeeep"
         case .addTask: "Add a task"
         case .depth: "Choose how deep to go"
         case .count: "How many pomodoros"
         case .timer: "Start, pause, finish"
         case .reorder: "Drag to reorder"
+        case .markFinished: "Mark as finished"
+        case .later: "Save it for later"
         case .menuBar: "Glance at the menu bar"
         case .done: "Done today"
         case .history: "History"
@@ -75,15 +83,19 @@ enum TourStep: Hashable {
         case .depth:
             Self.depthText
         case .count:
-            "Click to add one (up to 5), right-click to remove one. The time beside it shows when the task's last pomodoro would end."
+            "Click the circle to add a pomodoro (up to 5), right-click to remove one. Hover a task to see when it will be done. The header shows when everything is done."
         case .timer:
-            "START begins the first task that has pomodoros left. PAUSE freezes the clock. RESET drops a running session without counting it. While paused, FINISH counts it as done and records the time you actually worked. A break always follows, and SKIP ends it early."
+            "Start begins the first task that has pomodoros left, and the tank fills as the session runs. Pause freezes it. Reset drops a running session without counting it. While paused, Finish counts it as done and records the time you actually worked. A break always follows, and Skip ends it early."
         case .reorder:
-            "Hover a task and drag the grip on its left to move it. A task that is running stays at the top and can't be moved. Or use ••• to move it to tomorrow or next Monday."
+            "Hover a task and drag the grip on its left to move it. A task that is running stays at the top and can't be moved."
+        case .markFinished:
+            "Open ••• and choose Mark as finished. It counts one pomodoro done without running the timer, and records a full session. The running task still uses FINISH on the card."
+        case .later:
+            "From •••, move a task to tomorrow or next Monday. It waits in LATER, then returns to the top of the queue on that day. Its own ••• can bring it back sooner, or change the day. The chevron collapses the list, and Deeeep remembers whether it was open."
         case .menuBar:
-            "SlimPomo lives up there. The tomato means idle, the ring fills as time passes, pause bars mean paused, and a smile means you're on a break. Click it for quick controls, right-click to open this window."
+            "Deeeep lives up there. An empty tank means idle, the water rises as you work, and during a break the sun rises over the sea. Pause bars mean paused. Click it for quick controls, right-click to open this window."
         case .done:
-            "Finished tasks land here with the time you worked. The arrow puts a task back in the queue. Done starts fresh every night at midnight, and nothing is lost."
+            "Finished tasks land here with the time you worked. Hover one and use the arrow to put it back in the queue. Done starts fresh every night at midnight, and nothing is lost."
         case .history:
             "Every past day, with its pomodoros and work time. Open it here or with ⌘Y."
         case .again:
@@ -182,7 +194,7 @@ struct TourOverlay: View {
     }
 
     private var dim: some View {
-        Color.black.opacity(0.55)
+        Theme.tourScrim
             .overlay {
                 if let hole = paddedSpotlight {
                     RoundedRectangle(cornerRadius: holeRadius(hole), style: .continuous)
@@ -196,7 +208,7 @@ struct TourOverlay: View {
             }
             .compositingGroup()
             .contentShape(Rectangle())
-            .onTapGesture {}
+            .onTapGesture {} // cursor-exempt: dim overlay swallows clicks, it is not a control
             .accessibilityHidden(true)
             .animation(
                 model.reduceMotion ? .easeInOut(duration: 0.2) : .easeInOut(duration: 0.3),
@@ -297,15 +309,15 @@ private struct TourCard: View {
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text(step.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityFocused(focused)
                     .accessibilityLabel("\(step.title). \(step.text)")
 
                 Text(step.text)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Color.white.opacity(0.78))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textOnWater)
                     .lineSpacing(1)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHidden(true)
@@ -314,7 +326,7 @@ private struct TourCard: View {
                     HStack(spacing: 16) {
                         ForEach(MenuBarTourIcon.allCases, id: \.self) { icon in
                             Image(nsImage: MenuBarLabel.tourIcon(icon))
-                                .frame(width: 22, height: 22)
+                                .frame(width: 18, height: 18)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -326,7 +338,7 @@ private struct TourCard: View {
                     HStack(spacing: 5) {
                         ForEach(TourStep.spotlight, id: \.self) { dot in
                             Circle()
-                                .fill(Color.white.opacity(dot == step ? 0.92 : 0.28))
+                                .fill(dot == step ? Theme.link : Theme.textMuted)
                                 .frame(width: 5, height: 5)
                         }
                     }
@@ -354,11 +366,11 @@ private struct TourCard: View {
             .frame(width: width, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(red: 0.22, green: 0.22, blue: 0.22))
+                    .fill(Theme.bgCard)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    .stroke(Theme.lineField, lineWidth: 0.5)
             )
             if placement.showsArrow, !placement.pointsUp {
                 TourArrow(pointsUp: false)
@@ -406,7 +418,7 @@ private struct TourArrow: View {
             }
             path.closeSubpath()
         }
-        .fill(Color(red: 0.22, green: 0.22, blue: 0.22))
+        .fill(Theme.bgCard)
         .frame(width: 16, height: 8)
         .accessibilityHidden(true)
     }
@@ -478,30 +490,24 @@ private struct TourButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: prominent ? .semibold : .medium))
-                .foregroundStyle(Color.white.opacity(prominent ? 0.96 : 0.75))
-                .padding(.horizontal, prominent ? 12 : 8)
-                .padding(.vertical, 6)
+                .font(.system(size: 12, weight: prominent ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(prominent ? Theme.bgBase : Theme.link)
+                .underline(!prominent)
+                .padding(.horizontal, prominent ? 16 : 6)
+                .frame(height: 28)
                 .background {
                     if prominent {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.white.opacity(0.14))
-                    }
-                }
-                .overlay {
-                    if prominent {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(Color.white.opacity(0.72), lineWidth: 1)
+                        Capsule().fill(Theme.diveSurface)
                     }
                 }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PointingHandButtonStyle(shape: prominent ? .capsule : .rectangle))
         .accessibilityLabel(title)
         .overlay { TourPointer() }
         .overlay {
             HoverPlate(
-                cornerRadius: 6,
-                color: NSColor(white: 1, alpha: prominent ? 0.08 : 0.06),
+                cornerRadius: prominent ? 14 : 6,
+                color: Theme.hoverWashNS,
                 activeDuringTour: true
             )
         }
@@ -515,14 +521,16 @@ private struct SkipTourLink: View {
         Button(action: action) {
             Text("Skip tour")
                 .font(.system(size: 12))
+                .foregroundStyle(Theme.link)
                 .underline()
-                .foregroundStyle(Color.white.opacity(0.5))
+                .padding(.horizontal, 6)
+                .frame(height: 28)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PointingHandButtonStyle())
         .accessibilityLabel("Skip tour")
         .overlay { TourPointer() }
         .overlay {
-            HoverPlate(cornerRadius: 6, color: NSColor(white: 1, alpha: 0.06), activeDuringTour: true)
+            HoverPlate(cornerRadius: 6, color: Theme.hoverWashNS, activeDuringTour: true)
         }
     }
 }

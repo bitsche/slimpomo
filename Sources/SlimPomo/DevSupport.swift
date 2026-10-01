@@ -8,7 +8,7 @@ struct DevBadge: View {
 
     var body: some View {
         Text("DEV")
-            .font(.system(size: 9, weight: .semibold))
+            .font(.system(size: 9, weight: .semibold).monospacedDigit())
             .tracking(0.6)
             .foregroundStyle(color)
             .allowsHitTesting(false)

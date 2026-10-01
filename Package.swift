@@ -7,13 +7,14 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "SlimPomo", targets: ["SlimPomo"])
+        .executable(name: "Deeeep", targets: ["Deeeep"])
     ],
     targets: [
         .target(name: "SlimPomoCore"),
         .executableTarget(
-            name: "SlimPomo",
-            dependencies: ["SlimPomoCore"]
+            name: "Deeeep",
+            dependencies: ["SlimPomoCore"],
+            path: "Sources/SlimPomo"
         ),
         .testTarget(
             name: "SlimPomoCoreTests",

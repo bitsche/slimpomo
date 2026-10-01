@@ -1,6 +1,10 @@
-# SlimPomo
+# Deeeep
 
 A menu-bar Pomodoro timer for one person on one Mac. The queue and history stay on this machine. There is no account, sync, or settings window. Default size 550×600, minimum 450×550.
+
+If an older SlimPomo.app is still installed, delete it so two menu-bar icons don't run side by side. If that app was in Login Items, add Deeeep there instead.
+
+If Finder still shows the old icon, run `touch Deeeep.app` or `killall Finder`.
 
 No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
 
@@ -16,13 +20,19 @@ A small round gauge shows the depth: the water level rises from Dip to Dive to D
 
 ## Menu bar
 
+The icon is a monochrome template so macOS tints it for light and dark menu bars. Idle is an empty tank with a still wave. While you work, the water rises with the time elapsed, and the minutes left sit beside it. Paused work keeps that water at 40% and adds two pause bars. During a break there is no tank: the sun rises out of the sea, from a small cap at the start to a full disc just above the horizon at the end. A paused break keeps the sun where it is, dimmed to 40%, with the sea line and the pause bars. The icon does not animate, and its width stays the same in every state.
+
 Left-click the icon to open the menu: the current status, Show Window, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.
+
+## Sound
+
+Two soft chords: work done slowly brightens (surfacing), break over slowly darkens (diving back in).
 
 ## Dev build
 
 UI changes follow `.cursor/rules/ui-basics.mdc`.
 
-`scripts/dev.sh` builds and launches SlimPomo Dev.app. It keeps its own queue, Done list, and history, and it never reads or writes the release app's data.
+`scripts/dev.sh` builds and launches Deeeep Dev.app. It keeps its own queue, Done list, and history, and it never reads or writes the release app's data.
 
 ```
 scripts/dev.sh                  build and launch

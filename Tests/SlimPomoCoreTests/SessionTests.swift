@@ -16,6 +16,9 @@ struct SessionTests {
         }
         #expect(Intensity.regular.sessionScale == 1)
         #expect(Intensity.intense.sessionScale == 3)
+        #expect(Intensity.regular.gaugeFill == 0.30)
+        #expect(Intensity.focus.gaugeFill == 0.55)
+        #expect(Intensity.intense.gaugeFill == 0.78)
     }
 
     @Test func emptyQueueCannotStart() {
@@ -1103,6 +1106,10 @@ struct SessionTests {
         #expect(sample.done.map(\.intensity) == [.regular])
         #expect(sample.done.map(\.count) == [1])
         #expect(sample.done[0].workedSeconds == 25 * 60)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))!
+        #expect(sample.later.map(\.id) == [TourSample.notes])
+        #expect(sample.later.map(\.description) == ["Read the notes"])
+        #expect(sample.later.map(\.returnDay) == [CalendarDay.stamp(tomorrow)])
     }
 
     @Test func existingDoneMigratesOnce() throws {

@@ -24,6 +24,9 @@ struct SlimPomoApp: App {
 final class SlimPomoDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         MainActor.assumeIsolated {
+            #if SLIMPOMO_DEV
+            if MenuBarGlyphExport.performIfRequested() { return }
+            #endif
             StatusItemController.shared.start()
         }
     }
