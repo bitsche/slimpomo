@@ -32,6 +32,8 @@ final class AppModel {
     var hoveredDoneID: UUID?
     var hoveredHistoryID: String?
     var doneHeaderHovered = false
+    /// The pointer is on the trash button, which paints its own hover instead of the header wash.
+    var doneTrashHovered = false
     /// True while keyboard focus is on a control inside Done other than the trash button.
     var doneSectionFocused = false
     /// The full Done list. Not saved, so a relaunch starts with the latest three.

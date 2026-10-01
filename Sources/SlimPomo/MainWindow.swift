@@ -543,6 +543,7 @@ struct MainWindow: View {
                 expanded: open,
                 reduceMotion: model.reduceMotion,
                 menu: [.item("Clear Done") { model.clearDone() }],
+                washSuppressed: model.doneTrashHovered,
                 onToggle: { model.toggleSection(.done) },
                 onFocus: { model.doneSectionFocused = $0 }
             ) {
@@ -552,7 +553,8 @@ struct MainWindow: View {
                     weight: .medium,
                     opacity: trashShown ? 1 : 0,
                     slot: IconMetrics.column,
-                    help: "Clear the done list"
+                    help: "Clear the done list",
+                    onHover: { model.doneTrashHovered = $0 }
                 ) {
                     model.clearDone()
                 }
@@ -1201,6 +1203,8 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     var reduceMotion: Bool
     /// Also offered on right-click and as accessibility actions.
     var menu: [MenuEntry] = []
+    /// True while the pointer is on a control in the accessory. That control shows its own hover, so the row wash steps aside.
+    var washSuppressed = false
     var onToggle: () -> Void
     var onFocus: ((Bool) -> Void)? = nil
     @ViewBuilder var accessory: () -> Accessory
@@ -1221,7 +1225,7 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
                 .frame(height: 24)
                 .contentShape(Rectangle())
                 .overlay {
-                    HoverPlate(cornerRadius: 6, color: Theme.headerHoverWashNS)
+                    HoverPlate(cornerRadius: 6, color: Theme.headerHoverWashNS, suppressed: washSuppressed)
                 }
                 .overlay {
                     if focused {
@@ -2610,6 +2614,7 @@ struct SquareIconButton: View {
     var slot: CGSize = IconMetrics.header
     var help: String
     var onFocus: ((Bool) -> Void)? = nil
+    var onHover: ((Bool) -> Void)? = nil
     var action: () -> Void
 
     @FocusState private var focused: Bool
@@ -2621,7 +2626,7 @@ struct SquareIconButton: View {
             .frame(width: IconMetrics.side, height: IconMetrics.side)
             .contentShape(Rectangle())
             .overlay {
-                IconPlate(toolTip: help, onLeft: action)
+                IconPlate(toolTip: help, onLeft: action, onHover: onHover)
             }
             .fixedSize()
             .iconSlot(slot)
@@ -2705,6 +2710,7 @@ struct IconPlate: NSViewRepresentable {
     var drawsRing = false
     var onLeft: (() -> Void)? = nil
     var onRight: (() -> Void)? = nil
+    var onHover: ((Bool) -> Void)? = nil
 
     func makeNSView(context: Context) -> PlateView {
         let view = PlateView()
@@ -2722,6 +2728,7 @@ struct IconPlate: NSViewRepresentable {
         view.drawsRing = drawsRing
         view.onLeft = onLeft
         view.onRight = onRight
+        view.onHover = onHover
         view.toolTip = toolTip
         if view.swallowsCursor != swallowsCursor {
             view.swallowsCursor = swallowsCursor
@@ -2736,6 +2743,7 @@ struct IconPlate: NSViewRepresentable {
         var swallowsCursor = false
         var onLeft: (() -> Void)?
         var onRight: (() -> Void)?
+        var onHover: ((Bool) -> Void)?
         private var monitor: Any?
         private var hovering = false
         private var pressed = false
@@ -2912,6 +2920,9 @@ struct IconPlate: NSViewRepresentable {
             guard self.hovering != hovering else { return }
             self.hovering = hovering
             needsDisplay = true
+            if let onHover {
+                Task { @MainActor in onHover(hovering) }
+            }
         }
 
         private func setPressed(_ pressed: Bool) {
@@ -3000,10 +3011,12 @@ struct HoverPlate: NSViewRepresentable {
     var cornerRadius: CGFloat
     var color: NSColor
     var activeDuringTour = false
+    var suppressed = false
 
     func makeNSView(context: Context) -> HoverTrackingView {
         let view = HoverTrackingView()
         view.cornerRadius = cornerRadius
+        view.suppressed = suppressed
         view.color = color
         view.activeDuringTour = activeDuringTour
         return view
@@ -3011,6 +3024,7 @@ struct HoverPlate: NSViewRepresentable {
 
     func updateNSView(_ nsView: HoverTrackingView, context: Context) {
         nsView.cornerRadius = cornerRadius
+        nsView.suppressed = suppressed
         nsView.color = color
         nsView.activeDuringTour = activeDuringTour
         nsView.needsDisplay = true
@@ -3021,6 +3035,7 @@ final class HoverTrackingView: NSView {
     var cornerRadius: CGFloat = 4
     var color: NSColor = Theme.hoverWashNS
     var activeDuringTour = false
+    var suppressed = false
     private var hovering = false
 
     override var isOpaque: Bool { false }
@@ -3080,7 +3095,7 @@ final class HoverTrackingView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard hovering else { return }
+        guard hovering, !suppressed else { return }
         color.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
     }
