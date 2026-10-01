@@ -1830,7 +1830,7 @@ private struct QueueLine: View {
     private func menuEntries() -> [MenuEntry] {
         let snoozeLocked = !model.session.canSnooze(id: item.id)
         let minimum = pinned ? 1 : 0
-        return [
+        var entries: [MenuEntry] = [
             .item("Mark as finished", enabled: item.count != 0) { model.markFinished(id: item.id) },
             .separator,
             .item("Add a pomodoro", enabled: item.count < Session.maxPomodoros) { addPomodoro() },
@@ -1838,12 +1838,13 @@ private struct QueueLine: View {
             .separator,
             .item("Move up", enabled: model.session.canMoveUp(id: item.id)) { model.moveUp(id: item.id) },
             .item("Move down", enabled: model.session.canMoveDown(id: item.id)) { model.moveDown(id: item.id) },
-        ] + Snooze.offers(on: model.now).map { offer in
-            .item(offer.title, enabled: !snoozeLocked) { model.snooze(id: item.id, returnDay: offer.returnDay) }
-        } + [
-            .separator,
-            .item("Delete", destructive: true) { model.remove(id: item.id) },
         ]
+        for offer in Snooze.offers(on: model.now) {
+            entries.append(.item(offer.title, enabled: !snoozeLocked) { model.snooze(id: item.id, returnDay: offer.returnDay) })
+        }
+        entries.append(.separator)
+        entries.append(.item("Delete", destructive: true) { model.remove(id: item.id) })
+        return entries
     }
 
     private func addPomodoro() {
