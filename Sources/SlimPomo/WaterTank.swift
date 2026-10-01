@@ -125,22 +125,40 @@ struct WaterTank: View {
     var body: some View {
         ZStack {
             TankWaveHost(
-                level: Self.fraction(of: session, at: now),
-                running: session.isRunning,
-                phase: session.phase,
+                level: level,
+                running: frozenLevel == nil && session.isRunning,
+                phase: phase,
                 mode: Self.mode(of: session),
-                reduceMotion: reduceMotion
+                reduceMotion: reduceMotion || frozenLevel != nil
             )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             content
         }
-        .frame(height: 150)
+        .frame(height: Self.height)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 
-    private var devColor: Color {
-        onBreak ? Theme.breakText.opacity(0.45) : Theme.textStrong.opacity(0.5)
+    static let height: CGFloat = 150
+
+    /// Dev builds can pin the tank to one level and phase to check the scale against the water.
+    private var frozenLevel: CGFloat? {
+        #if SLIMPOMO_DEV
+        return DevTank.current.map { CGFloat($0.level) }
+        #else
+        return nil
+        #endif
+    }
+
+    private var phase: Phase {
+        #if SLIMPOMO_DEV
+        if let frozen = DevTank.current { return frozen.phase }
+        #endif
+        return session.phase
+    }
+
+    private var level: CGFloat {
+        frozenLevel ?? Self.fraction(of: session, at: now)
     }
 
     private var content: some View {
@@ -173,12 +191,6 @@ struct WaterTank: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
             scale
-            #if SLIMPOMO_DEV
-            DevBadge(color: devColor)
-                .padding(.top, 10)
-                .padding(.trailing, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            #endif
         }
     }
 
@@ -213,30 +225,36 @@ struct WaterTank: View {
         .accessibilityLabel(taskLine.spoken)
     }
 
-    /// Top label 30 pt down, zero 12 pt up, and an unlabeled tick halfway between them.
+    /// Three ticks on the same axis as the water: full, half, and empty. Only the top and bottom ticks carry a label.
     private var scale: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topTrailing) {
-                Text(Self.mark(scaleMinutes))
-                    .padding(.top, 30)
-                    .padding(.trailing, 12)
+        ZStack(alignment: .topTrailing) {
+            tick(level: 1, label: Self.mark(scaleMinutes))
+            tick(level: 0.5, label: nil)
+            tick(level: 0, label: "0")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .font(.system(size: 10).monospacedDigit())
+        .foregroundStyle(scaleColor)
+        .accessibilityHidden(true)
+    }
+
+    /// A 6 × 1 pt tick centered on the level's height, with its label to the left, centered on the tick.
+    private func tick(level: Double, label: String?) -> some View {
+        let row: CGFloat = 14
+        let y = CGFloat(TankAxis.y(level: level, height: Double(Self.height)))
+        return HStack(spacing: 4) {
+            if let label {
+                Text(label)
+                    .lineLimit(1)
+                    .fixedSize()
             }
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(scaleColor.opacity(0.6))
-                    .frame(width: 6, height: 1)
-                    .padding(.trailing, 12)
-                    .offset(y: 9)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text("0")
-                    .padding(.bottom, 12)
-                    .padding(.trailing, 12)
-            }
-            .font(.system(size: 10).monospacedDigit())
-            .foregroundStyle(scaleColor)
-            .accessibilityHidden(true)
+            Rectangle()
+                .fill(scaleColor.opacity(0.6))
+                .frame(width: 6, height: 1)
+        }
+        .padding(.trailing, 12)
+        .frame(height: row, alignment: .trailing)
+        .offset(y: y - row / 2)
     }
 
     private var clockText: String {
@@ -252,10 +270,10 @@ struct WaterTank: View {
     }
 
     private var showsPause: Bool {
-        session.phase != .idle && !session.isRunning
+        session.phase != .idle && !session.isRunning && frozenLevel == nil
     }
 
-    private var onBreak: Bool { session.phase == .breakTime }
+    private var onBreak: Bool { phase == .breakTime }
 
     private var timeColor: Color { onBreak ? Theme.breakText : (session.phase == .idle ? Theme.textOnWater : Theme.textStrong) }
     private var taskColor: Color { onBreak ? Theme.breakText : Theme.textStrong }
@@ -263,6 +281,10 @@ struct WaterTank: View {
     private var scaleColor: Color { onBreak ? Theme.breakScale : Theme.link }
 
     private var scaleMinutes: Double {
+        if frozenLevel != nil {
+            let mode = Self.mode(of: session).mode
+            return Double(phase == .breakTime ? mode.breakMinutes : mode.workMinutes)
+        }
         switch session.phase {
         case .work, .breakTime:
             return max(0, session.phaseDuration / 60)
@@ -494,7 +516,8 @@ final class TankWaveView: NSView {
     private func placeWater(animated: Bool) {
         let height = bounds.height
         guard height > 1 else { return }
-        let y = height * min(max(levelTarget, 0), 1)
+        // The layer's y runs up from the bottom; the axis measures down from the top.
+        let y = height - CGFloat(TankAxis.y(level: Double(levelTarget), height: Double(height)))
         waves.anchorPoint = .zero
         CATransaction.begin()
         CATransaction.setDisableActions(true)

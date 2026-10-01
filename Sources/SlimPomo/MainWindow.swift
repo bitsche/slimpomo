@@ -30,6 +30,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             window.tabbingMode = .disallowed
             window.alphaValue = 0
+            #if SLIMPOMO_DEV
+            window.addTitlebarAccessoryViewController(DevTitleBadge.makeAccessory())
+            #endif
             let hosting = NSHostingController(rootView: MainWindow(model: model))
             // SwiftUI's default sizing options replace the restored frame with the
             // view's intrinsic size, which the minimum then clamps to 450×550.

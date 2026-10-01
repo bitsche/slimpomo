@@ -1,19 +1,26 @@
 #if SLIMPOMO_DEV
+import AppKit
 import Foundation
 import SwiftUI
 import SlimPomoCore
 
-struct DevBadge: View {
-    var color: Color
-
-    var body: some View {
-        Text("DEV")
-            .font(.system(size: 9, weight: .semibold).monospacedDigit())
-            .tracking(0.6)
-            .foregroundStyle(color)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+/// `-tankLevel <0…1> [-tankPhase work|break]` pins the timer tank so the scale can be checked against the water.
+enum DevTank {
+    struct Pin: Sendable {
+        var level: Double
+        var phase: Phase
     }
+
+    static let current: Pin? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-tankLevel"), index + 1 < args.count,
+              let level = Double(args[index + 1]) else { return nil }
+        var phase = Phase.work
+        if let at = args.firstIndex(of: "-tankPhase"), at + 1 < args.count, args[at + 1] == "break" {
+            phase = .breakTime
+        }
+        return Pin(level: min(max(level, 0), 1), phase: phase)
+    }()
 }
 
 enum DevLaunch {
@@ -346,6 +353,38 @@ private final class Builder {
             empty += 1
         }
         precondition((12...24).contains(empty), "Expected about 30% of 60 days to be empty, got \(empty)")
+    }
+}
+
+/// The dev build's marker. It sits at the right end of the title bar, in the traffic-light row.
+@MainActor
+enum DevTitleBadge {
+    static func makeAccessory() -> NSTitlebarAccessoryViewController {
+        let label = NSTextField(labelWithString: "")
+        label.attributedStringValue = NSAttributedString(
+            string: "DEV",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 9, weight: .semibold),
+                .foregroundColor: Theme.textMutedRGB.nsColor,
+                .kern: 0.6
+            ]
+        )
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setAccessibilityElement(false)
+        let container = NSView()
+        container.addSubview(label)
+        let height = container.heightAnchor.constraint(equalToConstant: 28)
+        height.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            height,
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+        ])
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .trailing
+        accessory.view = container
+        return accessory
     }
 }
 #endif

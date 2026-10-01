@@ -6,12 +6,13 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 usage() {
-    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour | --later | --export-menubar-icons <dir>]" >&2
+    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour | --later | --tank-level <0..1> [work|break] | --export-menubar-icons <dir>]" >&2
     exit 1
 }
 
 flag=""
 export_dir=""
+extra_args=()
 case "${1:-}" in
     "") ;;
     --seed) flag="-seedHistory" ;;
@@ -21,6 +22,15 @@ case "${1:-}" in
     --reset) flag="-resetAll" ;;
     --tour) flag="-resetTour" ;;
     --later) flag="-seedLater" ;;
+    --tank-level)
+        level="${2:-}"
+        phase="${3:-work}"
+        [[ "$level" =~ ^(0|1|0?\.[0-9]+|1\.0+|0\.0+)$ ]] || usage
+        [[ "$phase" == "work" || "$phase" == "break" ]] || usage
+        flag="-tankLevel"
+        extra_args=("$level" -tankPhase "$phase")
+        [[ $# -le 3 ]] || usage
+        ;;
     --export-menubar-icons)
         export_dir="${2:-}"
         [[ -n "$export_dir" ]] || usage
@@ -30,6 +40,8 @@ case "${1:-}" in
 esac
 if [[ -n "$export_dir" ]]; then
     [[ $# -eq 2 ]] || usage
+elif [[ "$flag" == "-tankLevel" ]]; then
+    [[ $# -ge 2 ]] || usage
 elif [[ $# -gt 1 ]]; then
     usage
 fi
@@ -59,8 +71,8 @@ if [[ "$flag" == "-exportMenuBarIcons" ]]; then
     "$app/Contents/MacOS/Deeeep" -exportMenuBarIcons "$export_dir"
     echo "Exported menu-bar icons to $export_dir"
 elif [[ -n "$flag" ]]; then
-    open "$app" --args "$flag"
-    echo "Launched $app $flag"
+    open "$app" --args "$flag" ${extra_args[@]+"${extra_args[@]}"}
+    echo "Launched $app $flag ${extra_args[*]-}"
 else
     open "$app"
     echo "Launched $app"

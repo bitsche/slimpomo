@@ -45,4 +45,5 @@ scripts/dev.sh --stale-done     leave yesterday's Done list so launch clears it
 scripts/dev.sh --reset          wipe the dev store and its remembered settings
 scripts/dev.sh --tour           show the first-run tour again
 scripts/dev.sh --later          add later tasks: tomorrow, next Monday, and two already due
+scripts/dev.sh --tank-level 0.5 [work|break]  freeze the tank at a level (0 to 1), waves still, to check the scale
 ```
