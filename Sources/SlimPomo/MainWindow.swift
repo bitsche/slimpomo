@@ -1350,9 +1350,6 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
     /// Nil lets the row grow with its content. Only a queue row that is being edited does.
     var height: CGFloat? = RowGrid.height
     var alignment: VerticalAlignment = .center
-    /// Width of the fixed columns on the right that the name may cover. A row that is being edited hides them and
-    /// lets its field run to the row's right padding.
-    var nameExtension: CGFloat = 0
     @ViewBuilder var gauge: () -> Gauge
     @ViewBuilder var name: () -> Name
     @ViewBuilder var rest: () -> Rest
@@ -1363,8 +1360,6 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
                 .frame(width: RowGrid.gauge, alignment: .leading)
             name()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, -nameExtension)
-                .zIndex(nameExtension > 0 ? 1 : 0)
                 .layoutPriority(-1)
             rest()
         }
@@ -1429,6 +1424,8 @@ struct PomodoroStepper: View {
     var taskName: String
     /// What the count means in minutes, shown as the number's tooltip.
     var detail: String
+    /// True while the stepper has keyboard focus. A click never focuses it.
+    var onFocus: (Bool) -> Void = { _ in }
     var onChange: (Int) -> Void
 
     @FocusState private var focused: Bool
@@ -1473,6 +1470,7 @@ struct PomodoroStepper: View {
         .focusable(true, interactions: .activate)
         .focused($focused)
         .keyboardFocusOnly($focused)
+        .onChange(of: focused) { _, value in onFocus(AppRuntime.model.focusVisible(value)) }
         .focusEffectDisabled()
         .onKeyPress(.upArrow) {
             increase()
@@ -1530,6 +1528,48 @@ private struct StepperButton: View {
         .disabled(!enabled)
         .help(enabled ? tip : limitTip)
         .accessibilityHidden(true)
+    }
+}
+
+/// What a queue or LATER row shows on the right at rest. A count of 1 shows nothing and the name runs to the row's
+/// 10 pt right padding. Any other count shows only `×n`, centered where the stepper's number sits on hover,
+/// and the name ends 8 pt before it. The hover cluster is a separate overlay and never changes this layout.
+struct RestCount: View {
+    var count: Int
+    var shown: Bool
+    var detail: String
+    var reduceMotion: Bool
+
+    /// Distance from the row's inner right edge to the center of the stepper's number: the menu slot and half the stepper slot.
+    private static let labelCenter = IconMetrics.column.width + RowGrid.countSlot / 2
+    /// The row's right padding is 10 pt; the list row already pads 8.
+    private static let edgeGap = 10 - RowGrid.trailing
+
+    @MainActor
+    private static let labelWidth: CGFloat = {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        return ceil(("×0" as NSString).size(withAttributes: [.font: font]).width)
+    }()
+
+    private var showsLabel: Bool { shown && count != 1 }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if showsLabel {
+                Text("×\(max(0, count))")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(Theme.textOnWater)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.leading, RowGrid.spacing)
+                    .help(detail)
+                    .accessibilityHidden(true)
+            }
+            Color.clear
+                .frame(width: showsLabel ? Self.labelCenter - Self.labelWidth / 2 : Self.edgeGap, height: 1)
+        }
+        .frame(height: RowGrid.height)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsLabel)
     }
 }
 
@@ -1602,7 +1642,7 @@ private struct RowNameEditor: View {
                 .allowsHitTesting(false)
         }
         .padding(.leading, -6)
-        .padding(.trailing, 2)
+        .padding(.trailing, 0)
         .padding(.vertical, 3)
     }
 }
@@ -1674,11 +1714,7 @@ private struct QueueLine: View {
     }
 
     private var card: some View {
-        ListRow(
-            height: isEditing ? nil : RowGrid.height,
-            alignment: isEditing ? .top : .center,
-            nameExtension: isEditing ? IconMetrics.column.width + RowGrid.countSlot : 0
-        ) {
+ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
             IntensitySwitch(
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
@@ -1710,23 +1746,12 @@ private struct QueueLine: View {
                 )
             }
         } rest: {
-            HStack(spacing: 0) {
-                PomodoroStepper(
-                    count: item.count,
-                    minimum: pinned ? 1 : 0,
-                    revealed: revealed,
-                    reduceMotion: model.reduceMotion,
-                    taskName: taskName,
-                    detail: "\(item.count) × \(item.intensity.mode.workMinutes) min"
-                ) { count in
-                    model.setCount(id: item.id, count: count)
-                }
-                .tourTarget(item.id == TourSample.outline && !floating ? .taskCount : nil)
-                rowMenu
-                    .modifier(RestFade(shown: revealed && !isEditing, reduceMotion: model.reduceMotion))
-            }
-            .frame(height: RowGrid.height)
-            .modifier(RestFade(shown: !isEditing, reduceMotion: model.reduceMotion))
+            RestCount(
+                count: item.count,
+                shown: !isEditing,
+                detail: countDetail,
+                reduceMotion: model.reduceMotion
+            )
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
@@ -1734,13 +1759,17 @@ private struct QueueLine: View {
         .modifier(RowCard(fill: fill, bar: showsWorkBar ? Theme.surface(item.intensity) : nil))
         .overlay(alignment: .trailing) {
             FadeOverlay(
-                shown: revealed && !isEditing,
+                shown: overlayShown,
                 reduceMotion: model.reduceMotion,
                 fill: showsWorkBar ? Theme.bgCardActive : Theme.bgCardHover,
-                trailingInset: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot
+                trailingInset: 0
             ) {
-                FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
-                    .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
+                HStack(spacing: 0) {
+                    FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
+                        .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
+                        .padding(.trailing, 8)
+                    hoverCluster
+                }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
@@ -1764,6 +1793,34 @@ private struct QueueLine: View {
         .rowActions(menuEntries())
         .accessibilityAction(named: "Add pomodoro") { addPomodoro() }
         .accessibilityAction(named: "Remove pomodoro") { removePomodoro() }
+    }
+
+    private var countDetail: String {
+        "\(item.count) × \(item.intensity.mode.workMinutes) min"
+    }
+
+    /// The hover cluster shows on hover, and while the stepper has keyboard focus. Never while editing.
+    private var overlayShown: Bool {
+        (revealed || model.focusedStepperID == item.id) && !isEditing
+    }
+
+    private var hoverCluster: some View {
+        HStack(spacing: 0) {
+            PomodoroStepper(
+                count: item.count,
+                minimum: pinned ? 1 : 0,
+                revealed: true,
+                reduceMotion: model.reduceMotion,
+                taskName: taskName,
+                detail: countDetail,
+                onFocus: { model.focusedStepperID = $0 ? item.id : nil }
+            ) { count in
+                model.setCount(id: item.id, count: count)
+            }
+            .tourTarget(item.id == TourSample.outline && !floating ? .taskCount : nil)
+            rowMenu
+        }
+        .frame(height: RowGrid.height)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {
@@ -1884,11 +1941,7 @@ private struct LaterLine: View {
     }
 
     private var card: some View {
-        ListRow(
-            height: isEditing ? nil : RowGrid.height,
-            alignment: isEditing ? .top : .center,
-            nameExtension: isEditing ? IconMetrics.column.width + RowGrid.countSlot : 0
-        ) {
+ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
             IntensitySwitch(
                 intensity: item.intensity,
                 reduceMotion: model.reduceMotion,
@@ -1917,32 +1970,27 @@ private struct LaterLine: View {
                 )
             }
         } rest: {
-            HStack(spacing: 0) {
-                PomodoroStepper(
-                    count: item.count,
-                    minimum: 0,
-                    revealed: revealed,
-                    reduceMotion: model.reduceMotion,
-                    taskName: taskName,
-                    detail: "\(item.count) × \(item.intensity.mode.workMinutes) min"
-                ) { count in
-                    model.setLaterCount(id: item.id, count: count)
-                }
-                EllipsisMenuButton(
-                    help: "Return, reschedule, or delete",
-                    label: "Actions for \(taskName)"
-                ) {
-                    menuEntries()
-                }
-                .modifier(RestFade(shown: revealed && !isEditing, reduceMotion: model.reduceMotion))
-            }
-            .frame(height: RowGrid.height)
-            .modifier(RestFade(shown: !isEditing, reduceMotion: model.reduceMotion))
+            RestCount(
+                count: item.count,
+                shown: !isEditing,
+                detail: countDetail,
+                reduceMotion: model.reduceMotion
+            )
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
         .modifier(RowCard(fill: cardHovered ? Theme.bgCardHover : Theme.bgCard))
+        .overlay(alignment: .trailing) {
+            FadeOverlay(
+                shown: overlayShown,
+                reduceMotion: model.reduceMotion,
+                fill: Theme.bgCardHover,
+                trailingInset: 0
+            ) {
+                hoverCluster
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
         .opacity(full ? 1 : 0.6)
         .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: full)
@@ -1965,6 +2013,37 @@ private struct LaterLine: View {
         .rowActions(menuEntries())
         .accessibilityAction(named: "Add pomodoro") { step(1) }
         .accessibilityAction(named: "Remove pomodoro") { step(-1) }
+    }
+
+    private var countDetail: String {
+        "\(item.count) × \(item.intensity.mode.workMinutes) min"
+    }
+
+    private var overlayShown: Bool {
+        (revealed || model.focusedStepperID == item.id) && !isEditing
+    }
+
+    private var hoverCluster: some View {
+        HStack(spacing: 0) {
+            PomodoroStepper(
+                count: item.count,
+                minimum: 0,
+                revealed: true,
+                reduceMotion: model.reduceMotion,
+                taskName: taskName,
+                detail: countDetail,
+                onFocus: { model.focusedStepperID = $0 ? item.id : nil }
+            ) { count in
+                model.setLaterCount(id: item.id, count: count)
+            }
+            EllipsisMenuButton(
+                help: "Return, reschedule, or delete",
+                label: "Actions for \(taskName)"
+            ) {
+                menuEntries()
+            }
+        }
+        .frame(height: RowGrid.height)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {

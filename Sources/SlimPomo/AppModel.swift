@@ -55,6 +55,8 @@ final class AppModel {
     var textFocusNonce = 0
     /// True from a mouse press until the next key press. Focus rings and focus-driven reveals only show for keyboard focus.
     var pointerDrivenInput = false
+    /// The row whose stepper has keyboard focus, so its hover cluster stays visible.
+    var focusedStepperID: UUID?
     var reduceMotion = false
     var queueDrag: QueueDragController?
     /// True for the frame that commits a drag, so the list does not animate a second time.

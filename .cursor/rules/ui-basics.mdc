@@ -34,6 +34,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 - All list rows (Queue, LATER, Done, History) start with the gauge column (28 pt: 20 pt gauge + 8 pt gap) and a name that takes the rest of the row. An essential value may sit at the right edge. Names truncate with a trailing "…".
 - Same column = same meaning. Never place a different kind of value in a column.
 - Count = fixed 72 pt stepper slot; − and + appear on hover; the number never moves. Done and History show a display-only `×n` in the same slot position.
+- Reserve only what is visible at rest. Queue and LATER at count 1 show nothing on the right, so the name runs to the row's 10 pt right padding; any other count shows only `×n` at the center of the stepper slot and the name ends 8 pt before it. The hover cluster (finish time, − ×n +, •••) is an overlay with the hover background and a 24 pt left fade; it never changes the name's frame, and the count number stays at the same x. Done and History keep the worked time in a fixed column; the name ends before it.
 - Queue and LATER rows are cards without dividers. Done and History rows are flat without dividers.
 - While a row's name is edited, its stepper, ••• and finish-time overlay fade out (120 ms) and the field runs to the row's right padding; they return when editing ends.
 - Rows show only the essentials at rest (gauge, name, non-default values). Secondary values and row actions appear on hover.
