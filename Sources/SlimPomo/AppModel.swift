@@ -18,6 +18,15 @@ final class AppModel {
     var draftDescription = ""
     var draftIntensity = Intensity.regular
     var descriptionDrafts: [UUID: String] = [:]
+    /// Add-field editor state. Kept here because this build has no `@State` macro.
+    var draftFocused = false
+    var draftContentHeight: CGFloat = 0
+    /// Done header stats flash: the nonce restarts the 600 ms flash, `doneFlashOn` is the flash itself.
+    var doneFlashOn = false
+    var doneFlashNonce = 0
+    /// Height and first caret of the queue name editor. Only one row edits at a time.
+    var editorContent: CGFloat = 0
+    var editCaret: Int?
     var hoveredQueueID: UUID?
     var hoveredLaterID: UUID?
     var hoveredDoneID: UUID?

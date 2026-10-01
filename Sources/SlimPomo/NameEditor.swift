@@ -62,7 +62,8 @@ enum LabelStyle {
 
 /// A click target over a task name. It shows the I-beam and opens the editor; the label under it keeps drawing.
 struct NameClickArea: NSViewRepresentable {
-    var toolTip: String?
+    var fullText: String
+    var semibold: Bool
     /// The click's x in the name column, or nil for the keyboard.
     var onActivate: (CGFloat?) -> Void
 
@@ -79,12 +80,81 @@ struct NameClickArea: NSViewRepresentable {
 
     private func apply(to view: NameClickAreaView) {
         view.onActivate = onActivate
-        view.toolTip = toolTip
+        view.fullText = fullText
+        view.semibold = semibold
+        view.updateTip()
+    }
+}
+
+/// Decides whether a name is cut short, and measures it the way the label draws it.
+@MainActor
+enum NameTruncation {
+    static func isTruncated(_ text: String, semibold: Bool, width: CGFloat) -> Bool {
+        guard width > 1 else { return false }
+        let parts = TaskName.split(text)
+        var available = width
+        if let prefix = parts.prefix {
+            let prefixWidth = (prefix as NSString).size(withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)]).width
+            available -= prefixWidth + LabelStyle.gap
+        }
+        let drawn = (parts.rest as NSString).size(withAttributes: [.font: NameFieldMetrics.font(semibold: semibold)]).width
+        return drawn > available + 0.5
+    }
+}
+
+/// Covers a read-only name. It only supplies the tooltip, and only while the name is cut short.
+struct NameTipArea: NSViewRepresentable {
+    var fullText: String
+    var semibold: Bool
+
+    func makeNSView(context: Context) -> NameTipView {
+        let view = NameTipView()
+        view.setAccessibilityElement(false)
+        apply(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NameTipView, context: Context) {
+        apply(to: nsView)
+    }
+
+    private func apply(to view: NameTipView) {
+        view.fullText = fullText
+        view.semibold = semibold
+        view.updateTip()
+    }
+}
+
+final class NameTipView: NSView {
+    var fullText = ""
+    var semibold = false
+
+    override var isOpaque: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        updateTip()
+    }
+
+    func updateTip() {
+        let cut = NameTruncation.isTruncated(fullText, semibold: semibold, width: bounds.width)
+        let tip = cut ? fullText : nil
+        if toolTip != tip { toolTip = tip }
     }
 }
 
 final class NameClickAreaView: NSView {
     var onActivate: ((CGFloat?) -> Void)?
+    var fullText = ""
+    var semibold = false
+
+    func updateTip() {
+        let cut = NameTruncation.isTruncated(fullText, semibold: semibold, width: bounds.width)
+        let tip = cut ? fullText : nil
+        if toolTip != tip { toolTip = tip }
+    }
 
     override var isOpaque: Bool { false }
     override var acceptsFirstResponder: Bool { true }
@@ -104,6 +174,7 @@ final class NameClickAreaView: NSView {
 
     override func layout() {
         super.layout()
+        updateTip()
         window?.invalidateCursorRects(for: self)
     }
 

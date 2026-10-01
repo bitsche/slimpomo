@@ -178,11 +178,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
 struct MainWindow: View {
     @Bindable var model: AppModel
-    @State private var draftFocused = false
-    @State private var draftContentHeight: CGFloat = 0
     @FocusState private var clearDoneFocused: Bool
-    @State private var doneFlashOn = false
-    @State private var doneFlashNonce = 0
 
     private var shown: Session { model.windowSession }
 
@@ -231,18 +227,18 @@ struct MainWindow: View {
             model.refresh()
         }
         .onChange(of: model.textFocusNonce) { _, _ in
-            draftFocused = false
+            model.draftFocused = false
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
         .onChange(of: doneCompletions) { old, new in
             guard new > old, !model.isTouring, !model.isExpanded(.done) else { return }
-            doneFlashNonce += 1
+            model.doneFlashNonce += 1
         }
-        .task(id: doneFlashNonce) {
-            guard doneFlashNonce > 0 else { return }
-            doneFlashOn = true
+        .task(id: model.doneFlashNonce) {
+            guard model.doneFlashNonce > 0 else { return }
+            model.doneFlashOn = true
             try? await Task.sleep(for: .milliseconds(600))
-            if !Task.isCancelled { doneFlashOn = false }
+            if !Task.isCancelled { model.doneFlashOn = false }
         }
     }
 
@@ -338,7 +334,7 @@ struct MainWindow: View {
                             proxy.scrollTo(id, anchor: .bottom)
                         }
                     }
-                    draftFocused = true
+                    model.draftFocused = true
                 }
             }
             .overlay(alignment: .top) {
@@ -422,18 +418,18 @@ struct MainWindow: View {
                 NameEditor(
                     text: draftBinding,
                     color: Theme.textPrimaryRGB.nsColor,
-                    focus: $draftFocused,
+                    focus: $model.draftFocused,
                     fieldLabel: "New task",
                     onHeight: { height in
-                        withAnimation(growthAnimation) { draftContentHeight = height }
+                        withAnimation(growthAnimation) { model.draftContentHeight = height }
                     },
                     onSubmit: {
                         model.addDraftItem()
-                        draftFocused = true
+                        model.draftFocused = true
                     },
-                    onCancel: { draftFocused = false }
+                    onCancel: { model.draftFocused = false }
                 )
-                .frame(height: NameFieldMetrics.fieldHeight(content: draftContentHeight, font: NameFieldMetrics.font()))
+                .frame(height: NameFieldMetrics.fieldHeight(content: model.draftContentHeight, font: NameFieldMetrics.font()))
                 .overlay(alignment: .leading) {
                     if addPlaceholderVisible {
                         Text("Describe the task, press Return to add")
@@ -457,7 +453,7 @@ struct MainWindow: View {
         .overlay(
             RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
                 .stroke(
-                    draftFocused ? Theme.surface(model.draftIntensity) : Theme.lineField,
+                    model.draftFocused ? Theme.surface(model.draftIntensity) : Theme.lineField,
                     lineWidth: 0.5
                 )
                 .allowsHitTesting(false)
@@ -542,7 +538,7 @@ struct MainWindow: View {
             CollapsibleSectionHeader(
                 label: "DONE",
                 stats: worked,
-                statsHighlighted: doneFlashOn,
+                statsHighlighted: model.doneFlashOn,
                 spoken: "Done, \(Self.tasks(items.count)), \(worked) worked",
                 expanded: open,
                 reduceMotion: model.reduceMotion,
@@ -574,7 +570,7 @@ struct MainWindow: View {
                 .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: trashShown)
             }
             .padding(.horizontal, PageInset.horizontal)
-            .animation(model.reduceMotion ? nil : .easeOut(duration: 0.2), value: doneFlashOn)
+            .animation(model.reduceMotion ? nil : .easeOut(duration: 0.2), value: model.doneFlashOn)
             if open {
                 DoneRows(items: visible, model: model)
                     .padding(.top, 6)
@@ -650,7 +646,7 @@ struct MainWindow: View {
 
     /// The system prompt color ignores the theme, so the empty field draws its own.
     private var addPlaceholderVisible: Bool {
-        !draftFocused && (model.isTouring || model.draftDescription.isEmpty)
+        !model.draftFocused && (model.isTouring || model.draftDescription.isEmpty)
     }
 
     /// 4 pt when DONE follows a collapsed LATER header. Otherwise 14 pt from the previous content, after that row's gap.
@@ -1380,9 +1376,6 @@ private struct QueueLine: View {
     var gripVisible: Bool
     var floating = false
 
-    @State private var editorContent: CGFloat = 0
-    @State private var editCaret: Int?
-
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
@@ -1508,16 +1501,16 @@ private struct QueueLine: View {
             semibold: showsWorkBar,
             color: (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB).nsColor,
             autoFocus: true,
-            caret: editCaret,
+            caret: model.editCaret,
             fieldLabel: "Task name",
             onHeight: { height in
-                withAnimation(growthAnimation) { editorContent = height }
+                withAnimation(growthAnimation) { model.editorContent = height }
             },
             onSubmit: { finishEditing(save: true) },
             onCancel: { finishEditing(save: false) },
             onEnd: { finishEditing(save: true) }
         )
-        .frame(height: NameFieldMetrics.fieldHeight(content: editorContent, font: font))
+        .frame(height: NameFieldMetrics.fieldHeight(content: model.editorContent, font: font))
         .padding(.horizontal, 6)
         .padding(.vertical, (RowGrid.height - 6 - NameFieldMetrics.lineHeight(font)) / 2)
         .background {
@@ -1541,8 +1534,8 @@ private struct QueueLine: View {
 
     private func beginEditing(at x: CGFloat?) {
         guard !floating, model.tour == nil else { return }
-        editorContent = 0
-        editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar) }
+        model.editorContent = 0
+        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar) }
         withAnimation(growthAnimation) {
             model.beginNameEdit(id: item.id)
         }
@@ -2505,15 +2498,7 @@ struct TaskNameLabel: View {
     /// Called with the click's x in the name, or nil from the keyboard or VoiceOver.
     var onEdit: ((CGFloat?) -> Void)? = nil
 
-    @State private var restWidth: CGFloat = 0
-
     private var parts: TaskName.Parts { TaskName.split(text) }
-
-    private var truncated: Bool {
-        guard restWidth > 1 else { return false }
-        let drawn = (parts.rest as NSString).size(withAttributes: [.font: NameFieldMetrics.font(semibold: semibold)]).width
-        return drawn > restWidth + 0.5
-    }
 
     var body: some View {
         content
@@ -2521,10 +2506,11 @@ struct TaskNameLabel: View {
             .layoutPriority(-1)
             .overlay {
                 if let onEdit {
-                    NameClickArea(toolTip: truncated ? text : nil, onActivate: onEdit)
+                    NameClickArea(fullText: text, semibold: semibold, onActivate: onEdit)
+                } else {
+                    NameTipArea(fullText: text, semibold: semibold)
                 }
             }
-            .modifier(GaugeTooltip(text: onEdit == nil && truncated ? text : nil))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(text.isEmpty ? (placeholder ?? "") : text)
             .accessibilityAddTraits(onEdit == nil ? [] : .isButton)
@@ -2560,13 +2546,6 @@ struct TaskNameLabel: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                    .background {
-                        GeometryReader { proxy in
-                            Color.clear
-                                .onAppear { restWidth = proxy.size.width }
-                                .onChange(of: proxy.size.width) { _, width in restWidth = width }
-                        }
-                    }
             }
         }
     }
