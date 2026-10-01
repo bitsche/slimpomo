@@ -191,8 +191,11 @@ public enum TimeSpan {
     }
 }
 
+/// One day's completions of the same name and mode. Events keep their own `queueItemId`.
 public struct HistoryRow: Identifiable, Equatable, Sendable {
+    /// Queue item of the first completion in this row.
     public var queueItemId: UUID
+    /// Latest spelling of the name.
     public var taskName: String
     public var mode: Intensity
     public var count: Int
@@ -200,7 +203,7 @@ public struct HistoryRow: Identifiable, Equatable, Sendable {
     /// Latest completion of this task on this day.
     public var finishedAt: Date
 
-    public var id: UUID { queueItemId }
+    public var id: String { TaskName.groupKey(name: taskName, mode: mode) }
 }
 
 public struct HistoryDay: Identifiable, Equatable, Sendable {
@@ -216,9 +219,9 @@ public struct HistoryDay: Identifiable, Equatable, Sendable {
         pomodoros += 1
         workMinutes += event.workMinutes
         workedSeconds += event.workedSeconds
-        if let index = rows.firstIndex(where: { $0.queueItemId == event.queueItemId }) {
+        let key = TaskName.groupKey(name: event.taskName, mode: event.mode)
+        if let index = rows.firstIndex(where: { $0.id == key }) {
             rows[index].taskName = event.taskName
-            rows[index].mode = event.mode
             rows[index].count += 1
             rows[index].workedSeconds += event.workedSeconds
             if event.timestamp >= rows[index].finishedAt {
@@ -610,7 +613,7 @@ public struct Session: Equatable, Codable {
         }
         done = done.map { item in
             var copy = item
-            copy.count = min(Self.maxPomodoros, max(1, copy.count))
+            copy.count = max(1, copy.count)
             copy.completed = 0
             return copy
         }
@@ -742,11 +745,12 @@ public struct Session: Equatable, Codable {
         }
         return dayOrder.map { day in
             let events = eventsByDay[day] ?? []
-            var rows: [UUID: HistoryRow] = [:]
-            var lastIndex: [UUID: Int] = [:]
+            var rows: [String: HistoryRow] = [:]
+            var lastIndex: [String: Int] = [:]
             for (offset, event) in events.enumerated() {
-                if rows[event.queueItemId] == nil {
-                    rows[event.queueItemId] = HistoryRow(
+                let key = TaskName.groupKey(name: event.taskName, mode: event.mode)
+                if rows[key] == nil {
+                    rows[key] = HistoryRow(
                         queueItemId: event.queueItemId,
                         taskName: event.taskName,
                         mode: event.mode,
@@ -754,21 +758,20 @@ public struct Session: Equatable, Codable {
                         workedSeconds: 0,
                         finishedAt: event.timestamp
                     )
-                    lastIndex[event.queueItemId] = offset
+                    lastIndex[key] = offset
                 }
-                rows[event.queueItemId]?.taskName = event.taskName
-                rows[event.queueItemId]?.mode = event.mode
-                rows[event.queueItemId]?.count += 1
-                rows[event.queueItemId]?.workedSeconds += event.workedSeconds
-                let previous = rows[event.queueItemId]?.finishedAt ?? .distantPast
+                rows[key]?.taskName = event.taskName
+                rows[key]?.count += 1
+                rows[key]?.workedSeconds += event.workedSeconds
+                let previous = rows[key]?.finishedAt ?? .distantPast
                 if event.timestamp >= previous {
-                    rows[event.queueItemId]?.finishedAt = event.timestamp
-                    lastIndex[event.queueItemId] = offset
+                    rows[key]?.finishedAt = event.timestamp
+                    lastIndex[key] = offset
                 }
             }
             let ordered = rows.values.sorted { lhs, rhs in
                 if lhs.finishedAt != rhs.finishedAt { return lhs.finishedAt > rhs.finishedAt }
-                return (lastIndex[lhs.queueItemId] ?? 0) > (lastIndex[rhs.queueItemId] ?? 0)
+                return (lastIndex[lhs.id] ?? 0) > (lastIndex[rhs.id] ?? 0)
             }
             return HistoryDay(
                 day: day,
@@ -927,10 +930,10 @@ public struct Session: Equatable, Codable {
     }
 
     /// Copies one day's history row onto the end of the queue. The history row stays.
-    public mutating func requeueHistory(queueItemId: UUID, day: Date, calendar: Calendar = .current) {
+    public mutating func requeueHistory(rowID: String, day: Date, calendar: Calendar = .current) {
         guard let row = groupedHistory(calendar: calendar)
             .first(where: { calendar.isDate($0.day, inSameDayAs: day) })?
-            .rows.first(where: { $0.queueItemId == queueItemId }) else { return }
+            .rows.first(where: { $0.id == rowID }) else { return }
         queue.append(QueueItem(
             id: UUID(),
             intensity: row.mode,
@@ -940,9 +943,32 @@ public struct Session: Equatable, Codable {
         ))
     }
 
+    /// Done as it is shown: entries with the same name and mode are one row with their summed count and worked time.
+    /// The row keeps the id, spelling, and place of its first entry and the latest finish time.
+    public func mergedDone() -> [QueueItem] {
+        var order: [String] = []
+        var rows: [String: QueueItem] = [:]
+        for item in done {
+            let key = TaskName.groupKey(name: item.description, mode: item.intensity)
+            guard var row = rows[key] else {
+                order.append(key)
+                rows[key] = item
+                continue
+            }
+            row.count += item.count
+            row.workedSeconds += item.workedSeconds
+            if let finished = item.finishedAt, finished > (row.finishedAt ?? .distantPast) {
+                row.finishedAt = finished
+            }
+            rows[key] = row
+        }
+        return order.compactMap { rows[$0] }
+    }
+
     /// Copies a finished line onto the end of the queue. The done entry stays.
+    /// The copy carries the whole row's count, between 1 and 5.
     public mutating func requeue(id: UUID) {
-        guard let item = done.first(where: { $0.id == id }) else { return }
+        guard let item = mergedDone().first(where: { $0.id == id }) else { return }
         queue.append(QueueItem(
             id: UUID(),
             intensity: item.intensity,
@@ -1128,7 +1154,8 @@ public struct Session: Equatable, Codable {
             workMinutes: item.intensity.mode.workMinutes,
             workedSeconds: workedSeconds
         ))
-        if let index = done.lastIndex(where: { $0.sourceID == item.id }) {
+        let key = TaskName.groupKey(name: item.description, mode: item.intensity)
+        if let index = done.firstIndex(where: { TaskName.groupKey(name: $0.description, mode: $0.intensity) == key }) {
             done[index].count += 1
             done[index].workedSeconds += workedSeconds
             done[index].finishedAt = now

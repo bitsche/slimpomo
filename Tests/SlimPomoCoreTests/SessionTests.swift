@@ -979,7 +979,6 @@ struct SessionTests {
         let beginning = HistoryClock.date(2026, 9, 24, 9, 0)
         _ = session.start(now: beginning, calendar: calendar)
         _ = session.markDone(now: beginning, calendar: calendar)
-        session.updateDescription(id: session.queue[0].id, description: "Write more")
         _ = session.skipBreak(now: beginning.addingTimeInterval(10), calendar: calendar)
         _ = session.markDone(now: beginning.addingTimeInterval(20), calendar: calendar)
         _ = session.skipBreak(now: beginning.addingTimeInterval(30), calendar: calendar)
@@ -988,15 +987,15 @@ struct SessionTests {
         let day = session.groupedHistory(calendar: calendar)[0]
         #expect(day.pomodoros == 3)
         #expect(day.workMinutes == 25 + 25 + 50)
-        #expect(day.rows.map(\.taskName) == ["Review", "Write more"])
+        #expect(day.rows.map(\.taskName) == ["Review", "Write"])
         #expect(day.rows.map(\.count) == [1, 2])
         #expect(day.rows.map(\.mode) == [.focus, .regular])
         #expect(day.rows[0].finishedAt == beginning.addingTimeInterval(40))
         #expect(day.rows[1].finishedAt == beginning.addingTimeInterval(20))
 
         let writeID = day.rows[1].queueItemId
-        session.requeueHistory(queueItemId: writeID, day: day.day, calendar: calendar)
-        #expect(session.queue.map(\.description) == ["Write more"])
+        session.requeueHistory(rowID: day.rows[1].id, day: day.day, calendar: calendar)
+        #expect(session.queue.map(\.description) == ["Write"])
         #expect(session.queue[0].count == 2)
         #expect(session.queue[0].intensity == .regular)
         #expect(session.queue[0].id != writeID)
@@ -1378,6 +1377,170 @@ struct SessionTests {
         session.deleteLater(id: id)
         #expect(session.later.isEmpty)
         #expect(session.queue.isEmpty)
+    }
+
+    @Test func projectPrefixSplitsOffTheLabel() {
+        let named = TaskName.split("PRJX: Look Into Notion first")
+        #expect(named.prefix == "PRJX")
+        #expect(named.rest == "Look Into Notion first")
+        #expect(named.restOffset == 6)
+
+        let padded = TaskName.split("  Ops:   restart the box")
+        #expect(padded.prefix == "Ops")
+        #expect(padded.rest == "restart the box")
+        #expect(padded.restOffset == 9)
+
+        #expect(TaskName.split("ABCDEFGHIJKL: twelve").prefix == "ABCDEFGHIJKL")
+        #expect(TaskName.split("ABCDEFGHIJKLM: thirteen").prefix == nil)
+        #expect(TaskName.split("Write the notes").prefix == nil)
+        #expect(TaskName.split("Meeting at 10:30 today").prefix == nil)
+        #expect(TaskName.split("http://example.com").prefix == nil)
+        #expect(TaskName.split(": no label").prefix == nil)
+        #expect(TaskName.split("Two words: no label").prefix == nil)
+        #expect(TaskName.split("PRJX:").prefix == nil)
+        #expect(TaskName.split("PRJX: ").prefix == nil)
+        #expect(TaskName.split("PRJX:tight").prefix == nil)
+        #expect(TaskName.split("PRJX: a: b").rest == "a: b")
+        #expect(TaskName.split("Plain").rest == "Plain")
+        #expect(TaskName.split("Plain").restOffset == 0)
+    }
+
+    @Test func normalizedNamesTrimAndCollapseWhitespaceButKeepCase() {
+        #expect(TaskName.normalized("  Write   the\tnotes \n") == "Write the notes")
+        #expect(TaskName.normalized("Write") != TaskName.normalized("write"))
+        #expect(TaskName.groupKey(name: " Write  it", mode: .regular) == TaskName.groupKey(name: "Write it", mode: .regular))
+        #expect(TaskName.groupKey(name: "Write", mode: .regular) != TaskName.groupKey(name: "Write", mode: .focus))
+    }
+
+    @Test func pastedLineBreaksBecomeSpaces() {
+        #expect(TaskName.singleLine("one\ntwo") == "one two")
+        #expect(TaskName.singleLine("one\r\ntwo") == "one two")
+        #expect(TaskName.singleLine("one\rtwo\u{2028}three\u{2029}four") == "one two three four")
+        #expect(TaskName.singleLine("one\n\ntwo") == "one  two")
+        #expect(TaskName.singleLine("Plain text, with ünïcode") == "Plain text, with ünïcode")
+    }
+
+    @Test func sameNameAndModeShareOneDoneRow() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write the notes", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        session.addItem(description: "  Write  the notes ", intensity: .regular, count: 1)
+        session.addItem(description: "Write the notes", intensity: .focus, count: 1)
+        let first = session.queue[0].id
+        let second = session.queue[2].id
+        let times = (0..<4).map { HistoryClock.date(2026, 9, 24, 9 + $0, 0) }
+        _ = session.markFinished(id: first, now: times[0], calendar: calendar)
+        _ = session.markFinished(id: session.queue.first { $0.description == "Review" }!.id, now: times[1], calendar: calendar)
+        _ = session.markFinished(id: second, now: times[2], calendar: calendar)
+        _ = session.markFinished(id: session.queue[0].id, now: times[3], calendar: calendar)
+
+        #expect(session.done.count == 3)
+        let rows = session.mergedDone()
+        #expect(rows.map(\.description) == ["Write the notes", "Write the notes", "Review"])
+        #expect(rows.map(\.intensity) == [.focus, .regular, .focus])
+        #expect(rows[1].count == 2)
+        #expect(rows[1].workedSeconds == 50 * 60)
+        #expect(rows[1].finishedAt == times[2])
+        #expect(rows[1].description == "Write the notes")
+
+        let history = session.groupedHistory(calendar: calendar)[0]
+        #expect(history.rows.count == 3)
+        let merged = history.rows.first { $0.mode == .regular }!
+        #expect(merged.count == 2)
+        #expect(merged.workedSeconds == 50 * 60)
+        #expect(merged.finishedAt == times[2])
+        #expect(Set(session.history.map(\.queueItemId)).count == 4)
+    }
+
+    @Test func aNewCompletionJoinsTheExistingRowAndMovesItToTheTop() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        let firstWrite = session.queue[0].id
+        _ = session.markFinished(id: firstWrite, now: HistoryClock.date(2026, 9, 24, 9, 0), calendar: calendar)
+        let rowID = session.done[0].id
+        _ = session.markFinished(id: session.queue[0].id, now: HistoryClock.date(2026, 9, 24, 10, 0), calendar: calendar)
+        #expect(session.done.map(\.description) == ["Review", "Write"])
+
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        let again = session.queue[0].id
+        #expect(again != firstWrite)
+        _ = session.markFinished(id: again, now: HistoryClock.date(2026, 9, 24, 11, 0), calendar: calendar)
+        #expect(session.done.map(\.description) == ["Write", "Review"])
+        #expect(session.done[0].id == rowID)
+        #expect(session.done[0].count == 2)
+        #expect(session.done[0].workedSeconds == 50 * 60)
+        #expect(session.history.map(\.queueItemId) == [firstWrite, session.history[1].queueItemId, again])
+    }
+
+    @Test func pushBackFromAMergedRowCopiesItOnceWithTheSummedCountClamped() throws {
+        let calendar = HistoryClock.calendar
+        let at = HistoryClock.date(2026, 9, 24, 9, 0)
+        let rowA = UUID()
+        let rowB = UUID()
+        let json = """
+        {"isRunning":false,"phase":"idle","phaseDuration":0,"queue":[],"remaining":0,"didMigrateHistory":true,"didMigrateWorkedSeconds":true,"done":[{"id":"\(rowA.uuidString)","intensity":"regular","description":"Write","count":1,"workedSeconds":1500},{"id":"\(rowB.uuidString)","intensity":"regular","description":"Write","count":1,"workedSeconds":1500}]}
+        """
+        // Legacy data can hold two separate rows for one name.
+        var legacy = try JSONDecoder().decode(Session.self, from: Data(json.utf8))
+        #expect(legacy.done.count == 2)
+        let row = legacy.mergedDone()[0]
+        #expect(legacy.mergedDone().count == 1)
+        #expect(row.id == rowA)
+        #expect(row.count == 2)
+        legacy.requeue(id: row.id)
+        #expect(legacy.queue.count == 1)
+        #expect(legacy.queue[0].count == 2)
+        #expect(legacy.queue[0].description == "Write")
+        #expect(legacy.done.count == 2)
+
+        var big = Session()
+        for _ in 0..<7 {
+            big.addItem(description: "Write", intensity: .regular, count: 1)
+            _ = big.markFinished(id: big.queue.last!.id, now: at, calendar: calendar)
+        }
+        #expect(big.done.count == 1)
+        #expect(big.done[0].count == 7)
+        big.requeue(id: big.done[0].id)
+        #expect(big.queue.last?.count == Session.maxPomodoros)
+        big.normalize()
+        #expect(big.done[0].count == 7)
+    }
+
+    @Test func historyRowsForARenamedTaskSplitByName() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        let beginning = HistoryClock.date(2026, 9, 24, 9, 0)
+        _ = session.start(now: beginning, calendar: calendar)
+        _ = session.markDone(now: beginning, calendar: calendar)
+        session.updateDescription(id: session.queue[0].id, description: "Write more")
+        _ = session.skipBreak(now: beginning.addingTimeInterval(10), calendar: calendar)
+        _ = session.markDone(now: beginning.addingTimeInterval(20), calendar: calendar)
+
+        let day = session.groupedHistory(calendar: calendar)[0]
+        #expect(day.rows.map(\.taskName) == ["Write more", "Write"])
+        #expect(day.rows.map(\.count) == [1, 1])
+        #expect(Set(day.rows.map(\.id)).count == 2)
+        #expect(Set(session.history.map(\.queueItemId)).count == 1)
+    }
+
+    @Test func newHistoryEventsMergeIntoExistingRowsLikeAFullRegroup() {
+        let calendar = HistoryClock.calendar
+        var session = Session()
+        let at = HistoryClock.date(2026, 9, 24, 9, 0)
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        _ = session.markFinished(id: session.queue[0].id, now: at, calendar: calendar)
+        var days = session.groupedHistory(calendar: calendar)
+        let seen = session.history.count
+        session.addItem(description: " Write ", intensity: .regular, count: 1)
+        _ = session.markFinished(id: session.queue[0].id, now: at.addingTimeInterval(60), calendar: calendar)
+        session.mergingNewHistory(into: &days, from: seen, calendar: calendar)
+        #expect(days == session.groupedHistory(calendar: calendar))
+        #expect(days[0].rows.count == 1)
+        #expect(days[0].rows[0].count == 2)
     }
 
 private enum HistoryClock {
