@@ -53,6 +53,8 @@ final class AppModel {
     var breakMessage: String?
     /// Bumped when a click lands outside a text field, so open editors resign.
     var textFocusNonce = 0
+    /// True from a mouse press until the next key press. Focus rings and focus-driven reveals only show for keyboard focus.
+    var pointerDrivenInput = false
     var reduceMotion = false
     var queueDrag: QueueDragController?
     /// True for the frame that commits a drag, so the list does not animate a second time.
@@ -89,6 +91,7 @@ final class AppModel {
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var tourCursorMonitor: Any?
     @ObservationIgnored private var focusMonitor: Any?
+    @ObservationIgnored private var inputModeMonitor: Any?
     @ObservationIgnored private var queueDragMonitor: Any?
     @ObservationIgnored private var queueScrollTask: Task<Void, Never>?
     @ObservationIgnored private var queueSettleTask: Task<Void, Never>?
@@ -141,6 +144,7 @@ final class AppModel {
         scheduleMidnight()
         installKeyMonitor()
         installFocusMonitor()
+        installInputModeMonitor()
         installTourCursorMonitor()
         PointingHand.install()
         if !store.tourSeen {
@@ -172,6 +176,11 @@ final class AppModel {
     var tourDoneRevealID: UUID? {
         guard tour?.step == .done else { return nil }
         return windowSession.mergedDone().first?.id
+    }
+
+    /// Whether a focused custom control draws its focus ring or its focus-driven reveal.
+    func focusVisible(_ focused: Bool) -> Bool {
+        focused && !pointerDrivenInput
     }
 
     /// Ends editing when a click misses every text field. Buttons still receive the click.
@@ -1240,6 +1249,18 @@ final class AppModel {
                 }
             }
             return handled ? nil : event
+        }
+    }
+
+    private func installInputModeMonitor() {
+        inputModeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { event in
+            let pointer = event.type != .keyDown
+            MainActor.assumeIsolated {
+                if AppRuntime.model.pointerDrivenInput != pointer {
+                    AppRuntime.model.pointerDrivenInput = pointer
+                }
+            }
+            return event
         }
     }
 

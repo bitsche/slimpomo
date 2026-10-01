@@ -589,7 +589,7 @@ struct MainWindow: View {
         let visible = model.doneListExpanded ? items : Array(items.prefix(3))
         let hidden = max(0, items.count - 3)
         let worked = TimeFormat.span(TimeInterval(doneSeconds))
-        let trashShown = model.doneHeaderHovered || model.doneSectionFocused || clearDoneFocused
+        let trashShown = model.doneHeaderHovered || model.doneSectionFocused || model.focusVisible(clearDoneFocused)
         return VStack(alignment: .leading, spacing: 0) {
             CollapsibleSectionHeader(
                 label: "DONE",
@@ -615,8 +615,9 @@ struct MainWindow: View {
                     model.clearDone()
                 }
                 .allowsHitTesting(trashShown)
-                .focusable()
+                .focusable(true, interactions: .activate)
                 .focused($clearDoneFocused)
+                .keyboardFocusOnly($clearDoneFocused)
                 .onKeyPress(.return) {
                     model.clearDone()
                     return .handled
@@ -825,12 +826,13 @@ private struct TankPill: View {
         .disabled(!enabled)
         .pointingHandCursor(enabled: enabled)
         .focused($focused)
+        .keyboardFocusOnly($focused)
         .focusEffectDisabled()
         .overlay {
             ControlHit(shape: .capsule, enabled: enabled, action: { ClickOnce.perform(action) })
         }
         .overlay {
-            if focused && enabled {
+            if AppRuntime.model.focusVisible(focused) && enabled {
                 Capsule()
                     .strokeBorder(Color.accentColor, lineWidth: 3)
                     .padding(-3)
@@ -1277,7 +1279,7 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
                     HoverPlate(cornerRadius: 6, color: Theme.headerHoverWashNS, suppressed: washSuppressed)
                 }
                 .overlay {
-                    if focused {
+                    if AppRuntime.model.focusVisible(focused) {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Theme.link, lineWidth: 2)
                             .allowsHitTesting(false)
@@ -1287,6 +1289,7 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
             .buttonStyle(PointingHandButtonStyle())
             .padding(.horizontal, -Self.edge)
             .focused($focused)
+            .keyboardFocusOnly($focused)
             .focusEffectDisabled()
             .onChange(of: focused) { _, value in onFocus?(value) }
             .help(expanded ? "Collapse \(label.lowercased())" : "Expand \(label.lowercased())")
@@ -1347,6 +1350,9 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
     /// Nil lets the row grow with its content. Only a queue row that is being edited does.
     var height: CGFloat? = RowGrid.height
     var alignment: VerticalAlignment = .center
+    /// Width of the fixed columns on the right that the name may cover. A row that is being edited hides them and
+    /// lets its field run to the row's right padding.
+    var nameExtension: CGFloat = 0
     @ViewBuilder var gauge: () -> Gauge
     @ViewBuilder var name: () -> Name
     @ViewBuilder var rest: () -> Rest
@@ -1357,6 +1363,8 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
                 .frame(width: RowGrid.gauge, alignment: .leading)
             name()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, -nameExtension)
+                .zIndex(nameExtension > 0 ? 1 : 0)
                 .layoutPriority(-1)
             rest()
         }
@@ -1425,7 +1433,7 @@ struct PomodoroStepper: View {
 
     @FocusState private var focused: Bool
 
-    private var showsControls: Bool { revealed || focused }
+    private var showsControls: Bool { revealed || AppRuntime.model.focusVisible(focused) }
     private var canDecrease: Bool { count > minimum }
     private var canIncrease: Bool { count < maximum }
 
@@ -1456,14 +1464,15 @@ struct PomodoroStepper: View {
         .frame(width: RowGrid.countSlot, height: RowGrid.stepperHeight)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: showsControls)
         .overlay {
-            if focused {
+            if AppRuntime.model.focusVisible(focused) {
                 Capsule()
                     .strokeBorder(Theme.link, lineWidth: 2)
                     .allowsHitTesting(false)
             }
         }
-        .focusable()
+        .focusable(true, interactions: .activate)
         .focused($focused)
+        .keyboardFocusOnly($focused)
         .focusEffectDisabled()
         .onKeyPress(.upArrow) {
             increase()
@@ -1593,7 +1602,7 @@ private struct RowNameEditor: View {
                 .allowsHitTesting(false)
         }
         .padding(.leading, -6)
-        .padding(.trailing, -4)
+        .padding(.trailing, 2)
         .padding(.vertical, 3)
     }
 }
@@ -1665,7 +1674,11 @@ private struct QueueLine: View {
     }
 
     private var card: some View {
-        ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+        ListRow(
+            height: isEditing ? nil : RowGrid.height,
+            alignment: isEditing ? .top : .center,
+            nameExtension: isEditing ? IconMetrics.column.width + RowGrid.countSlot : 0
+        ) {
             IntensitySwitch(
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
@@ -1713,6 +1726,7 @@ private struct QueueLine: View {
                     .modifier(RestFade(shown: revealed && !isEditing, reduceMotion: model.reduceMotion))
             }
             .frame(height: RowGrid.height)
+            .modifier(RestFade(shown: !isEditing, reduceMotion: model.reduceMotion))
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
@@ -1870,7 +1884,11 @@ private struct LaterLine: View {
     }
 
     private var card: some View {
-        ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+        ListRow(
+            height: isEditing ? nil : RowGrid.height,
+            alignment: isEditing ? .top : .center,
+            nameExtension: isEditing ? IconMetrics.column.width + RowGrid.countSlot : 0
+        ) {
             IntensitySwitch(
                 intensity: item.intensity,
                 reduceMotion: model.reduceMotion,
@@ -1919,6 +1937,7 @@ private struct LaterLine: View {
                 .modifier(RestFade(shown: revealed && !isEditing, reduceMotion: model.reduceMotion))
             }
             .frame(height: RowGrid.height)
+            .modifier(RestFade(shown: !isEditing, reduceMotion: model.reduceMotion))
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
@@ -2083,6 +2102,17 @@ private enum PopUpMenu {
 }
 
 /// Fades secondary row content without giving up its column.
+extension View {
+    /// A custom control takes keyboard focus from Tab or VoiceOver, never from a click. A click leaves focus where it was.
+    func keyboardFocusOnly(_ focused: FocusState<Bool>.Binding) -> some View {
+        onChange(of: focused.wrappedValue) { _, value in
+            if value && AppRuntime.model.pointerDrivenInput {
+                focused.wrappedValue = false
+            }
+        }
+    }
+}
+
 struct RestFade: ViewModifier {
     var shown: Bool
     var reduceMotion: Bool
@@ -2257,6 +2287,7 @@ private struct MoreDoneLink: View {
         .buttonStyle(PointingHandButtonStyle())
         .padding(.leading, PageInset.horizontal + RowGrid.leading)
         .focused($focused)
+        .keyboardFocusOnly($focused)
         .onChange(of: focused) { _, value in onFocus(value) }
         .accessibilityLabel(title)
     }
@@ -2608,7 +2639,7 @@ private struct ModeMenu: View {
                     HoverPlate(cornerRadius: 6, color: Theme.hoverWashNS)
                 }
                 .overlay {
-                    if focused {
+                    if model.focusVisible(focused) {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .strokeBorder(Theme.link, lineWidth: 2)
                     }
@@ -2617,6 +2648,7 @@ private struct ModeMenu: View {
         .buttonStyle(PointingHandButtonStyle())
         .fixedSize()
         .focused($focused)
+        .keyboardFocusOnly($focused)
         .focusEffectDisabled()
         .onChange(of: focused) { _, value in
             model.depthChipFocused = value
@@ -2663,6 +2695,7 @@ private struct DepthHint: View {
         .padding(.leading, PageInset.horizontal + 10 + DepthGauge.diameter / 2 - Self.arrowWidth / 2)
         .padding(.trailing, 8)
         .focused($focused)
+        .keyboardFocusOnly($focused)
         .focusEffectDisabled()
         .onChange(of: focused) { _, value in
             model.depthHintFocused = value
@@ -2928,8 +2961,9 @@ struct SquareIconButton: View {
             .fixedSize()
             .iconSlot(slot)
             .pointingHandCursor()
-            .focusable(onFocus != nil)
+            .focusable(onFocus != nil, interactions: .activate)
             .focused($focused)
+            .keyboardFocusOnly($focused)
             .onChange(of: focused) { _, value in onFocus?(value) }
             .help(help)
             .accessibilityElement(children: .ignore)

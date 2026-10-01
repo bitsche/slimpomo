@@ -17,6 +17,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 - Every clickable custom control has a subtle hover state (e.g. a rounded background at white 6%, radius 6).
 - Icon-only buttons: square 28×28 pt hit area with the icon centered. The hover/pressed background fills the square (radius 6). Round controls get a 28 pt circular hover. The icon size and the layout never change.
 - Disabled: 40% opacity, no hover, a tooltip explaining why when that's useful.
+- Clicking a custom control never takes keyboard focus; focus rings only for keyboard navigation.
 - Hover must never shift the layout (no size or padding changes).
 
 ## Tooltips and accessibility
@@ -34,6 +35,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 - Same column = same meaning. Never place a different kind of value in a column.
 - Count = fixed 72 pt stepper slot; − and + appear on hover; the number never moves. Done and History show a display-only `×n` in the same slot position.
 - Queue and LATER rows are cards without dividers. Done and History rows are flat without dividers.
+- While a row's name is edited, its stepper, ••• and finish-time overlay fade out (120 ms) and the field runs to the row's right padding; they return when editing ends.
 - Rows show only the essentials at rest (gauge, name, non-default values). Secondary values and row actions appear on hover.
 - Hover controls appear as a right-aligned overlay with a 24 pt left fade. The gauge and name start never move. Names truncate with "…".
 - Every hover-only action is also reachable by right-click (context menu), keyboard, and VoiceOver.

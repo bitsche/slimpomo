@@ -27,7 +27,7 @@ Queue and LATER are one drag area. Press a row anywhere and move the pointer 4 p
 - between days of LATER to change the day it returns, or within a day to set the order,
 - from LATER up into the queue to work on it now, at the spot where you drop it.
 
-While a row is held, LATER opens and shows both days, with a dashed drop zone for an empty day. Holding a row over a collapsed LATER header for 0.6 s opens it for good. Esc, or releasing outside the list, puts the row back. A task that is running can't be dragged and nothing can be dropped above it. Done rows are not drop targets.
+While a row is held, LATER opens and shows both days, with a dashed drop zone for an empty day. Holding a row over a collapsed LATER header for 0.6 s opens it for good. The pointer's y alone picks the place: the upper half of a row means before it, the lower half after it, a day label or the LATER header the start of that day, an empty day's drop zone that day, and anything below the last row (Done included) the end of the last day. Esc, or releasing off to the side or outside the list area, puts the row back. A task that is running can't be dragged and nothing can be dropped above it. Done rows are not drop targets.
 
 At midnight of a day, that day's tasks return to the top of the queue (below a running task) in the order planned in LATER. A task moved with ••• goes to the end of its day. In LATER you can also edit names, click the gauge to change the mode, and set the count; rows rest at 60% and come to full strength on hover.
 
@@ -61,5 +61,6 @@ scripts/dev.sh --reset          wipe the dev store and its remembered settings
 scripts/dev.sh --tour           show the first-run tour again
 scripts/dev.sh --later          add later tasks: tomorrow, next Monday, and two already due
 scripts/dev.sh --tank-level 0.5 [work|break]  freeze the tank at a level (0 to 1), waves still, to check the scale
+scripts/dev.sh --debug-drop-zones  with any of the above: while a row is held, draw the bands the pointer maps through, to check there are no gaps
 scripts/dev.sh --export-gauges DIR            write the depth gauges (Dip, Dive, Deep dive, muted) at 1x and 2x
 ```
