@@ -1,7 +1,10 @@
 import AppKit
 import Foundation
 
-let states = [
+let gaugeMode = CommandLine.arguments.contains("--gauges")
+let arguments = CommandLine.arguments.filter { $0 != "--gauges" }
+
+let menuBarStates = [
     "idle",
     "work-running-10",
     "work-running-45",
@@ -13,21 +16,26 @@ let states = [
     "break-paused-50",
 ]
 
-guard CommandLine.arguments.count >= 2 else {
-    fputs("Usage: swift scripts/compare-icons.swift <exported-dir> [reference-dir]\n", stderr)
+guard arguments.count >= 2 else {
+    fputs("Usage: swift scripts/compare-icons.swift [--gauges] <exported-dir> [reference-dir]\n", stderr)
     exit(2)
 }
 
-let exported = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+let exported = URL(fileURLWithPath: arguments[1], isDirectory: true)
 let reference: URL
-if CommandLine.arguments.count >= 3 {
-    reference = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+if arguments.count >= 3 {
+    reference = URL(fileURLWithPath: arguments[2], isDirectory: true)
 } else {
     let root = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-    reference = root.appendingPathComponent("menubar-reference/png", isDirectory: true)
+    reference = root.appendingPathComponent(gaugeMode ? "gauge-reference/png" : "menubar-reference/png", isDirectory: true)
 }
+
+/// Each case is the file name without the 1x/2x suffix and extension.
+let cases: [(label: String, file: String)] = gaugeMode
+    ? ["dip", "dive", "deep", "muted"].map { ($0, "gauge-C-tank-\($0)") }
+    : menuBarStates.map { ($0, "menubar-\($0)") }
 
 func alphas(at url: URL) -> (width: Int, height: Int, values: [UInt8])? {
     guard let data = try? Data(contentsOf: url),
@@ -57,9 +65,10 @@ func alphas(at url: URL) -> (width: Int, height: Int, values: [UInt8])? {
 }
 
 var failed = false
-for state in states {
+for entry in cases {
+    let state = entry.label
     for suffix in ["", "@2x"] {
-        let name = "menubar-\(state)\(suffix).png"
+        let name = "\(entry.file)\(suffix).png"
         let leftURL = exported.appendingPathComponent(name)
         let rightURL = reference.appendingPathComponent(name)
         guard let left = alphas(at: leftURL), let right = alphas(at: rightURL) else {

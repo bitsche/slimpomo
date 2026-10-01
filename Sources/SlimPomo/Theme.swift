@@ -42,7 +42,6 @@ enum Theme {
     static let textMutedRGB = ThemeRGB(hex: 0x6F9AA0)
     static let linkRGB = ThemeRGB(hex: 0x8FC9CF)
     static let linkDisabledRGB = ThemeRGB(hex: 0x2F4C55)
-    static let countRingRGB = ThemeRGB(hex: 0xCFE6E8)
     static let destructiveRGB = ThemeRGB(hex: 0xF09A8F)
 
     static let dipSurfaceRGB = ThemeRGB(hex: 0x9BE59A)
@@ -79,8 +78,6 @@ enum Theme {
     static let textMuted = textMutedRGB.color
     static let link = linkRGB.color
     static let linkDisabled = linkDisabledRGB.color
-    static let countRing = countRingRGB.color
-    static let countRingNS = countRingRGB.nsColor
     static let destructive = destructiveRGB.color
     static let destructiveNS = destructiveRGB.nsColor
 
@@ -97,6 +94,8 @@ enum Theme {
     /// Icon hover and press from the UI basics: white at 6% and 10%.
     static let hoverWashNS = NSColor(white: 1, alpha: 0.06)
     static let pressedWashNS = NSColor(white: 1, alpha: 0.10)
+    /// Hover circle on the pomodoro stepper's − and +: white at 8%.
+    static let stepperHoverWashNS = NSColor(white: 1, alpha: 0.08)
     /// Whole-row hover on a collapsible section header: white at 4%.
     static let headerHoverWashNS = NSColor(white: 1, alpha: 0.04)
     /// Lifted queue card. Black at 35%.

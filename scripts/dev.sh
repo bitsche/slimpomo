@@ -6,7 +6,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 usage() {
-    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour | --later | --tank-level <0..1> [work|break] | --export-menubar-icons <dir>]" >&2
+    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour | --later | --tank-level <0..1> [work|break] | --export-menubar-icons <dir> | --export-gauges <dir>]" >&2
     exit 1
 }
 
@@ -35,6 +35,11 @@ case "${1:-}" in
         export_dir="${2:-}"
         [[ -n "$export_dir" ]] || usage
         flag="-exportMenuBarIcons"
+        ;;
+    --export-gauges)
+        export_dir="${2:-}"
+        [[ -n "$export_dir" ]] || usage
+        flag="-exportGauges"
         ;;
     *) usage ;;
 esac
@@ -70,6 +75,9 @@ codesign --force --sign - "$app"
 if [[ "$flag" == "-exportMenuBarIcons" ]]; then
     "$app/Contents/MacOS/Deeeep" -exportMenuBarIcons "$export_dir"
     echo "Exported menu-bar icons to $export_dir"
+elif [[ "$flag" == "-exportGauges" ]]; then
+    "$app/Contents/MacOS/Deeeep" -exportGauges "$export_dir"
+    echo "Exported gauges to $export_dir"
 elif [[ -n "$flag" ]]; then
     open "$app" --args "$flag" ${extra_args[@]+"${extra_args[@]}"}
     echo "Launched $app $flag ${extra_args[*]-}"

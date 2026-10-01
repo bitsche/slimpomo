@@ -245,24 +245,10 @@ private struct HistoryLine: View {
                 color: Theme.textSecondary
             )
         } rest: {
-            WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
-                .padding(.leading, 8)
-        }
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(revealed ? Theme.bgCard : Color.clear)
-        }
-        .overlay(alignment: .trailing) {
-            HoverCluster(
-                shown: revealed,
-                reduceMotion: model.reduceMotion,
-                fill: Theme.bgCard,
-                cornerRadius: 8
-            ) {
-                FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
+            HStack(spacing: 0) {
                 WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
-                    .accessibilityHidden(true)
-                CountText(count: row.count)
+                    .frame(width: RowGrid.workedWidth, alignment: .trailing)
+                CountSlot(count: row.count, revealed: revealed)
                 SquareIconButton(
                     systemName: "arrow.uturn.backward",
                     weight: .semibold,
@@ -272,6 +258,21 @@ private struct HistoryLine: View {
                 ) {
                     model.requeueHistory(rowID: row.id, day: day)
                 }
+                .modifier(RestFade(shown: revealed, reduceMotion: model.reduceMotion))
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(revealed ? Theme.bgCard : Color.clear)
+        }
+        .overlay(alignment: .trailing) {
+            FadeOverlay(
+                shown: revealed,
+                reduceMotion: model.reduceMotion,
+                fill: Theme.bgCard,
+                trailingInset: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot + RowGrid.workedWidth
+            ) {
+                FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

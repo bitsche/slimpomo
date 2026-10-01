@@ -105,7 +105,7 @@ public enum DragGeometry {
             case .queue:
                 blocks.append(DragBlock(id: .queue, lead: count > 0 ? DragMetrics.queueTopPadding : 0, rows: count))
             case .day:
-                guard region.visible else {
+                guard region.visible, count > 0 else {
                     blocks.append(DragBlock(id: region.id, lead: 0, rows: 0))
                     continue
                 }

@@ -16,12 +16,20 @@ enum QueueMotion {
     }
 }
 
+/// One held task, from the moment the grip is pressed until the list has settled.
+/// The gap sits at `slot`; `highlightedID` is the one row under the pointer.
 @MainActor
 @Observable
 final class QueueDragController {
+    enum Source {
+        case queue
+        case later
+    }
+
     let itemID: UUID
-    let originIndex: Int
-    var gapIndex: Int
+    let source: Source
+    let origin: DragSlot
+    var slot: DragSlot
     var rowHeight: CGFloat
     var rowWidth: CGFloat
     var visualX: CGFloat
@@ -31,6 +39,11 @@ final class QueueDragController {
     var phase: Phase
     /// True while the row is gliding into a new spot. False while it glides home.
     var drop: Bool
+    /// Set on release. The list then lays out as it will after the drop: no drop zones, LATER as it will stay.
+    var finalLayout: Bool
+    /// The single row that shows the card hover while the pointer passes over it.
+    var highlightedID: UUID?
+    @ObservationIgnored var springStart: Date?
 
     enum Phase: Equatable {
         case dragging
@@ -39,18 +52,18 @@ final class QueueDragController {
 
     init(
         itemID: UUID,
-        originIndex: Int,
-        gapIndex: Int,
-        rowHeight: CGFloat,
+        source: Source,
+        origin: DragSlot,
         rowWidth: CGFloat,
         visualX: CGFloat,
         visualY: CGFloat,
         grabOffset: CGFloat
     ) {
         self.itemID = itemID
-        self.originIndex = originIndex
-        self.gapIndex = gapIndex
-        self.rowHeight = rowHeight
+        self.source = source
+        self.origin = origin
+        slot = origin
+        rowHeight = DragMetrics.stride
         self.rowWidth = rowWidth
         self.visualX = visualX
         self.visualY = visualY
@@ -58,11 +71,15 @@ final class QueueDragController {
         lifted = false
         phase = .dragging
         drop = false
+        finalLayout = false
     }
 
     var showsOutline: Bool {
         phase == .dragging || !drop
     }
+
+    /// LATER shows every day as a drop target while a row is held.
+    var isPlanning: Bool { !finalLayout }
 }
 
 struct QueueListAnchor: NSViewRepresentable {

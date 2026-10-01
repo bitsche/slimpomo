@@ -8,7 +8,7 @@ alwaysApply: true
 Every new or changed UI element must meet these rules. Check them before finishing any task.
 
 ## Cursors
-- Pointing hand (`NSCursor.pointingHand`) on every clickable custom control: buttons, icon buttons, mode gauges, count circles, ••• menus, push-back icons, disclosure chevrons, header icons (History, Tour, trash).
+- Pointing hand (`NSCursor.pointingHand`) on every clickable custom control: buttons, icon buttons, mode gauges, the − and + of the pomodoro stepper, ••• menus, push-back icons, disclosure chevrons, header icons (History, Tour, trash).
 - I-beam on editable text. Open hand / closed hand for drag handles and while dragging.
 - Disabled or display-only elements keep the arrow cursor.
 - Standard `NSMenu` items and system controls keep their system cursors.
@@ -32,7 +32,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 ## Row grid
 - All list rows (Queue, LATER, Done, History) start with the gauge column (28 pt: 20 pt gauge + 8 pt gap) and a name that takes the rest of the row. An essential value may sit at the right edge. Names truncate with a trailing "…".
 - Same column = same meaning. Never place a different kind of value in a column.
-- Count circles are controls. Display-only counts use plain text `×n`.
+- Count = fixed 72 pt stepper slot; − and + appear on hover; the number never moves. Done and History show a display-only `×n` in the same slot position.
 - Queue and LATER rows are cards without dividers. Done and History rows are flat without dividers.
 - Rows show only the essentials at rest (gauge, name, non-default values). Secondary values and row actions appear on hover.
 - Hover controls appear as a right-aligned overlay with a 24 pt left fade. The gauge and name start never move. Names truncate with "…".
@@ -46,6 +46,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 ## Motion
 - Animations are short (150–300 ms) and play once. Never a second "catch-up" animation.
 - Lists use stable ids. Reordering animates as a move, never remove + insert.
+- Queue and LATER are one drag area. While a row is held, LATER opens with every day as a drop target, and the row under the pointer shows only the card hover.
 - Respect Reduce Motion: replace movement and scaling with a simple fade.
 
 ## Look ("Deep water")

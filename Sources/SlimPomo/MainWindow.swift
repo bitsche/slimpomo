@@ -179,6 +179,23 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 }
 
+/// A row as the lists draw it while a task is held: a real row, the gap, or an empty day's drop zone.
+private enum DisplayRow: Identifiable {
+    case queue(QueueItem)
+    case later(LaterItem)
+    case gap(UUID)
+    case zone(String)
+
+    var id: String {
+        switch self {
+        case .queue(let item): item.id.uuidString
+        case .later(let item): item.id.uuidString
+        case .gap(let id): id.uuidString
+        case .zone(let day): "zone-\(day)"
+        }
+    }
+}
+
 struct MainWindow: View {
     @Bindable var model: AppModel
     @FocusState private var clearDoneFocused: Bool
@@ -294,14 +311,23 @@ struct MainWindow: View {
                     if showsDepthHint {
                         DepthHint(model: model)
                     }
-                    if !shown.queue.isEmpty {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 0)
+                        .background {
+                            QueueListAnchor { anchor in
+                                model.attachQueueList(anchor)
+                            }
+                        }
+                    if !queueDisplay.isEmpty {
                         queueRows
-                            .padding(.top, showsDepthHint ? 18 : 8)
+                            .padding(.top, showsDepthHint ? 18 : DragMetrics.queueTopPadding)
                     }
-                    if !shown.later.isEmpty {
+                    if model.laterBlockShown {
                         laterBlock
-                            .padding(.top, shown.queue.isEmpty ? 14 : 14 - RowGrid.gap)
+                            .padding(.top, queueDisplay.isEmpty ? DragMetrics.laterGapWithoutQueue : DragMetrics.laterGapAfterQueue)
                             .tourTarget(.laterSection)
+                            .transition(.opacity)
                     }
                     if !shown.done.isEmpty {
                         doneBlock
@@ -374,42 +400,30 @@ struct MainWindow: View {
 
     private var queueRows: some View {
         VStack(spacing: 0) {
-            ForEach(displayedQueue) { item in
-                let held = model.queueDrag?.itemID == item.id
-                QueueLine(
-                    item: item,
-                    isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
-                    finish: shown.finishDates(at: model.now)[item.id],
-                    model: model,
-                    gripVisible: model.tourGripItemID == item.id
-                        || (model.tour == nil && model.hoveredQueueID == item.id && model.session.canReorder(id: item.id))
-                        || (model.tourQueueRevealID == item.id && model.session.canReorder(id: item.id))
-                )
-                .id(item.id)
-                .opacity(held ? 0 : 1)
-                .overlay(alignment: .top) {
-                    if held {
-                        RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
-                            .stroke(Theme.lineField, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                            .padding(.horizontal, PageInset.horizontal)
-                            .padding(.bottom, RowGrid.gap)
-                            .opacity((model.queueDrag?.showsOutline ?? false) ? 1 : 0)
-                            .accessibilityHidden(true)
-                    }
+            ForEach(queueDisplay) { row in
+                switch row {
+                case .queue(let item):
+                    QueueLine(
+                        item: item,
+                        isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
+                        finish: shown.finishDates(at: model.now)[item.id],
+                        model: model,
+                        gripVisible: model.tourGripItemID == item.id
+                            || (!model.isDraggingRow && model.tour == nil && model.hoveredQueueID == item.id && model.canDragRow(id: item.id))
+                            || (model.tourQueueRevealID == item.id && model.canDragRow(id: item.id))
+                    )
+                    .id(item.id)
+                case .gap:
+                    DragGap(model: model)
+                default:
+                    EmptyView()
                 }
-                .accessibilityHidden(held)
-                .allowsHitTesting(!held)
             }
         }
         .animation(
             model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
-            value: displayedQueue.map(\.id)
+            value: queueDisplay.map(\.id)
         )
-        .background {
-            QueueListAnchor { anchor in
-                model.attachQueueList(anchor)
-            }
-        }
     }
 
     private var addRow: some View {
@@ -478,56 +492,93 @@ struct MainWindow: View {
     }
 
     private var laterBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let open = model.laterRowsShown
+        return VStack(alignment: .leading, spacing: 0) {
             CollapsibleSectionHeader(
                 label: "LATER",
-                stats: "\(shown.later.count)",
+                stats: shown.later.isEmpty ? "" : "\(shown.later.count)",
                 spoken: "Later, \(Self.tasks(shown.later.count))",
-                expanded: laterOpen,
+                expanded: open,
                 reduceMotion: model.reduceMotion,
                 onToggle: { model.toggleSection(.later) }
             ) {
                 EmptyView()
             }
             .padding(.horizontal, PageInset.horizontal)
-            if laterOpen {
+            if open {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(shown.laterGroups().enumerated()), id: \.element.day) { groupIndex, group in
+                    ForEach(Array(laterDays.enumerated()), id: \.element.day) { groupIndex, day in
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(laterHeading(group.day))
+                            Text(day.heading)
                                 .font(.system(size: 11).monospacedDigit())
                                 .foregroundStyle(Theme.textMuted)
+                                .lineLimit(1)
+                                .frame(height: DragMetrics.headingHeight, alignment: .leading)
                                 .padding(.leading, PageInset.horizontal + RowGrid.leading)
-                                .padding(.top, groupIndex == 0 ? 0 : 10)
-                                .padding(.bottom, 4)
-                            ForEach(group.items) { item in
-                                LaterLine(item: item, model: model)
+                                .padding(.top, groupIndex == 0 ? 0 : DragMetrics.headingTopGap)
+                                .padding(.bottom, DragMetrics.headingBottom)
+                            ForEach(laterDisplay(day.day)) { row in
+                                switch row {
+                                case .later(let item):
+                                    LaterLine(
+                                        item: item,
+                                        model: model,
+                                        gripVisible: !model.isDraggingRow && model.tour == nil && model.hoveredLaterID == item.id
+                                    )
+                                case .gap:
+                                    DragGap(model: model)
+                                case .zone:
+                                    DropZone(heading: day.heading)
+                                case .queue:
+                                    EmptyView()
+                                }
                             }
                         }
                     }
                 }
-                .padding(.top, 6)
-                .animation(QueueMotion.slide(model.reduceMotion), value: shown.later.map(\.id))
+                .padding(.top, DragMetrics.laterTopPadding)
+                .animation(
+                    model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
+                    value: laterDays.flatMap { day in laterDisplay(day.day).map(\.id) }
+                )
+                .transition(.opacity)
             }
         }
     }
 
-    private static func tasks(_ count: Int) -> String {
-        count == 1 ? "1 task" : "\(count) tasks"
+    /// The days LATER draws: those with tasks, plus every offered day while a task is held.
+    private var laterDays: [PlanDay] {
+        Snooze.planDays(on: model.now, existing: shown.later.map(\.returnDay)).filter { day in
+            !laterDisplay(day.day).isEmpty
+        }
     }
 
-    /// The tour starts with the sample row visible. The header can still collapse it.
-    private var laterOpen: Bool { model.isExpanded(.later) }
-
-    private func laterHeading(_ day: String) -> String {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: model.now)
-        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: today),
-           day == CalendarDay.stamp(tomorrow, calendar: calendar) {
-            return "Tomorrow"
+    /// One day's rows in the order they are drawn. A held task shows as the gap, wherever it is going.
+    private func laterDisplay(_ day: String) -> [DisplayRow] {
+        let items = shown.later.filter { $0.returnDay == day }
+        guard let drag = model.queueDrag else { return items.map { DisplayRow.later($0) } }
+        var rows = items.filter { $0.id != drag.itemID }.map { DisplayRow.later($0) }
+        if drag.slot.region == .day(day) {
+            rows.insert(.gap(drag.itemID), at: min(max(0, drag.slot.index), rows.count))
+        } else if rows.isEmpty, drag.isPlanning {
+            rows = [.zone(day)]
         }
-        guard let date = CalendarDay.date(day, calendar: calendar) else { return day }
-        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        return rows
+    }
+
+    /// The queue's rows in the order they are drawn. A held task shows as the gap, wherever it is going.
+    private var queueDisplay: [DisplayRow] {
+        let queue = shown.queue
+        guard let drag = model.queueDrag else { return queue.map { DisplayRow.queue($0) } }
+        var rows = queue.filter { $0.id != drag.itemID }.map { DisplayRow.queue($0) }
+        if drag.slot.region == .queue {
+            rows.insert(.gap(drag.itemID), at: min(max(0, drag.slot.index), rows.count))
+        }
+        return rows
+    }
+
+    private static func tasks(_ count: Int) -> String {
+        count == 1 ? "1 task" : "\(count) tasks"
     }
 
     private var doneBlock: some View {
@@ -611,27 +662,23 @@ struct MainWindow: View {
         return "\(TimeFormat.span(todoWork)) · done by \(ClockFormat.time(doneBy))"
     }
 
-    /// Session order, or the in-progress order while a row is held. The held id never leaves the list.
-    private var displayedQueue: [QueueItem] {
-        let queue = shown.queue
-        guard let drag = model.queueDrag else { return queue }
-        let ids = QueueDrop.workingOrder(ids: queue.map(\.id), moving: drag.itemID, to: drag.gapIndex)
-        let byID = Dictionary(uniqueKeysWithValues: queue.map { ($0.id, $0) })
-        return ids.compactMap { byID[$0] }
-    }
-
     @ViewBuilder
     private var queueDragFloat: some View {
-        if let drag = model.queueDrag,
-           let item = model.session.queue.first(where: { $0.id == drag.itemID }) {
-            QueueLine(
-                item: item,
-                isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
-                finish: model.session.finishDates(at: model.now)[item.id],
-                model: model,
-                gripVisible: true,
-                floating: true
-            )
+        if let drag = model.queueDrag {
+            Group {
+                if drag.source == .queue, let item = model.session.queue.first(where: { $0.id == drag.itemID }) {
+                    QueueLine(
+                        item: item,
+                        isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
+                        finish: model.session.finishDates(at: model.now)[item.id],
+                        model: model,
+                        gripVisible: true,
+                        floating: true
+                    )
+                } else if let item = model.session.later.first(where: { $0.id == drag.itemID }) {
+                    LaterLine(item: item, model: model, gripVisible: true, floating: true)
+                }
+            }
             .frame(width: max(drag.rowWidth, 1))
             .scaleEffect(drag.lifted && !model.reduceMotion ? 1.02 : 1)
             .shadow(
@@ -646,7 +693,7 @@ struct MainWindow: View {
     }
 
     private var showsDepthHint: Bool {
-        shown.queue.isEmpty && !model.depthHintDismissed
+        shown.queue.isEmpty && !model.depthHintDismissed && !model.isDraggingRow
     }
 
     /// The system prompt color ignores the theme, so the empty field draws its own.
@@ -656,8 +703,8 @@ struct MainWindow: View {
 
     /// 4 pt when DONE follows a collapsed LATER header. Otherwise 14 pt from the previous content, after that row's gap.
     private var doneHeaderGap: CGFloat {
-        if !shown.later.isEmpty && !laterOpen { return 4 }
-        if !shown.queue.isEmpty || (!shown.later.isEmpty && laterOpen) {
+        if model.laterBlockShown && !model.laterRowsShown { return 4 }
+        if !queueDisplay.isEmpty || (model.laterBlockShown && model.laterRowsShown) {
             return 14 - RowGrid.gap
         }
         return 14
@@ -1108,6 +1155,11 @@ enum RowGrid {
     /// Card padding. The window inset is separate, so every edge lines up at 20 pt.
     static let leading: CGFloat = 8
     static let trailing: CGFloat = 8
+    /// The count column. A stepper in Queue and LATER, a plain count in Done and History. The number sits at its center.
+    static let countSlot: CGFloat = 72
+    static let stepperHeight: CGFloat = 26
+    /// Worked time in Done and History.
+    static let workedWidth: CGFloat = 48
 }
 
 /// Window inset shared by the tank, headers, the add field, and every row.
@@ -1320,42 +1372,31 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
     }
 }
 
-/// Right-aligned hover controls. A 24 pt fade lets the name disappear under them.
-struct HoverCluster<Content: View>: View {
+/// Hover detail laid over the end of a name, left of the fixed columns. A 24 pt fade lets the name disappear under it.
+struct FadeOverlay<Content: View>: View {
     var shown: Bool
     var reduceMotion: Bool
     var fill: Color
-    var cornerRadius: CGFloat = RowGrid.radius
+    /// Width of the fixed columns to the right of the overlay, padding included.
+    var trailingInset: CGFloat
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        HStack(spacing: 8) {
-            content()
-        }
-        .padding(.leading, 28)
-        .padding(.trailing, RowGrid.trailing)
-        .frame(maxHeight: .infinity)
-        .background {
-            HStack(spacing: 0) {
-                LinearGradient(
-                    colors: [fill.opacity(0), fill],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 24)
-                fill
-            }
-            .allowsHitTesting(false)
-        }
-        .clipShape(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: cornerRadius,
-                topTrailingRadius: cornerRadius,
-                style: .continuous
+        HStack(spacing: 0) {
+            LinearGradient(
+                colors: [fill.opacity(0), fill],
+                startPoint: .leading,
+                endPoint: .trailing
             )
-        )
+            .frame(width: 24)
+            content()
+                .padding(.trailing, 8)
+                .frame(maxHeight: .infinity)
+                .background(fill)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(maxHeight: .infinity)
+        .padding(.trailing, trailingInset)
         .opacity(shown ? 1 : 0)
         .allowsHitTesting(shown)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: shown)
@@ -1372,6 +1413,231 @@ struct WorkedMark: View {
             .foregroundStyle(Theme.surface(intensity).opacity(0.6))
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+/// The count of pomodoros. A fixed 72 × 26 slot: − and + appear on hover, and the number never moves.
+struct PomodoroStepper: View {
+    var count: Int
+    var minimum: Int
+    var maximum: Int = Session.maxPomodoros
+    var revealed: Bool
+    var reduceMotion: Bool
+    /// The task name, for VoiceOver.
+    var taskName: String
+    /// What the count means in minutes, shown as the number's tooltip.
+    var detail: String
+    var onChange: (Int) -> Void
+
+    @FocusState private var focused: Bool
+
+    private var showsControls: Bool { revealed || focused }
+    private var canDecrease: Bool { count > minimum }
+    private var canIncrease: Bool { count < maximum }
+
+    var body: some View {
+        ZStack {
+            Capsule()
+                .fill(Theme.bgBase)
+                .opacity(showsControls ? 1 : 0)
+            HStack(spacing: 0) {
+                StepperButton(symbol: "minus", enabled: canDecrease, tip: "One pomodoro less", limitTip: "At least \(minimum)") {
+                    decrease()
+                }
+                .modifier(RestFade(shown: showsControls, reduceMotion: reduceMotion))
+                Text("×\(max(0, count))")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(Theme.textOnWater)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(width: 24, height: RowGrid.stepperHeight)
+                    .opacity(count == 1 && !showsControls ? 0 : 1)
+                    .help(detail)
+                StepperButton(symbol: "plus", enabled: canIncrease, tip: "One pomodoro more", limitTip: "Up to \(maximum)") {
+                    increase()
+                }
+                .modifier(RestFade(shown: showsControls, reduceMotion: reduceMotion))
+            }
+        }
+        .frame(width: RowGrid.countSlot, height: RowGrid.stepperHeight)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: showsControls)
+        .overlay {
+            if focused {
+                Capsule()
+                    .strokeBorder(Theme.link, lineWidth: 2)
+                    .allowsHitTesting(false)
+            }
+        }
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) {
+            increase()
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            decrease()
+            return .handled
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Pomodoros for \(taskName)")
+        .accessibilityValue("\(count) pomodoros")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: increase()
+            case .decrement: decrease()
+            @unknown default: break
+            }
+        }
+    }
+
+    private func increase() {
+        guard count < maximum else { return }
+        onChange(count + 1)
+    }
+
+    private func decrease() {
+        guard count > minimum else { return }
+        onChange(count - 1)
+    }
+}
+
+/// One side of the stepper: a 24 × 26 target with a 24 pt hover circle. At its limit it stays in place, dimmed.
+private struct StepperButton: View {
+    var symbol: String
+    var enabled: Bool
+    var tip: String
+    var limitTip: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(enabled ? Theme.link : Theme.linkDisabled)
+                .frame(width: 24, height: RowGrid.stepperHeight)
+                .contentShape(Rectangle())
+                .overlay {
+                    if enabled {
+                        HoverPlate(cornerRadius: 12, color: Theme.stepperHoverWashNS, verticalInset: 1)
+                    }
+                }
+        }
+        .buttonStyle(PointingHandButtonStyle(enabled: enabled))
+        .disabled(!enabled)
+        .help(enabled ? tip : limitTip)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Done and History keep the count in the stepper's slot, so its number lines up with the queue's.
+struct CountSlot: View {
+    var count: Int
+    var revealed: Bool
+
+    var body: some View {
+        Text("×\(max(0, count))")
+            .font(.system(size: 12).monospacedDigit())
+            .foregroundStyle(Theme.textMuted)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(width: RowGrid.countSlot, height: RowGrid.stepperHeight)
+            .opacity(count == 1 && !revealed ? 0 : 1)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(count) pomodoros")
+    }
+}
+
+/// A queue or LATER name as a field: `bgField`, a 1 pt border in the task's mode color, and the raw text.
+/// It starts at the row's height and grows to four lines. The gauge stays level with the first line.
+private struct RowNameEditor: View {
+    var model: AppModel
+    var id: UUID
+    var saved: String
+    var intensity: Intensity
+    var semibold: Bool
+    var ink: NSColor
+    var onFinish: (Bool) -> Void
+
+    private var growth: Animation? {
+        model.reduceMotion ? nil : .easeOut(duration: 0.15)
+    }
+
+    private var text: Binding<String> {
+        Binding(
+            get: { model.descriptionDraft(id: id, fallback: saved) },
+            set: { model.setDescriptionDraft(id: id, text: $0) }
+        )
+    }
+
+    var body: some View {
+        let font = NameFieldMetrics.font(semibold: semibold)
+        return NameEditor(
+            text: text,
+            semibold: semibold,
+            color: ink,
+            autoFocus: true,
+            caret: model.editCaret,
+            fieldLabel: "Task name",
+            onHeight: { height in
+                withAnimation(growth) { model.editorContent = height }
+            },
+            onSubmit: { onFinish(true) },
+            onCancel: { onFinish(false) },
+            onEnd: { onFinish(true) }
+        )
+        .frame(height: NameFieldMetrics.fieldHeight(content: model.editorContent, font: font))
+        .padding(.horizontal, 6)
+        .padding(.vertical, (RowGrid.height - 6 - NameFieldMetrics.lineHeight(font)) / 2)
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Theme.bgField)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Theme.surface(intensity), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .padding(.leading, -6)
+        .padding(.trailing, -4)
+        .padding(.vertical, 3)
+    }
+}
+
+/// The reorder grip in the left gutter of a queue or LATER row.
+private struct RowGrip: View {
+    var model: AppModel
+    var id: UUID
+    var name: String
+    var visible: Bool
+    var floating: Bool
+    var tourTarget: TourTarget? = nil
+
+    private var enabled: Bool { !floating && model.canDragRow(id: id) }
+    private var pinned: Bool { model.session.phase == .work && model.session.activeItemID == id }
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.link)
+                .opacity(visible ? 1 : 0)
+                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: visible)
+                .accessibilityHidden(true)
+            if !floating {
+                QueueGrip(
+                    enabled: enabled,
+                    toolTip: pinned ? "The running task can't be moved." : nil,
+                    onPress: { model.beginQueueDrag(id: id) }
+                )
+            }
+        }
+        .frame(width: GripMetrics.width, height: GripMetrics.height)
+        .allowsHitTesting(enabled)
+        .tourTarget(floating ? nil : tourTarget)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Move \(name)")
+        .accessibilityHidden(!model.session.canDrag(id: id))
     }
 }
 
@@ -1400,23 +1666,44 @@ private struct QueueLine: View {
     }
 
     private var pointerHover: Bool {
-        !floating && model.tour == nil && model.hoveredQueueID == item.id
+        !floating && model.tour == nil && model.queueDrag == nil && model.hoveredQueueID == item.id
     }
 
     private var revealed: Bool {
         floating || pointerHover || model.tourQueueRevealID == item.id
     }
 
+    /// The row under a dragged task shows only the card hover.
+    private var passedOver: Bool {
+        !floating && model.queueDrag?.highlightedID == item.id
+    }
+
     private var cardHovered: Bool {
-        !showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id)
+        !showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id || passedOver)
+    }
+
+    private var fill: Color {
+        showsWorkBar ? Theme.bgCardActive : (cardHovered ? Theme.bgCardHover : Theme.bgCard)
+    }
+
+    /// The gauge's wave drifts only while this task is running.
+    private var drifts: Bool {
+        showsWorkBar && model.windowSession.isRunning
     }
 
     var body: some View {
         card
             .padding(.horizontal, PageInset.horizontal)
             .overlay(alignment: .leading) {
-                grip
-                    .offset(x: GripMetrics.x)
+                RowGrip(
+                    model: model,
+                    id: item.id,
+                    name: taskName,
+                    visible: gripVisible,
+                    floating: floating,
+                    tourTarget: item.id == TourSample.emails ? .reorderGrip : nil
+                )
+                .offset(x: GripMetrics.x)
             }
             .padding(.bottom, floating ? 0 : RowGrid.gap)
             .onHover { hovering in
@@ -1437,14 +1724,23 @@ private struct QueueLine: View {
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
                 reduceMotion: model.reduceMotion,
-                showsMark: false
+                showsMark: false,
+                drifting: drifts
             ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
             .frame(height: RowGrid.height)
         } name: {
             if isEditing {
-                editorField
+                RowNameEditor(
+                    model: model,
+                    id: item.id,
+                    saved: item.description,
+                    intensity: item.intensity,
+                    semibold: showsWorkBar,
+                    ink: (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB).nsColor,
+                    onFinish: { finishEditing(save: $0) }
+                )
             } else {
                 TaskNameLabel(
                     text: nameShown,
@@ -1455,35 +1751,36 @@ private struct QueueLine: View {
                 )
             }
         } rest: {
-            if !isEditing, item.count == 0 || item.count >= 2 {
-                CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
-                    addPomodoro()
-                } onDecrement: {
-                    removePomodoro()
+            HStack(spacing: 0) {
+                PomodoroStepper(
+                    count: item.count,
+                    minimum: pinned ? 1 : 0,
+                    revealed: revealed,
+                    reduceMotion: model.reduceMotion,
+                    taskName: taskName,
+                    detail: "\(item.count) × \(item.intensity.mode.workMinutes) min"
+                ) { count in
+                    model.setCount(id: item.id, count: count)
                 }
-                .padding(.leading, 8)
+                .tourTarget(item.id == TourSample.outline && !floating ? .taskCount : nil)
+                rowMenu
+                    .modifier(RestFade(shown: revealed && !isEditing, reduceMotion: model.reduceMotion))
             }
+            .frame(height: RowGrid.height)
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: showsWorkBar ? Theme.bgCardActive : (cardHovered ? Theme.bgCardHover : Theme.bgCard), bar: showsWorkBar ? Theme.surface(item.intensity) : nil))
+        .modifier(RowCard(fill: fill, bar: showsWorkBar ? Theme.surface(item.intensity) : nil))
         .overlay(alignment: .trailing) {
-            HoverCluster(
+            FadeOverlay(
                 shown: revealed && !isEditing,
                 reduceMotion: model.reduceMotion,
-                fill: showsWorkBar ? Theme.bgCardActive : Theme.bgCardHover
+                fill: showsWorkBar ? Theme.bgCardActive : Theme.bgCardHover,
+                trailingInset: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot
             ) {
                 FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
                     .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
-                CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
-                    addPomodoro()
-                } onDecrement: {
-                    removePomodoro()
-                }
-                .accessibilityHidden(item.count == 0 || item.count >= 2)
-                .tourTarget(item.id == TourSample.outline ? .taskCount : nil)
-                rowMenu
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
@@ -1497,41 +1794,6 @@ private struct QueueLine: View {
         .rowActions(menuEntries())
         .accessibilityAction(named: "Add pomodoro") { addPomodoro() }
         .accessibilityAction(named: "Remove pomodoro") { removePomodoro() }
-    }
-
-    /// The name as a field: `bgField`, a 1 pt border in the task's mode color, and the raw text.
-    /// It starts at the row's height and grows to four lines. The gauge stays level with the first line.
-    private var editorField: some View {
-        let font = NameFieldMetrics.font(semibold: showsWorkBar)
-        return NameEditor(
-            text: descriptionBinding,
-            semibold: showsWorkBar,
-            color: (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB).nsColor,
-            autoFocus: true,
-            caret: model.editCaret,
-            fieldLabel: "Task name",
-            onHeight: { height in
-                withAnimation(growthAnimation) { model.editorContent = height }
-            },
-            onSubmit: { finishEditing(save: true) },
-            onCancel: { finishEditing(save: false) },
-            onEnd: { finishEditing(save: true) }
-        )
-        .frame(height: NameFieldMetrics.fieldHeight(content: model.editorContent, font: font))
-        .padding(.horizontal, 6)
-        .padding(.vertical, (RowGrid.height - 6 - NameFieldMetrics.lineHeight(font)) / 2)
-        .background {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Theme.bgField)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Theme.surface(item.intensity), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
-        .padding(.leading, -6)
-        .padding(.trailing, -4)
-        .padding(.vertical, 3)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {
@@ -1555,30 +1817,6 @@ private struct QueueLine: View {
         }
     }
 
-    private var grip: some View {
-        ZStack {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.link)
-                .opacity(gripVisible ? 1 : 0)
-                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: gripVisible)
-                .accessibilityHidden(true)
-            if !floating {
-                QueueGrip(
-                    enabled: model.session.canReorder(id: item.id) && model.editingQueueID == nil,
-                    toolTip: pinned ? "The running task can't be moved." : nil,
-                    onPress: { model.beginQueueDrag(id: item.id) }
-                )
-            }
-        }
-        .frame(width: GripMetrics.width, height: GripMetrics.height)
-        .allowsHitTesting(!floating && model.session.canReorder(id: item.id) && model.editingQueueID == nil)
-        .tourTarget(item.id == TourSample.emails && !floating ? .reorderGrip : nil)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Reorder \(taskName)")
-        .accessibilityHidden(!model.session.canReorder(id: item.id))
-    }
-
     private var rowMenu: some View {
         EllipsisMenuButton(
             help: "Mark finished, reorder, snooze, or delete",
@@ -1591,8 +1829,12 @@ private struct QueueLine: View {
 
     private func menuEntries() -> [MenuEntry] {
         let snoozeLocked = !model.session.canSnooze(id: item.id)
+        let minimum = pinned ? 1 : 0
         return [
             .item("Mark as finished", enabled: item.count != 0) { model.markFinished(id: item.id) },
+            .separator,
+            .item("Add a pomodoro", enabled: item.count < Session.maxPomodoros) { addPomodoro() },
+            .item("Remove a pomodoro", enabled: item.count > minimum) { removePomodoro() },
             .separator,
             .item("Move up", enabled: model.session.canMoveUp(id: item.id)) { model.moveUp(id: item.id) },
             .item("Move down", enabled: model.session.canMoveDown(id: item.id)) { model.moveDown(id: item.id) },
@@ -1610,7 +1852,7 @@ private struct QueueLine: View {
     }
 
     private func removePomodoro() {
-        guard item.count > 1 else { return }
+        guard item.count > (pinned ? 1 : 0) else { return }
         model.setCount(id: item.id, count: item.count - 1)
     }
 
@@ -1624,60 +1866,157 @@ private struct QueueLine: View {
     }
 
     private var nameShown: String { model.descriptionDraft(for: item) }
-
-    private var descriptionBinding: Binding<String> {
-        Binding(
-            get: { model.descriptionDraft(for: item) },
-            set: { model.setDescriptionDraft(id: item.id, text: $0) }
-        )
-    }
 }
 
 private struct LaterLine: View {
     var item: LaterItem
     var model: AppModel
+    var gripVisible: Bool
+    var floating = false
 
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
 
+    private var isEditing: Bool {
+        !floating && model.editingQueueID == item.id
+    }
+
+    private var pointerHover: Bool {
+        !floating && model.tour == nil && model.queueDrag == nil && model.hoveredLaterID == item.id
+    }
+
     private var revealed: Bool {
-        (model.tour == nil && model.hoveredLaterID == item.id) || model.tourLaterRevealID == item.id
+        floating || pointerHover || model.tourLaterRevealID == item.id
+    }
+
+    private var passedOver: Bool {
+        !floating && model.queueDrag?.highlightedID == item.id
+    }
+
+    private var cardHovered: Bool { pointerHover || model.tourLaterRevealID == item.id || passedOver }
+
+    /// LATER rows rest at 60%. Hover, editing, and dragging bring them to full strength.
+    private var full: Bool { revealed || isEditing || floating }
+
+    private var growthAnimation: Animation? {
+        model.reduceMotion ? nil : .easeOut(duration: 0.15)
     }
 
     var body: some View {
-        ListRow {
-            DepthGauge(intensity: item.intensity, reduceMotion: model.reduceMotion, showsMark: false)
-        } name: {
-            TruncatingName(text: taskName, color: Theme.textPrimary)
-        } rest: {
-            if item.count >= 2 {
-                CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min")
-                    .allowsHitTesting(false)
-                    .padding(.leading, 8)
+        card
+            .padding(.horizontal, PageInset.horizontal)
+            .overlay(alignment: .leading) {
+                RowGrip(
+                    model: model,
+                    id: item.id,
+                    name: taskName,
+                    visible: gripVisible,
+                    floating: floating
+                )
+                .offset(x: GripMetrics.x)
             }
-        }
-        .modifier(RowCard(fill: Theme.bgCard))
-        .overlay(alignment: .trailing) {
-            HoverCluster(shown: revealed, reduceMotion: model.reduceMotion, fill: Theme.bgCard) {
-                CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min")
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(item.count >= 2)
+            .padding(.bottom, floating ? 0 : RowGrid.gap)
+            .onHover { hovering in
+                guard !floating else { return }
+                model.setLaterHover(item.id, hovering: hovering)
+            }
+    }
+
+    private var card: some View {
+        ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+            IntensitySwitch(
+                intensity: item.intensity,
+                reduceMotion: model.reduceMotion,
+                showsMark: false
+            ) {
+                model.updateLaterIntensity(id: item.id, intensity: item.intensity.next)
+            }
+            .frame(height: RowGrid.height)
+        } name: {
+            if isEditing {
+                RowNameEditor(
+                    model: model,
+                    id: item.id,
+                    saved: item.description,
+                    intensity: item.intensity,
+                    semibold: false,
+                    ink: Theme.textPrimaryRGB.nsColor,
+                    onFinish: { finishEditing(save: $0) }
+                )
+            } else {
+                TaskNameLabel(
+                    text: model.descriptionDraft(id: item.id, fallback: item.description),
+                    color: Theme.textPrimary,
+                    placeholder: "Short description",
+                    onEdit: editHandler
+                )
+            }
+        } rest: {
+            HStack(spacing: 0) {
+                PomodoroStepper(
+                    count: item.count,
+                    minimum: 0,
+                    revealed: revealed,
+                    reduceMotion: model.reduceMotion,
+                    taskName: taskName,
+                    detail: "\(item.count) × \(item.intensity.mode.workMinutes) min"
+                ) { count in
+                    model.setLaterCount(id: item.id, count: count)
+                }
                 EllipsisMenuButton(
                     help: "Return, reschedule, or delete",
                     label: "Actions for \(taskName)"
                 ) {
                     menuEntries()
                 }
+                .modifier(RestFade(shown: revealed && !isEditing, reduceMotion: model.reduceMotion))
+            }
+            .frame(height: RowGrid.height)
+        }
+        .onChange(of: model.textFocusNonce) { _, _ in
+            if isEditing { finishEditing(save: true) }
+        }
+        .modifier(RowCard(fill: cardHovered ? Theme.bgCardHover : Theme.bgCard))
+        .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
+        .opacity(full ? 1 : 0.6)
+        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: full)
+        .animation(.easeOut(duration: 0.15), value: cardHovered)
+        .background {
+            if !floating {
+                RowMenuClick(entries: menuEntries)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
-        .opacity(0.6)
-        .background { RowMenuClick(entries: menuEntries) }
         .rowActions(menuEntries())
-        .onHover { model.setLaterHover(item.id, hovering: $0) }
-        .padding(.horizontal, PageInset.horizontal)
-        .padding(.bottom, RowGrid.gap)
+        .accessibilityAction(named: "Add pomodoro") { step(1) }
+        .accessibilityAction(named: "Remove pomodoro") { step(-1) }
+    }
+
+    private var editHandler: ((CGFloat?) -> Void)? {
+        if floating || model.isTouring { return nil }
+        return { x in beginEditing(at: x) }
+    }
+
+    private func beginEditing(at x: CGFloat?) {
+        guard !floating, model.tour == nil else { return }
+        model.editorContent = 0
+        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: false) }
+        withAnimation(growthAnimation) {
+            model.beginNameEdit(id: item.id)
+        }
+    }
+
+    private func finishEditing(save: Bool) {
+        guard model.editingQueueID == item.id else { return }
+        withAnimation(growthAnimation) {
+            model.endNameEdit(id: item.id, save: save)
+        }
+    }
+
+    private func step(_ delta: Int) {
+        let next = item.count + delta
+        guard next >= 0, next <= Session.maxPomodoros else { return }
+        model.setLaterCount(id: item.id, count: next)
     }
 
     private func menuEntries() -> [MenuEntry] {
@@ -1689,6 +2028,44 @@ private struct LaterLine: View {
             .separator,
             .item("Delete", destructive: true) { model.deleteLater(id: item.id) },
         ]
+    }
+}
+
+/// The dashed outline where a dragged task will land.
+private struct DragGap: View {
+    var model: AppModel
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+            .stroke(Theme.lineField, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .frame(height: RowGrid.height)
+            .padding(.horizontal, PageInset.horizontal)
+            .padding(.bottom, RowGrid.gap)
+            .opacity((model.queueDrag?.showsOutline ?? false) ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+}
+
+/// An empty day while a task is held: a dashed zone that becomes the gap when the task is over it.
+private struct DropZone: View {
+    var heading: String
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+            .stroke(Theme.lineField, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            .overlay {
+                Text("Drop here to plan for \(heading)")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 12)
+            }
+            .frame(height: RowGrid.height)
+            .padding(.horizontal, PageInset.horizontal)
+            .padding(.bottom, RowGrid.gap)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Drop here to plan for \(heading)")
     }
 }
 
@@ -1786,7 +2163,7 @@ private struct RowActions: ViewModifier {
     }
 }
 
-/// Right-click anywhere on the row opens the same menu as •••. A count circle and an open text field keep their own right-click.
+/// Right-click anywhere on the row opens the same menu as •••. An open text field keeps its own right-click.
 private struct RowMenuClick: NSViewRepresentable {
     var entries: () -> [MenuEntry]
 
@@ -1833,9 +2210,6 @@ private final class RowMenuClickView: NSView {
         guard let hit = window?.contentView?.hitTest(event.locationInWindow) else { return false }
         var view: NSView? = hit
         while let current = view {
-            if let plate = current as? IconPlate.PlateView, plate.onRight != nil {
-                return true
-            }
             if current is NSTextView {
                 return true
             }
@@ -2028,28 +2402,10 @@ private struct DoneLine: View {
         } name: {
             TruncatingName(text: taskName, color: Theme.textSecondary)
         } rest: {
-            WorkedMark(seconds: item.workedSeconds, intensity: item.intensity)
-                .padding(.leading, 8)
-        }
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(revealed ? Theme.bgCard : Color.clear)
-        }
-        .overlay(alignment: .trailing) {
-            HoverCluster(
-                shown: revealed,
-                reduceMotion: model.reduceMotion,
-                fill: Theme.bgCard,
-                cornerRadius: 8
-            ) {
-                FinishClock(
-                    text: ClockFormat.time(item.finishedAt),
-                    help: FinishClock.finishedHelp(item.finishedAt),
-                    color: Theme.textTertiary
-                )
+            HStack(spacing: 0) {
                 WorkedMark(seconds: item.workedSeconds, intensity: item.intensity)
-                    .accessibilityHidden(true)
-                CountText(count: item.count)
+                    .frame(width: RowGrid.workedWidth, alignment: .trailing)
+                CountSlot(count: item.count, revealed: revealed)
                 SquareIconButton(
                     systemName: "arrow.uturn.backward",
                     weight: .semibold,
@@ -2060,6 +2416,25 @@ private struct DoneLine: View {
                 ) {
                     model.requeue(id: item.id)
                 }
+                .modifier(RestFade(shown: revealed, reduceMotion: model.reduceMotion))
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(revealed ? Theme.bgCard : Color.clear)
+        }
+        .overlay(alignment: .trailing) {
+            FadeOverlay(
+                shown: revealed,
+                reduceMotion: model.reduceMotion,
+                fill: Theme.bgCard,
+                trailingInset: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot + RowGrid.workedWidth
+            ) {
+                FinishClock(
+                    text: ClockFormat.time(item.finishedAt),
+                    help: FinishClock.finishedHelp(item.finishedAt),
+                    color: Theme.textTertiary
+                )
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -2536,28 +2911,13 @@ struct TaskNameLabel: View {
     }
 }
 
-struct CountText: View {
-    var count: Int
-
-    var body: some View {
-        Text("×\(max(0, count))")
-            .font(.system(size: 12).monospacedDigit())
-            .foregroundStyle(Theme.textMuted)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .accessibilityLabel("\(count) pomodoros")
-    }
-}
-
 enum IconMetrics {
     static let side: CGFloat = 28
     static let radius: CGFloat = 6
     static let hover = Theme.hoverWashNS
     static let pressed = Theme.pressedWashNS
-    static let ring: CGFloat = 22
     /// Layout slot the header icons used before they filled the action column.
     static let header = CGSize(width: 22, height: 18)
-    static let count = CGSize(width: 22, height: 22)
     /// The shared action column. The 28 pt hit fills it.
     static let column = CGSize(width: 28, height: 28)
 }
@@ -2623,62 +2983,6 @@ struct SquareIconButton: View {
     }
 }
 
-struct CountBadge: View {
-    var count: Int
-    var detail: String
-    var onIncrement: (() -> Void)?
-    var onDecrement: (() -> Void)?
-
-    init(count: Int, detail: String, onIncrement: (() -> Void)? = nil, onDecrement: (() -> Void)? = nil) {
-        self.count = count
-        self.detail = detail
-        self.onIncrement = onIncrement
-        self.onDecrement = onDecrement
-    }
-
-    private var interactive: Bool { onIncrement != nil || onDecrement != nil }
-
-    private var tip: String {
-        interactive ? "\(detail). Click to add a pomodoro, right-click to remove one." : detail
-    }
-
-    var body: some View {
-        Group {
-            if interactive {
-                Text("\(max(0, count))")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.textStrong)
-                    .frame(width: IconMetrics.side, height: IconMetrics.side)
-                    .contentShape(Circle())
-                    .overlay {
-                        IconPlate(
-                            shape: .circle,
-                            toolTip: tip,
-                            drawsRing: true,
-                            onLeft: { onIncrement?() },
-                            onRight: { onDecrement?() }
-                        )
-                    }
-                    .fixedSize()
-                    .iconSlot(IconMetrics.column)
-                    .pointingHandCursor()
-            } else {
-                Text("\(max(0, count))")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.textStrong)
-                    .frame(width: IconMetrics.count.width, height: IconMetrics.count.height)
-                    .overlay(Circle().stroke(Theme.countRing, lineWidth: 1.5).allowsHitTesting(false))
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(count) pomodoros")
-        .accessibilityAddTraits(interactive ? .isButton : [])
-        .accessibilityAction(named: "Add pomodoro") { onIncrement?() }
-        .accessibilityAction(named: "Remove pomodoro") { onDecrement?() }
-        .help(tip)
-    }
-}
-
 struct IconPlate: NSViewRepresentable {
     enum Shape {
         case square
@@ -2688,9 +2992,7 @@ struct IconPlate: NSViewRepresentable {
     var shape: Shape = .square
     var toolTip: String? = nil
     var swallowsCursor = false
-    var drawsRing = false
     var onLeft: (() -> Void)? = nil
-    var onRight: (() -> Void)? = nil
     var onHover: ((Bool) -> Void)? = nil
 
     func makeNSView(context: Context) -> PlateView {
@@ -2706,9 +3008,7 @@ struct IconPlate: NSViewRepresentable {
 
     private func apply(to view: PlateView) {
         view.shape = shape
-        view.drawsRing = drawsRing
         view.onLeft = onLeft
-        view.onRight = onRight
         view.onHover = onHover
         view.toolTip = toolTip
         if view.swallowsCursor != swallowsCursor {
@@ -2720,10 +3020,8 @@ struct IconPlate: NSViewRepresentable {
 
     final class PlateView: NSView {
         var shape: IconPlate.Shape = .square
-        var drawsRing = false
         var swallowsCursor = false
         var onLeft: (() -> Void)?
-        var onRight: (() -> Void)?
         var onHover: ((Bool) -> Void)?
         private var monitor: Any?
         private var hovering = false
@@ -2836,15 +3134,10 @@ struct IconPlate: NSViewRepresentable {
                 fill.setFill()
                 hitPath.fill()
             }
-            guard drawsRing else { return }
-            Theme.countRingNS.setStroke()
-            let ring = NSBezierPath(ovalIn: centered(IconMetrics.ring))
-            ring.lineWidth = 1.5
-            ring.stroke()
         }
 
         override func mouseDown(with event: NSEvent) {
-            if onLeft == nil && onRight == nil {
+            if onLeft == nil {
                 setPressed(true)
                 forwardClick(event)
                 setPressed(false)
@@ -2860,23 +3153,6 @@ struct IconPlate: NSViewRepresentable {
             onLeft?()
         }
 
-        override func rightMouseDown(with event: NSEvent) {
-            guard let onRight else {
-                super.rightMouseDown(with: event)
-                return
-            }
-            setPressed(true)
-            onRight()
-        }
-
-        override func rightMouseUp(with event: NSEvent) {
-            setPressed(false)
-        }
-
-        override func menu(for event: NSEvent) -> NSMenu? {
-            onRight == nil ? super.menu(for: event) : nil
-        }
-
         private var hitPath: NSBezierPath {
             switch shape {
             case .square:
@@ -2884,15 +3160,6 @@ struct IconPlate: NSViewRepresentable {
             case .circle:
                 NSBezierPath(ovalIn: bounds)
             }
-        }
-
-        private func centered(_ side: CGFloat) -> NSRect {
-            NSRect(
-                x: (bounds.width - side) / 2,
-                y: (bounds.height - side) / 2,
-                width: side,
-                height: side
-            )
         }
 
         private var touring: Bool { AppRuntime.model.isTouring }
@@ -2993,9 +3260,12 @@ struct HoverPlate: NSViewRepresentable {
     var color: NSColor
     var activeDuringTour = false
     var suppressed = false
+    /// Paints the wash this far inside the top and bottom edges. The tracking area stays full size.
+    var verticalInset: CGFloat = 0
 
     func makeNSView(context: Context) -> HoverTrackingView {
         let view = HoverTrackingView()
+        view.verticalInset = verticalInset
         view.cornerRadius = cornerRadius
         view.suppressed = suppressed
         view.color = color
@@ -3004,6 +3274,7 @@ struct HoverPlate: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: HoverTrackingView, context: Context) {
+        nsView.verticalInset = verticalInset
         nsView.cornerRadius = cornerRadius
         nsView.suppressed = suppressed
         nsView.color = color
@@ -3017,6 +3288,7 @@ final class HoverTrackingView: NSView {
     var color: NSColor = Theme.hoverWashNS
     var activeDuringTour = false
     var suppressed = false
+    var verticalInset: CGFloat = 0
     private var hovering = false
 
     override var isOpaque: Bool { false }
@@ -3078,7 +3350,8 @@ final class HoverTrackingView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard hovering, !suppressed else { return }
         color.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        let area = bounds.insetBy(dx: 0, dy: verticalInset)
+        NSBezierPath(roundedRect: area, xRadius: cornerRadius, yRadius: cornerRadius).fill()
     }
 
     private func clearHover() {
