@@ -6,7 +6,7 @@ import SlimPomoCore
 
 /// `-tankLevel <0…1> [-tankPhase work|break]` pins the timer tank so the scale can be checked against the water.
 enum DevTank {
-    struct Pin {
+    struct Pin: Sendable {
         var level: Double
         var phase: Phase
     }

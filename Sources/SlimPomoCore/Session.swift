@@ -112,7 +112,7 @@ public struct QueueItem: Identifiable, Equatable, Codable {
     }
 }
 
-public enum Phase: String, Codable, Equatable {
+public enum Phase: String, Codable, Equatable, Sendable {
     case idle
     case work
     case breakTime
