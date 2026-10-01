@@ -16,7 +16,7 @@ enum QueueMotion {
     }
 }
 
-/// One held task, from the moment the grip is pressed until the list has settled.
+/// One held task, from the moment the row lifts until the list has settled.
 /// The gap sits at `slot`; `highlightedID` is the one row under the pointer.
 @MainActor
 @Observable
@@ -122,41 +122,111 @@ final class QueueListAnchorView: NSView {
     }
 }
 
-struct QueueGrip: NSViewRepresentable {
-    var enabled: Bool
-    var toolTip: String?
+enum RowDrag {
+    /// How far the pointer must move after pressing before a row lifts.
+    static let threshold: CGFloat = 4
+}
 
-    var onPress: () -> Void
+/// Lets a whole queue or LATER card start a drag. It sits behind the card, takes no clicks, and
+/// watches the mouse itself, so controls and the name keep every event they get today.
+struct RowDragSource: NSViewRepresentable {
+    /// False for the running task, and while the tour runs.
+    var movable: Bool
+    /// Width of the gauge column, padding included. A press there is the gauge's.
+    var leadingControls: CGFloat
+    /// Width of the stepper and menu columns, padding included.
+    var trailingControls: CGFloat
+    var onBegin: (NSPoint) -> Void
 
-    func makeNSView(context: Context) -> QueueGripView {
-        let view = QueueGripView()
-        view.onPress = onPress
+    func makeNSView(context: Context) -> RowDragView {
+        let view = RowDragView()
+        apply(to: view)
         return view
     }
 
-    func updateNSView(_ nsView: QueueGripView, context: Context) {
-        nsView.enabled = enabled
-        nsView.toolTip = toolTip
-        nsView.onPress = onPress
-        nsView.window?.invalidateCursorRects(for: nsView)
+    func updateNSView(_ nsView: RowDragView, context: Context) {
+        apply(to: nsView)
+        nsView.refreshCursor()
+    }
+
+    private func apply(to view: RowDragView) {
+        view.movable = movable
+        view.leadingControls = leadingControls
+        view.trailingControls = trailingControls
+        view.onBegin = onBegin
+        view.kind = movable ? .openHand : .arrow
     }
 }
 
-final class QueueGripView: NSView {
-    var enabled = false
-    var onPress: (() -> Void)?
+/// Starts a drag once the pointer has moved `RowDrag.threshold` after a press on the row.
+/// A press on a control column, a text field, or a scroller never starts one.
+final class RowDragView: PointingHandAnchorView {
+    var movable = false
+    var leadingControls: CGFloat = 0
+    var trailingControls: CGFloat = 0
+    var onBegin: ((NSPoint) -> Void)?
+    private var monitor: Any?
+    /// Where the button went down, in window coordinates. Nil when this press cannot start a drag.
+    private var pressedAt: NSPoint?
 
-    override var isOpaque: Bool { false }
-
-    override func resetCursorRects() {
-        guard enabled, !AppRuntime.model.isTouring else { return }
-        addCursorRect(bounds, cursor: .openHand)
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        removeMonitor()
+        pressedAt = nil
+        guard window != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.handle(event)
+            }
+            return event
+        }
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    func refreshCursor() {
+        if window != nil {
+            PointingHand.register(self)
+        }
+    }
 
-    override func mouseDown(with event: NSEvent) {
-        guard enabled else { return }
-        onPress?()
+    private func handle(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            pressedAt = pressStart(event)
+        case .leftMouseDragged:
+            guard let start = pressedAt else { return }
+            let moved = hypot(event.locationInWindow.x - start.x, event.locationInWindow.y - start.y)
+            guard moved >= RowDrag.threshold else { return }
+            pressedAt = nil
+            onBegin?(start)
+        default:
+            pressedAt = nil
+        }
+    }
+
+    private func pressStart(_ event: NSEvent) -> NSPoint? {
+        guard let window, event.window === window, movable, !isHidden else { return nil }
+        guard !event.modifierFlags.contains(.control) else { return nil }
+        let local = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(local), visibleRect.contains(local) else { return nil }
+        guard local.x >= leadingControls, local.x <= bounds.width - trailingControls else { return nil }
+        var view = window.contentView?.hitTest(event.locationInWindow)
+        while let current = view {
+            if current is NSTextView || current is NSTextField || current is NSScroller { return nil }
+            view = current.superview
+        }
+        return event.locationInWindow
+    }
+
+    private func removeMonitor() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    isolated deinit {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 }

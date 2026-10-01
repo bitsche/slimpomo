@@ -20,7 +20,7 @@ Unfinished tasks stay in the queue across days until they are finished, deleted,
 
 ## Planning in LATER
 
-Queue and LATER are one drag area. Hold a row by its grip and drag it:
+Queue and LATER are one drag area. Press a row anywhere and move the pointer 4 pt to lift it, with no hold delay. The gauge, the − and + stepper, and ••• are controls and never start a drag; a click without movement keeps its normal action (a click on the name edits it). Drag it:
 
 - within the queue to reorder it,
 - into a day of LATER (Tomorrow or next Monday) to plan it there, at the spot where you drop it,

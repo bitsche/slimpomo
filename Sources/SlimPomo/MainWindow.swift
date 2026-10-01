@@ -407,10 +407,7 @@ struct MainWindow: View {
                         item: item,
                         isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
                         finish: shown.finishDates(at: model.now)[item.id],
-                        model: model,
-                        gripVisible: model.tourGripItemID == item.id
-                            || (!model.isDraggingRow && model.tour == nil && model.hoveredQueueID == item.id && model.canDragRow(id: item.id))
-                            || (model.tourQueueRevealID == item.id && model.canDragRow(id: item.id))
+                        model: model
                     )
                     .id(item.id)
                 case .gap:
@@ -522,8 +519,7 @@ struct MainWindow: View {
                                 case .later(let item):
                                     LaterLine(
                                         item: item,
-                                        model: model,
-                                        gripVisible: !model.isDraggingRow && model.tour == nil && model.hoveredLaterID == item.id
+                                        model: model
                                     )
                                 case .gap:
                                     DragGap(model: model)
@@ -672,11 +668,10 @@ struct MainWindow: View {
                         isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
                         finish: model.session.finishDates(at: model.now)[item.id],
                         model: model,
-                        gripVisible: true,
                         floating: true
                     )
                 } else if let item = model.session.later.first(where: { $0.id == drag.itemID }) {
-                    LaterLine(item: item, model: model, gripVisible: true, floating: true)
+                    LaterLine(item: item, model: model, floating: true)
                 }
             }
             .frame(width: max(drag.rowWidth, 1))
@@ -1167,13 +1162,6 @@ enum PageInset {
     static let horizontal: CGFloat = 20
 }
 
-/// The reorder grip sits in the 20 pt gutter, 6 pt from the window edge.
-enum GripMetrics {
-    static let width: CGFloat = 14
-    static let height: CGFloat = 28
-    static let x: CGFloat = 6
-}
-
 enum WorkedGaugeCopy {
     static func help(intensity: Intensity, count: Int, seconds: Int) -> String {
         if count <= 1 {
@@ -1604,49 +1592,11 @@ private struct RowNameEditor: View {
     }
 }
 
-/// The reorder grip in the left gutter of a queue or LATER row.
-private struct RowGrip: View {
-    var model: AppModel
-    var id: UUID
-    var name: String
-    var visible: Bool
-    var floating: Bool
-    var tourTarget: TourTarget? = nil
-
-    private var enabled: Bool { !floating && model.canDragRow(id: id) }
-    private var pinned: Bool { model.session.phase == .work && model.session.activeItemID == id }
-
-    var body: some View {
-        ZStack {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.link)
-                .opacity(visible ? 1 : 0)
-                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: visible)
-                .accessibilityHidden(true)
-            if !floating {
-                QueueGrip(
-                    enabled: enabled,
-                    toolTip: pinned ? "The running task can't be moved." : nil,
-                    onPress: { model.beginQueueDrag(id: id) }
-                )
-            }
-        }
-        .frame(width: GripMetrics.width, height: GripMetrics.height)
-        .allowsHitTesting(enabled)
-        .tourTarget(floating ? nil : tourTarget)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Move \(name)")
-        .accessibilityHidden(!model.session.canDrag(id: id))
-    }
-}
-
 private struct QueueLine: View {
     var item: QueueItem
     var isCurrent: Bool
     var finish: Date?
     var model: AppModel
-    var gripVisible: Bool
     var floating = false
 
     private var taskName: String {
@@ -1693,18 +1643,8 @@ private struct QueueLine: View {
 
     var body: some View {
         card
+            .tourTarget(!floating && item.id == TourSample.emails ? .reorderRow : nil)
             .padding(.horizontal, PageInset.horizontal)
-            .overlay(alignment: .leading) {
-                RowGrip(
-                    model: model,
-                    id: item.id,
-                    name: taskName,
-                    visible: gripVisible,
-                    floating: floating,
-                    tourTarget: item.id == TourSample.emails ? .reorderGrip : nil
-                )
-                .offset(x: GripMetrics.x)
-            }
             .padding(.bottom, floating ? 0 : RowGrid.gap)
             .onHover { hovering in
                 guard !floating else { return }
@@ -1791,6 +1731,16 @@ private struct QueueLine: View {
                 RowMenuClick(entries: menuEntries)
             }
         }
+        .background {
+            if !floating {
+                RowDragSource(
+                    movable: model.canDragRow(id: item.id),
+                    leadingControls: RowGrid.leading + RowGrid.gauge,
+                    trailingControls: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot,
+                    onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
+                )
+            }
+        }
         .rowActions(menuEntries())
         .accessibilityAction(named: "Add pomodoro") { addPomodoro() }
         .accessibilityAction(named: "Remove pomodoro") { removePomodoro() }
@@ -1872,7 +1822,6 @@ private struct QueueLine: View {
 private struct LaterLine: View {
     var item: LaterItem
     var model: AppModel
-    var gripVisible: Bool
     var floating = false
 
     private var taskName: String {
@@ -1907,16 +1856,6 @@ private struct LaterLine: View {
     var body: some View {
         card
             .padding(.horizontal, PageInset.horizontal)
-            .overlay(alignment: .leading) {
-                RowGrip(
-                    model: model,
-                    id: item.id,
-                    name: taskName,
-                    visible: gripVisible,
-                    floating: floating
-                )
-                .offset(x: GripMetrics.x)
-            }
             .padding(.bottom, floating ? 0 : RowGrid.gap)
             .onHover { hovering in
                 guard !floating else { return }
@@ -1986,6 +1925,16 @@ private struct LaterLine: View {
         .background {
             if !floating {
                 RowMenuClick(entries: menuEntries)
+            }
+        }
+        .background {
+            if !floating {
+                RowDragSource(
+                    movable: model.canDragRow(id: item.id),
+                    leadingControls: RowGrid.leading + RowGrid.gauge,
+                    trailingControls: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot,
+                    onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
+                )
             }
         }
         .rowActions(menuEntries())

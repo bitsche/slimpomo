@@ -153,11 +153,6 @@ final class AppModel {
     /// What the main window draws. The menu bar and the saved session stay on `session`.
     var windowSession: Session { tourSample ?? session }
 
-    var tourGripItemID: UUID? {
-        guard tour?.step == .reorder else { return nil }
-        return TourSample.emails
-    }
-
     /// Sample row whose hover-only details the current tour step is pointing at.
     var tourQueueRevealID: UUID? {
         switch tour?.step {
@@ -623,10 +618,12 @@ final class AppModel {
     var isDraggingRow: Bool { queueDrag != nil }
 
     func canDragRow(id: UUID) -> Bool {
-        tour == nil && editingQueueID == nil && session.canDrag(id: id)
+        tour == nil && session.canDrag(id: id)
     }
 
-    func beginQueueDrag(id: UUID) {
+    /// Lifts a row. `pressedAt` is where the button went down (window coordinates), so the row
+    /// keeps the offset the pointer had when it was grabbed, not where it was after the 4 pt move.
+    func beginQueueDrag(id: UUID, pressedAt: NSPoint? = nil) {
         guard tour == nil, queueDrag == nil, session.canDrag(id: id) else { return }
         let source: QueueDragController.Source
         let region: DragRegionID
@@ -644,6 +641,7 @@ final class AppModel {
             return
         }
         guard let anchor = queueListAnchor, let pointer = pointerInQueueList() else { return }
+        let grabbed = pressedAt.map { anchor.convert($0, from: nil) } ?? pointer
         commitAllDescriptionDrafts()
         releaseTextFocus()
         let resting = DragGeometry.blocks(dragRegions(layout: .resting, excluding: nil), held: nil)
@@ -657,7 +655,7 @@ final class AppModel {
             rowWidth: anchor.bounds.width,
             visualX: origin.x,
             visualY: origin.y,
-            grabOffset: pointer.y - rowTop
+            grabOffset: grabbed.y - rowTop
         )
         withAnimation(reduceMotion ? nil : QueueMotion.slide(false)) {
             queueDrag = drag
@@ -669,6 +667,7 @@ final class AppModel {
         }
         NSCursor.closedHand.set()
         installQueueDragMonitor()
+        trackQueueDrag()
     }
 
     func trackQueueDrag() {

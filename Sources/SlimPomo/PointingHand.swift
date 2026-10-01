@@ -57,14 +57,25 @@ private struct PointingHandAnchor: NSViewRepresentable {
     func updateNSView(_ nsView: PointingHandAnchorView, context: Context) {
         nsView.enabled = enabled
         if nsView.window != nil {
-            PointingHand.register(nsView, enabled: enabled)
+            PointingHand.register(nsView)
         }
     }
 }
 
+/// The cursor a registered area asks for.
+enum PointingHandKind {
+    /// A control.
+    case hand
+    /// A row that can be dragged.
+    case openHand
+    /// An area that is clickable but not a control, such as a task name.
+    case arrow
+}
+
 /// Invisible registration view. It does not take clicks; the monitor reads its frame.
-final class PointingHandAnchorView: NSView {
+class PointingHandAnchorView: NSView {
     var enabled = true
+    var kind = PointingHandKind.hand
 
     override var isOpaque: Bool { false }
 
@@ -75,7 +86,7 @@ final class PointingHandAnchorView: NSView {
         if window == nil {
             PointingHand.unregister(self)
         } else {
-            PointingHand.register(self, enabled: enabled)
+            PointingHand.register(self)
         }
     }
 
@@ -99,8 +110,8 @@ enum PointingHand {
         Center.shared.install()
     }
 
-    static func register(_ view: PointingHandAnchorView, enabled: Bool) {
-        Center.shared.register(view, enabled: enabled)
+    static func register(_ view: PointingHandAnchorView) {
+        Center.shared.register(view)
     }
 
     static func unregister(_ view: PointingHandAnchorView) {
@@ -114,6 +125,7 @@ private final class Center: @unchecked Sendable {
     private struct Entry {
         weak var view: PointingHandAnchorView?
         var enabled: Bool
+        var kind: PointingHandKind
     }
 
     private var monitor: Any?
@@ -132,6 +144,8 @@ private final class Center: @unchecked Sendable {
             switch claim {
             case .hand:
                 NSCursor.pointingHand.set()
+            case .open:
+                NSCursor.openHand.set()
             case .arrow:
                 NSCursor.arrow.set()
             case .pass:
@@ -142,8 +156,8 @@ private final class Center: @unchecked Sendable {
         }
     }
 
-    func register(_ view: PointingHandAnchorView, enabled: Bool) {
-        entries[ObjectIdentifier(view)] = Entry(view: view, enabled: enabled)
+    func register(_ view: PointingHandAnchorView) {
+        entries[ObjectIdentifier(view)] = Entry(view: view, enabled: view.enabled, kind: view.kind)
     }
 
     func unregister(_ view: PointingHandAnchorView) {
@@ -151,7 +165,7 @@ private final class Center: @unchecked Sendable {
     }
 
     private enum Claim {
-        case hand, arrow, pass
+        case hand, open, arrow, pass
     }
 
     @MainActor
@@ -162,25 +176,30 @@ private final class Center: @unchecked Sendable {
         }
         let inOurWindow = entries.values.contains { $0.view?.window === window }
         prune()
-        var best: (area: CGFloat, enabled: Bool)?
+        var best: (area: CGFloat, enabled: Bool, kind: PointingHandKind)?
         for entry in entries.values {
             guard let view = entry.view, view.window === window, painted(view) else { continue }
             let local = view.convert(point, from: nil)
             guard view.bounds.contains(local), view.bounds.width > 1, view.bounds.height > 1 else { continue }
             let area = view.bounds.width * view.bounds.height
             if best == nil || area < best!.area {
-                best = (area, entry.enabled)
+                best = (area, entry.enabled, entry.kind)
             }
         }
         guard let best else {
             // Still showing the hand after the pointer left a control. Put the arrow
             // back without touching a resize cursor or an I-beam.
-            if inOurWindow, NSCursor.current == NSCursor.pointingHand {
+            if inOurWindow, NSCursor.current == NSCursor.pointingHand || NSCursor.current == NSCursor.openHand {
                 return .arrow
             }
             return .pass
         }
-        return best.enabled ? .hand : .arrow
+        guard best.enabled else { return .arrow }
+        switch best.kind {
+        case .hand: return .hand
+        case .openHand: return .open
+        case .arrow: return .arrow
+        }
     }
 
     /// A hidden control (opacity 0) must not claim the cursor. A disabled control stays visible.
@@ -199,7 +218,7 @@ private final class Center: @unchecked Sendable {
     private func keepsOwnCursor(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let view = current {
-            if view is QueueGripView || view is NameClickAreaView || view is NSTextView || view is NSTextField { return true }
+            if view is NSTextView || view is NSTextField { return true }
             current = view.superview
         }
         return false

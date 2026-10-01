@@ -9,7 +9,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 
 ## Cursors
 - Pointing hand (`NSCursor.pointingHand`) on every clickable custom control: buttons, icon buttons, mode gauges, the − and + of the pomodoro stepper, ••• menus, push-back icons, disclosure chevrons, header icons (History, Tour, trash).
-- I-beam on editable text. Open hand / closed hand for drag handles and while dragging.
+- I-beam on editable text. Open hand over movable rows (not over the name, which keeps the arrow until it is edited) and closed hand while dragging.
 - Disabled or display-only elements keep the arrow cursor.
 - Standard `NSMenu` items and system controls keep their system cursors.
 
@@ -46,6 +46,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 ## Motion
 - Animations are short (150–300 ms) and play once. Never a second "catch-up" animation.
 - Lists use stable ids. Reordering animates as a move, never remove + insert.
+- Rows drag from anywhere after 4 pt of movement; controls never start a drag; a click without movement keeps its normal action.
 - Queue and LATER are one drag area. While a row is held, LATER opens with every day as a drop target, and the row under the pointer shows only the card hover.
 - Respect Reduce Motion: replace movement and scaling with a simple fade.
 
