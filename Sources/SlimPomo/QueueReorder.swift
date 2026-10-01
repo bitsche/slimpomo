@@ -44,6 +44,8 @@ final class QueueDragController {
     /// The single row that shows the card hover while the pointer passes over it.
     var highlightedID: UUID?
     @ObservationIgnored var springStart: Date?
+    /// The stretch of the list the pointer was in when the gap last changed region. See `DropMap.resolve`.
+    @ObservationIgnored var carried: ClosedRange<CGFloat>?
 
     enum Phase: Equatable {
         case dragging

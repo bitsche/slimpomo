@@ -61,74 +61,13 @@ private func regions(queue: Int, slots: ClosedRange<Int>? = nil, first: Int, sec
         #expect(DragGeometry.row(at: top - 4, in: blocks) == nil)
     }
 
-    @Test func staysInsideItsRegionWithTheUsualHysteresis() {
-        let specs = regions(queue: 3, first: 0, second: 0)
-        let start = DragSlot(region: .queue, index: 1)
-        let top = DragGeometry.tops(DragGeometry.blocks(specs, held: .queue))[0]
-        let near = DragGeometry.resolve(pointerY: top + 1.2 * 41, regions: specs, current: start)
-        #expect(near == start)
-        let down = DragGeometry.resolve(pointerY: top + 2.6 * 41, regions: specs, current: start)
-        #expect(down == DragSlot(region: .queue, index: 2))
-    }
-
-    @Test func movesIntoAnEmptyDayZone() {
-        let specs = regions(queue: 2, first: 0, second: 0)
-        let start = DragSlot(region: .queue, index: 2)
-        let blocks = DragGeometry.blocks(specs, held: .queue)
-        let zone = DragGeometry.tops(blocks)[1]
-        let slot = DragGeometry.resolve(pointerY: zone + 20, regions: specs, current: start)
-        #expect(slot == DragSlot(region: monday, index: 0))
-    }
-
-    @Test func movesBackToTheQueueAndKeepsTheRunningTaskOnTop() {
-        let specs = regions(queue: 3, slots: 1...3, first: 1, second: 0)
-        let start = DragSlot(region: monday, index: 1)
-        let blocks = DragGeometry.blocks(specs, held: monday)
-        let queueTop = DragGeometry.tops(blocks)[0]
-        let slot = DragGeometry.resolve(pointerY: queueTop + 5, regions: specs, current: start)
-        #expect(slot.region == .queue)
-        #expect(slot.index == 1)
-    }
-
-    @Test func sweepingDownThenUpVisitsEachRegionOnce() {
-        let specs = regions(queue: 3, first: 2, second: 0)
-        func order(_ id: DragRegionID) -> Int {
-            switch id {
-            case .queue: 0
-            case .day(let day): day == "2026-10-05" ? 1 : 2
-            }
-        }
-        var slot = DragSlot(region: .queue, index: 0)
-        var seen: [Int] = []
-        var y: CGFloat = 0
-        while y < 600 {
-            slot = DragGeometry.resolve(pointerY: y, regions: specs, current: slot)
-            seen.append(order(slot.region))
-            y += 2
-        }
-        #expect(seen == seen.sorted())
-        #expect(seen.last == 2)
-        var back: [Int] = []
-        while y > 0 {
-            slot = DragGeometry.resolve(pointerY: y, regions: specs, current: slot)
-            back.append(order(slot.region))
-            y -= 2
-        }
-        #expect(back == back.sorted(by: >))
-        #expect(back.last == 0)
-    }
-
-    @Test func aMoveNeverEndsInAFlipFlop() {
-        let specs = regions(queue: 2, first: 0, second: 0)
-        var slot = DragSlot(region: .queue, index: 0)
-        var y: CGFloat = 0
-        while y < 400 {
-            let next = DragGeometry.resolve(pointerY: y, regions: specs, current: slot)
-            let again = DragGeometry.resolve(pointerY: y, regions: specs, current: next)
-            #expect(again == next)
-            slot = next
-            y += 3
-        }
+    @Test func rowCellsTouchAndCoverTheGaps() {
+        let blocks = DragGeometry.blocks(regions(queue: 2, first: 0, second: 0), held: nil)
+        let top = DragGeometry.tops(blocks)[0]
+        #expect(DragGeometry.rowCell(at: top + 38, in: blocks)?.row == 0)
+        #expect(DragGeometry.rowCell(at: top + 39, in: blocks)?.row == 1)
+        #expect(DragGeometry.rowCell(at: top - 2, in: blocks)?.row == 0)
+        #expect(DragGeometry.rowCell(at: top - 4, in: blocks) == nil)
     }
 }
 

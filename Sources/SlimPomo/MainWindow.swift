@@ -319,6 +319,12 @@ struct MainWindow: View {
                                 model.attachQueueList(anchor)
                             }
                         }
+                        .overlay(alignment: .topLeading) {
+                            #if SLIMPOMO_DEV
+                            DropZoneOverlay(model: model)
+                            #endif
+                        }
+                        .zIndex(1)
                     if !queueDisplay.isEmpty {
                         queueRows
                             .padding(.top, showsDepthHint ? 18 : DragMetrics.queueTopPadding)

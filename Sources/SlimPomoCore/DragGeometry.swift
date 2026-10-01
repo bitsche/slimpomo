@@ -79,7 +79,6 @@ public struct DragBlock: Equatable, Sendable {
 /// final layout, so it does not depend on where an animation currently is.
 public enum DragGeometry {
     public static let stride = DragMetrics.stride
-    public static let stickiness: CGFloat = 54
 
     /// Blocks for the current placement of the held task. `held` is the region it sits in, if any.
     public static func blocks(_ regions: [DragRegionSpec], held: DragRegionID?) -> [DragBlock] {
@@ -151,26 +150,6 @@ public enum DragGeometry {
         return (bottom - DragMetrics.laterHeaderHeight)...bottom
     }
 
-    /// The block nearest to `y`. A block that holds `y` wins; between blocks the closer edge wins.
-    /// `favoring` is the block the gap is already in. It keeps the gap while the pointer is within `stickiness` of it,
-    /// which is more than the shift a move causes, so the gap cannot jump back and forth between two regions.
-    public static func nearestBlock(at y: CGFloat, in blocks: [DragBlock], favoring: Int? = nil) -> Int? {
-        let tops = tops(blocks)
-        var best: (index: Int, distance: CGFloat)?
-        for index in blocks.indices where blocks[index].rows > 0 {
-            let top = tops[index]
-            let bottom = top + CGFloat(blocks[index].rows) * stride
-            var distance: CGFloat = y < top ? top - y : (y >= bottom ? y - bottom + 0.001 : 0)
-            if index == favoring {
-                distance -= stickiness
-            }
-            if best == nil || distance < best!.distance {
-                best = (index, distance)
-            }
-        }
-        return best?.index
-    }
-
     /// The drawn row under `y`: its block and row number. Nil in a row's trailing gap, in a lead, or outside.
     public static func row(at y: CGFloat, in blocks: [DragBlock]) -> (region: DragRegionID, row: Int)? {
         let tops = tops(blocks)
@@ -185,41 +164,16 @@ public enum DragGeometry {
         return nil
     }
 
-    /// Where the held task goes when the pointer is at `y`. The gap only leaves its region when the pointer is
-    /// closer to another region in the layout that results from the move, so the list never flips back and forth.
-    public static func resolve(
-        pointerY y: CGFloat,
-        regions: [DragRegionSpec],
-        current: DragSlot
-    ) -> DragSlot {
-        guard let currentIndex = regions.firstIndex(where: { $0.id == current.region }) else { return current }
-        let now = blocks(regions, held: current.region)
-        guard var candidate = nearestBlock(at: y, in: now, favoring: currentIndex) else { return current }
-        for _ in 0..<3 {
-            if candidate == currentIndex {
-                let top = tops(now)[currentIndex]
-                let allowed = regions[currentIndex].slots
-                let index = QueueDrop.gapIndex(
-                    pointerY: y - top,
-                    rowHeight: stride,
-                    gap: current.index,
-                    lower: allowed.lowerBound,
-                    upper: allowed.upperBound
-                )
-                return DragSlot(region: current.region, index: index)
-            }
-            let target = regions[candidate]
-            let after = blocks(regions, held: target.id)
-            guard let landed = nearestBlock(at: y, in: after, favoring: candidate) else { return current }
-            if landed == candidate {
-                let top = tops(after)[candidate]
-                let v = (y - top) / stride
-                let raw = Int((v + 0.5).rounded(.down))
-                let index = min(max(raw, target.slots.lowerBound), target.slots.upperBound)
-                return DragSlot(region: target.id, index: index)
-            }
-            candidate = landed
+    /// The drawn row whose cell holds `y`. A cell is the row plus half of the gap on each side, so the
+    /// cells of neighbors touch and no strip between rows is left out.
+    public static func rowCell(at y: CGFloat, in blocks: [DragBlock]) -> (region: DragRegionID, row: Int)? {
+        let tops = tops(blocks)
+        let half = (stride - DragMetrics.rowHeight) / 2
+        for index in blocks.indices where blocks[index].rows > 0 {
+            let local = y - tops[index] + half
+            guard local >= 0, local < CGFloat(blocks[index].rows) * stride else { continue }
+            return (blocks[index].id, Int(local / stride))
         }
-        return current
+        return nil
     }
 }

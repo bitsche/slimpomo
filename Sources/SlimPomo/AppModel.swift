@@ -576,6 +576,11 @@ final class AppModel {
         drag.finalLayout ? .final : .planning
     }
 
+    /// The bands the pointer maps through, for the dev overlay.
+    func dropBands(for drag: QueueDragController) -> [DropBand] {
+        DropMap.bands(regions: dragRegions(layout: .planning, excluding: drag.itemID), held: drag.slot)
+    }
+
     private func dragBlocks(for drag: QueueDragController) -> [DragBlock] {
         DragGeometry.blocks(dragRegions(layout: dragLayout(for: drag), excluding: drag.itemID), held: drag.slot.region)
     }
@@ -657,9 +662,12 @@ final class AppModel {
             visualY: origin.y,
             grabOffset: grabbed.y - rowTop
         )
+        let restingTop = viewportPoint(forListPoint: CGPoint(x: 0, y: rowTop)).y
+        let restingHeight = queueScrollView?.documentView?.frame.height ?? 0
         withAnimation(reduceMotion ? nil : QueueMotion.slide(false)) {
             queueDrag = drag
         }
+        keepRowUnderPointer(id: id, region: region, index: index, restingTop: restingTop, restingHeight: restingHeight)
         if !reduceMotion {
             withAnimation(QueueMotion.lift(reduceMotion)) {
                 drag.lifted = true
@@ -670,20 +678,56 @@ final class AppModel {
         trackQueueDrag()
     }
 
+    /// LATER opens and empty days draw drop zones when a row lifts. If that pushes the held row's own
+    /// slot down (a zone above it), the list scrolls by the same amount so the area under the pointer stays put.
+    /// The new layout is only on screen once the list's height has changed, so this looks again a few times.
+    private func keepRowUnderPointer(id: UUID, region: DragRegionID, index: Int, restingTop: CGFloat, restingHeight: CGFloat) {
+        Task { @MainActor [weak self] in
+            for delay in [0, 16, 32, 64] {
+                if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                guard let self, let drag = self.queueDrag, drag.itemID == id, drag.phase == .dragging else { return }
+                self.queueScrollView?.documentView?.layoutSubtreeIfNeeded()
+                guard abs((self.queueScrollView?.documentView?.frame.height ?? 0) - restingHeight) > 0.5 else { continue }
+                let planned = DragGeometry.blocks(self.dragRegions(layout: .planning, excluding: id), held: region)
+                guard let blockIndex = self.dragRegions(layout: .planning, excluding: id).firstIndex(where: { $0.id == region }) else { return }
+                let top = DragGeometry.tops(planned)[blockIndex] + CGFloat(index) * DragMetrics.stride
+                let shift = self.viewportPoint(forListPoint: CGPoint(x: 0, y: top)).y - restingTop
+                guard abs(shift) > 0.5 else { continue }
+                self.scrollList(by: shift)
+                return
+            }
+        }
+    }
+
+    private func scrollList(by delta: CGFloat) {
+        guard let scroll = queueScrollView else { return }
+        let clip = scroll.contentView
+        let visible = clip.bounds.height
+        var origin = clip.bounds.origin
+        let before = origin
+        origin.y += clip.isFlipped ? delta : -delta
+        let docHeight = scroll.documentView?.frame.height ?? 0
+        origin.y = min(max(origin.y, 0), max(0, docHeight - visible))
+        guard origin != before else { return }
+        clip.scroll(to: origin)
+        scroll.reflectScrolledClipView(clip)
+    }
+
     func trackQueueDrag() {
         guard let drag = queueDrag, drag.phase == .dragging else { return }
         guard let pointer = pointerInQueueList(), let anchor = queueListAnchor else { return }
         drag.rowWidth = anchor.bounds.width
         let specs = dragRegions(layout: .planning, excluding: drag.itemID)
-        let next = DragGeometry.resolve(pointerY: pointer.y, regions: specs, current: drag.slot)
-        if next != drag.slot {
+        let next = DropMap.resolve(pointerY: pointer.y, regions: specs, current: DropTarget(slot: drag.slot, carried: drag.carried))
+        drag.carried = next.carried
+        if next.slot != drag.slot {
             withAnimation(QueueMotion.slide(reduceMotion)) {
-                drag.slot = next
+                drag.slot = next.slot
             }
         }
         let blocks = DragGeometry.blocks(specs, held: drag.slot.region)
         var highlighted: UUID?
-        if let hit = DragGeometry.row(at: pointer.y, in: blocks) {
+        if let hit = DragGeometry.rowCell(at: pointer.y, in: blocks) {
             let ids = dragRowIDs(region: hit.region, drag: drag)
             if hit.row < ids.count, let id = ids[hit.row], id != drag.itemID {
                 highlighted = id
@@ -1447,17 +1491,17 @@ final class AppModel {
         return anchor.convert(inWindow, from: nil)
     }
 
-    /// A release below the last row, off to the side, or above the list is not a drop.
+    /// A release over the list drops the task where the gap is, also over Done at the bottom.
+    /// A release off to the side, above the list, or below the scroller is not a drop.
     private func pointerIsInsideDropArea(drag: QueueDragController) -> Bool {
         guard let anchor = queueListAnchor, let window = anchor.window else { return false }
         let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         let inAnchor = anchor.convert(inWindow, from: nil)
-        let bottom = DragGeometry.bottom(dragBlocks(for: drag))
         guard QueueDrop.releaseLandsInQueue(
             pointerX: inAnchor.x,
             pointerY: inAnchor.y,
             listWidth: anchor.bounds.width,
-            listHeight: bottom
+            listHeight: .greatestFiniteMagnitude
         ) else { return false }
         guard let clip = queueScrollView?.contentView else { return true }
         let inClip = clip.convert(inWindow, from: nil)
@@ -1465,6 +1509,7 @@ final class AppModel {
             ? inClip.y - clip.bounds.minY
             : clip.bounds.maxY - inClip.y
         return QueueDrop.pointerIsInScrollArea(yFromTop: yFromTop)
+            && yFromTop <= clip.bounds.height + DragMetrics.releaseSlack
     }
 
     private func viewportPoint(forListPoint point: CGPoint) -> CGPoint {
