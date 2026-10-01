@@ -475,7 +475,9 @@ final class AppModel {
 
     func toggleDoneList() {
         suppressDoneAnimation = true
-        doneListExpanded.toggle()
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            doneListExpanded.toggle()
+        }
         Task { @MainActor in
             suppressDoneAnimation = false
         }

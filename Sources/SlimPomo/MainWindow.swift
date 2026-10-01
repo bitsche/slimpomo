@@ -1974,7 +1974,7 @@ private struct DoneRows: View {
 
     /// One animation for the order change. Reduce Motion fades a new row and does not slide.
     private var listAnimation: Animation? {
-        guard model.tour == nil, !model.reduceMotion, !model.suppressDoneAnimation else { return nil }
+        guard model.tour == nil, !model.reduceMotion else { return nil }
         return .easeOut(duration: 0.2)
     }
 
