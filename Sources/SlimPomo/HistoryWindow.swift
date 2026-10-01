@@ -249,16 +249,7 @@ private struct HistoryLine: View {
                 WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
                     .frame(width: RowGrid.workedWidth, alignment: .trailing)
                 CountSlot(count: row.count, revealed: revealed)
-                SquareIconButton(
-                    systemName: "arrow.uturn.backward",
-                    weight: .semibold,
-                    tint: Theme.link,
-                    slot: IconMetrics.column,
-                    help: "Copy to the end of the queue"
-                ) {
-                    model.requeueHistory(rowID: row.id, day: day)
-                }
-                .modifier(RestFade(shown: revealed, reduceMotion: model.reduceMotion))
+                Color.clear.frame(width: RowGrid.edgeExtra, height: 1)
             }
         }
         .background {
@@ -270,9 +261,20 @@ private struct HistoryLine: View {
                 shown: revealed,
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
-                trailingInset: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot + RowGrid.workedWidth
+                trailingInset: RowGrid.doneRestWidth
             ) {
-                FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
+                HStack(spacing: 8) {
+                    FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
+                    SquareIconButton(
+                        systemName: "arrow.uturn.backward",
+                        weight: .semibold,
+                        tint: Theme.link,
+                        slot: IconMetrics.column,
+                        help: "Copy to the end of the queue"
+                    ) {
+                        model.requeueHistory(rowID: row.id, day: day)
+                    }
+                }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

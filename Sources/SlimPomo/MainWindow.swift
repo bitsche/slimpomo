@@ -1160,9 +1160,19 @@ enum RowGrid {
     static let trailing: CGFloat = 8
     /// The count column. A stepper in Queue and LATER, a plain count in Done and History. The number sits at its center.
     static let countSlot: CGFloat = 72
+    /// Distance from the card's right edge to the rightmost element: the stepper, or the count in Done and History.
+    static let edge: CGFloat = 10
+    /// Between ••• and the stepper slot.
+    static let menuGap: CGFloat = 4
+    /// What `ListRow` pads on the right beyond `trailing`, so the slot ends `edge` from the card.
+    static let edgeExtra: CGFloat = edge - trailing
+    /// Hover controls at the right of a queue or LATER row: ••• then the stepper slot.
+    static let controlsWidth: CGFloat = edge + countSlot + menuGap + IconMetrics.column.width
     static let stepperHeight: CGFloat = 26
     /// Worked time in Done and History.
     static let workedWidth: CGFloat = 48
+    /// What Done and History show at the right at rest, card padding included: worked time, count slot, edge.
+    static let doneRestWidth: CGFloat = trailing + edgeExtra + countSlot + workedWidth
 }
 
 /// Window inset shared by the tank, headers, the add field, and every row.
@@ -1532,7 +1542,7 @@ private struct StepperButton: View {
 }
 
 /// What a queue or LATER row shows on the right at rest. A count of 1 shows nothing and the name runs to the row's
-/// 10 pt right padding. Any other count shows only `×n`, centered where the stepper's number sits on hover,
+/// 10 pt right padding. Any other count shows only `×n`, centered where the stepper's number sits on hover (the stepper is the rightmost element),
 /// and the name ends 8 pt before it. The hover cluster is a separate overlay and never changes this layout.
 struct RestCount: View {
     var count: Int
@@ -1540,10 +1550,9 @@ struct RestCount: View {
     var detail: String
     var reduceMotion: Bool
 
-    /// Distance from the row's inner right edge to the center of the stepper's number: the menu slot and half the stepper slot.
-    private static let labelCenter = IconMetrics.column.width + RowGrid.countSlot / 2
-    /// The row's right padding is 10 pt; the list row already pads 8.
-    private static let edgeGap = 10 - RowGrid.trailing
+    /// Distance from the row's inner right edge to the center of the stepper's number: half the stepper slot at the right edge.
+    private static let labelCenter = RowGrid.countSlot / 2 + RowGrid.edgeExtra
+    private static let edgeGap = RowGrid.edgeExtra
 
     @MainActor
     private static let labelWidth: CGFloat = {
@@ -1785,7 +1794,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
                     leadingControls: RowGrid.leading + RowGrid.gauge,
-                    trailingControls: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot,
+                    trailingControls: RowGrid.controlsWidth,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -1806,6 +1815,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
 
     private var hoverCluster: some View {
         HStack(spacing: 0) {
+            rowMenu
             PomodoroStepper(
                 count: item.count,
                 minimum: pinned ? 1 : 0,
@@ -1818,9 +1828,10 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 model.setCount(id: item.id, count: count)
             }
             .tourTarget(item.id == TourSample.outline && !floating ? .taskCount : nil)
-            rowMenu
+            .padding(.leading, RowGrid.menuGap)
         }
         .frame(height: RowGrid.height)
+        .padding(.trailing, RowGrid.edgeExtra)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {
@@ -2005,7 +2016,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
                     leadingControls: RowGrid.leading + RowGrid.gauge,
-                    trailingControls: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot,
+                    trailingControls: RowGrid.controlsWidth,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -2025,6 +2036,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
 
     private var hoverCluster: some View {
         HStack(spacing: 0) {
+            EllipsisMenuButton(
+                help: "Return, reschedule, or delete",
+                label: "Actions for \(taskName)"
+            ) {
+                menuEntries()
+            }
             PomodoroStepper(
                 count: item.count,
                 minimum: 0,
@@ -2036,14 +2053,10 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             ) { count in
                 model.setLaterCount(id: item.id, count: count)
             }
-            EllipsisMenuButton(
-                help: "Return, reschedule, or delete",
-                label: "Actions for \(taskName)"
-            ) {
-                menuEntries()
-            }
+            .padding(.leading, RowGrid.menuGap)
         }
         .frame(height: RowGrid.height)
+        .padding(.trailing, RowGrid.edgeExtra)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {
@@ -2472,17 +2485,7 @@ private struct DoneLine: View {
                 WorkedMark(seconds: item.workedSeconds, intensity: item.intensity)
                     .frame(width: RowGrid.workedWidth, alignment: .trailing)
                 CountSlot(count: item.count, revealed: revealed)
-                SquareIconButton(
-                    systemName: "arrow.uturn.backward",
-                    weight: .semibold,
-                    tint: Theme.link,
-                    slot: IconMetrics.column,
-                    help: "Copy to the end of the queue",
-                    onFocus: { model.doneSectionFocused = $0 }
-                ) {
-                    model.requeue(id: item.id)
-                }
-                .modifier(RestFade(shown: revealed, reduceMotion: model.reduceMotion))
+                Color.clear.frame(width: RowGrid.edgeExtra, height: 1)
             }
         }
         .background {
@@ -2494,13 +2497,25 @@ private struct DoneLine: View {
                 shown: revealed,
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
-                trailingInset: RowGrid.trailing + IconMetrics.column.width + RowGrid.countSlot + RowGrid.workedWidth
+                trailingInset: RowGrid.doneRestWidth
             ) {
-                FinishClock(
-                    text: ClockFormat.time(item.finishedAt),
-                    help: FinishClock.finishedHelp(item.finishedAt),
-                    color: Theme.textTertiary
-                )
+                HStack(spacing: 8) {
+                    FinishClock(
+                        text: ClockFormat.time(item.finishedAt),
+                        help: FinishClock.finishedHelp(item.finishedAt),
+                        color: Theme.textTertiary
+                    )
+                    SquareIconButton(
+                        systemName: "arrow.uturn.backward",
+                        weight: .semibold,
+                        tint: Theme.link,
+                        slot: IconMetrics.column,
+                        help: "Copy to the end of the queue",
+                        onFocus: { model.doneSectionFocused = $0 }
+                    ) {
+                        model.requeue(id: item.id)
+                    }
+                }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
