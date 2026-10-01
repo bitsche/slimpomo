@@ -30,6 +30,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             window.tabbingMode = .disallowed
             window.alphaValue = 0
+            #if SLIMPOMO_DEV
+            window.addTitlebarAccessoryViewController(DevTitleBadge.makeAccessory())
+            #endif
             let hosting = NSHostingController(rootView: MainWindow(model: model))
             // SwiftUI's default sizing options replace the restored frame with the
             // view's intrinsic size, which the minimum then clamps to 450×550.
@@ -178,7 +181,6 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
 struct MainWindow: View {
     @Bindable var model: AppModel
-    @FocusState private var draftFocused: Bool
     @FocusState private var clearDoneFocused: Bool
 
     private var shown: Session { model.windowSession }
@@ -190,7 +192,7 @@ struct MainWindow: View {
                     session: shown,
                     now: model.now,
                     reduceMotion: model.reduceMotion,
-                    taskText: tankTaskLine
+                    taskLine: tankTaskLine
                 )
                 timerControls
                     .padding(.top, 10)
@@ -228,9 +230,24 @@ struct MainWindow: View {
             model.refresh()
         }
         .onChange(of: model.textFocusNonce) { _, _ in
-            draftFocused = false
+            model.draftFocused = false
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
+        .onChange(of: doneCompletions) { old, new in
+            guard new > old, !model.isTouring, !model.isExpanded(.done) else { return }
+            model.doneFlashNonce += 1
+        }
+        .task(id: model.doneFlashNonce) {
+            guard model.doneFlashNonce > 0 else { return }
+            model.doneFlashOn = true
+            try? await Task.sleep(for: .milliseconds(600))
+            if !Task.isCancelled { model.doneFlashOn = false }
+        }
+    }
+
+    /// Finished pomodoros today. A rise while Done is collapsed flashes the header stats.
+    private var doneCompletions: Int {
+        shown.done.reduce(0) { $0 + $1.count }
     }
 
     private var timerControls: some View {
@@ -320,7 +337,7 @@ struct MainWindow: View {
                             proxy.scrollTo(id, anchor: .bottom)
                         }
                     }
-                    draftFocused = true
+                    model.draftFocused = true
                 }
             }
             .overlay(alignment: .top) {
@@ -396,21 +413,26 @@ struct MainWindow: View {
     }
 
     private var addRow: some View {
-        HStack(spacing: RowGrid.spacing) {
+        HStack(alignment: .top, spacing: RowGrid.spacing) {
             ModeMenu(model: model, describesHint: showsDepthHint)
                 .tourTarget(.addChip)
-            TextField(
-                "",
-                text: model.isTouring ? .constant("") : $model.draftDescription
-            )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(Theme.textPrimary)
-                .focused($draftFocused)
-                .onSubmit {
-                    model.addDraftItem()
-                    draftFocused = true
-                }
+                .frame(height: RowGrid.height)
+            ZStack(alignment: .leading) {
+                NameEditor(
+                    text: draftBinding,
+                    color: Theme.textPrimaryRGB.nsColor,
+                    focus: $model.draftFocused,
+                    fieldLabel: "New task",
+                    onHeight: { height in
+                        withAnimation(growthAnimation) { model.draftContentHeight = height }
+                    },
+                    onSubmit: {
+                        model.addDraftItem()
+                        model.draftFocused = true
+                    },
+                    onCancel: { model.draftFocused = false }
+                )
+                .frame(height: NameFieldMetrics.fieldHeight(content: model.draftContentHeight, font: NameFieldMetrics.font()))
                 .overlay(alignment: .leading) {
                     if addPlaceholderVisible {
                         Text("Describe the task, press Return to add")
@@ -422,9 +444,11 @@ struct MainWindow: View {
                     }
                 }
                 .tourTarget(.addField)
+            }
+            .padding(.vertical, (RowGrid.height - NameFieldMetrics.lineHeight(NameFieldMetrics.font())) / 2)
         }
         .padding(.horizontal, 10)
-        .frame(height: RowGrid.height)
+        .frame(minHeight: RowGrid.height)
         .background(
             RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
                 .fill(Theme.bgField)
@@ -432,27 +456,38 @@ struct MainWindow: View {
         .overlay(
             RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
                 .stroke(
-                    draftFocused ? Theme.surface(model.draftIntensity) : Theme.lineField,
+                    model.draftFocused ? Theme.surface(model.draftIntensity) : Theme.lineField,
                     lineWidth: 0.5
                 )
                 .allowsHitTesting(false)
         )
     }
 
+    private var draftBinding: Binding<String> {
+        Binding(
+            get: { model.isTouring ? "" : model.draftDescription },
+            set: { value in
+                if !model.isTouring { model.draftDescription = value }
+            }
+        )
+    }
+
+    /// 150 ms, and none with Reduce Motion, so the rows below follow the field smoothly or not at all.
+    private var growthAnimation: Animation? {
+        model.reduceMotion ? nil : .easeOut(duration: 0.15)
+    }
+
     private var laterBlock: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(label: "LATER", stats: "\(shown.later.count)") {
-                SquareIconButton(
-                    systemName: "chevron.right",
-                    size: 12,
-                    weight: .semibold,
-                    slot: IconMetrics.column,
-                    help: laterOpen ? "Collapse later" : "Expand later"
-                ) {
-                    model.toggleLaterExpanded()
-                }
-                .rotationEffect(.degrees(laterOpen ? 90 : 0))
-                .animation(model.reduceMotion ? nil : .easeInOut(duration: 0.2), value: laterOpen)
+            CollapsibleSectionHeader(
+                label: "LATER",
+                stats: "\(shown.later.count)",
+                spoken: "Later, \(Self.tasks(shown.later.count))",
+                expanded: laterOpen,
+                reduceMotion: model.reduceMotion,
+                onToggle: { model.toggleSection(.later) }
+            ) {
+                EmptyView()
             }
             .padding(.horizontal, PageInset.horizontal)
             if laterOpen {
@@ -477,8 +512,12 @@ struct MainWindow: View {
         }
     }
 
-    /// The tour starts with the sample row visible. The chevron can still collapse it.
-    private var laterOpen: Bool { model.isTouring ? model.tourLaterExpanded : model.laterExpanded }
+    private static func tasks(_ count: Int) -> String {
+        count == 1 ? "1 task" : "\(count) tasks"
+    }
+
+    /// The tour starts with the sample row visible. The header can still collapse it.
+    private var laterOpen: Bool { model.isExpanded(.later) }
 
     private func laterHeading(_ day: String) -> String {
         let calendar = Calendar.current
@@ -492,21 +531,37 @@ struct MainWindow: View {
     }
 
     private var doneBlock: some View {
-        let items = shown.done
+        let items = shown.mergedDone()
+        let open = model.isExpanded(.done)
         let visible = model.doneListExpanded ? items : Array(items.prefix(3))
         let hidden = max(0, items.count - 3)
+        let worked = TimeFormat.span(TimeInterval(doneSeconds))
+        let trashShown = model.doneHeaderHovered || model.doneSectionFocused || clearDoneFocused
         return VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(label: "DONE", stats: TimeFormat.span(TimeInterval(doneSeconds))) {
+            CollapsibleSectionHeader(
+                label: "DONE",
+                stats: worked,
+                statsHighlighted: model.doneFlashOn,
+                spoken: "Done, \(Self.tasks(items.count)), \(worked) worked",
+                expanded: open,
+                reduceMotion: model.reduceMotion,
+                menu: [.item("Clear Done") { model.clearDone() }],
+                washSuppressed: model.doneTrashHovered,
+                onToggle: { model.toggleSection(.done) },
+                onFocus: { model.doneSectionFocused = $0 }
+            ) {
                 SquareIconButton(
                     systemName: "trash",
                     size: 15,
                     weight: .medium,
-                    opacity: model.doneHeaderHovered || model.doneSectionFocused || clearDoneFocused ? 1 : 0,
+                    opacity: trashShown ? 1 : 0,
                     slot: IconMetrics.column,
-                    help: "Clear the done list"
+                    help: "Clear the done list",
+                    onHover: { model.doneTrashHovered = $0 }
                 ) {
                     model.clearDone()
                 }
+                .allowsHitTesting(trashShown)
                 .focusable()
                 .focused($clearDoneFocused)
                 .onKeyPress(.return) {
@@ -517,16 +572,19 @@ struct MainWindow: View {
                     model.clearDone()
                     return .handled
                 }
-                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: model.doneHeaderHovered || model.doneSectionFocused || clearDoneFocused)
+                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: trashShown)
             }
             .padding(.horizontal, PageInset.horizontal)
-            DoneRows(items: visible, model: model)
-                .padding(.top, 6)
-            if hidden > 0 {
-                MoreDoneLink(hidden: hidden, expanded: model.doneListExpanded) {
-                    model.toggleDoneList()
-                } onFocus: { focused in
-                    model.doneSectionFocused = focused
+            .animation(model.reduceMotion ? nil : .easeOut(duration: 0.2), value: model.doneFlashOn)
+            if open {
+                DoneRows(items: visible, model: model)
+                    .padding(.top, 6)
+                if hidden > 0 {
+                    MoreDoneLink(hidden: hidden, expanded: model.doneListExpanded) {
+                        model.toggleDoneList()
+                    } onFocus: { focused in
+                        model.doneSectionFocused = focused
+                    }
                 }
             }
         }
@@ -593,7 +651,7 @@ struct MainWindow: View {
 
     /// The system prompt color ignores the theme, so the empty field draws its own.
     private var addPlaceholderVisible: Bool {
-        !draftFocused && (model.isTouring || model.draftDescription.isEmpty)
+        !model.draftFocused && (model.isTouring || model.draftDescription.isEmpty)
     }
 
     /// 4 pt when DONE follows a collapsed LATER header. Otherwise 14 pt from the previous content, after that row's gap.
@@ -605,24 +663,24 @@ struct MainWindow: View {
         return 14
     }
 
-    private var tankTaskLine: String {
+    private var tankTaskLine: TankTaskLine {
         if shown.phase == .breakTime {
             let message = model.breakMessage ?? BreakMessages.five[0]
-            return "Break · \(message)"
+            return TankTaskLine(text: "Break · \(message)")
         }
         if shown.phase == .work {
             if let active = shown.activeItem, !active.description.isEmpty {
-                return active.description
+                return TankTaskLine(text: active.description, isTask: true)
             }
             if !shown.activeDescription.isEmpty {
-                return shown.activeDescription
+                return TankTaskLine(text: shown.activeDescription, isTask: true)
             }
-            return "Untitled"
+            return TankTaskLine(text: "Untitled")
         }
         if let next = shown.queue.first(where: { $0.count > 0 }) {
-            return "Next: \(named(next))"
+            return TankTaskLine(lead: "Next:", text: named(next), isTask: true)
         }
-        return "Nothing queued"
+        return TankTaskLine(text: "Nothing queued")
     }
 
     private var pillRGB: ThemeRGB {
@@ -1074,35 +1132,25 @@ enum WorkedGaugeCopy {
     }
 }
 
-struct SectionHeader<Buttons: View>: View {
+/// Label and stats of a section header. The stats drop out first when the row is too narrow.
+struct SectionTitle: View {
     var label: String
     var stats: String
-    var help: String? = nil
-    @ViewBuilder var buttons: () -> Buttons
+    var statsColor: Color = Theme.textMuted
 
     var body: some View {
-        HStack(spacing: RowGrid.spacing) {
-            Group {
-                if stats.isEmpty {
-                    labelText
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
-                            labelText
-                            statsText
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
+        Group {
+            if stats.isEmpty {
+                labelText
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
                         labelText
+                        statsText
+                            .fixedSize(horizontal: true, vertical: false)
                     }
+                    labelText
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .modifier(SectionTitleHelp(text: help))
-        }
-        .frame(height: 24)
-        .overlay(alignment: .trailing) {
-            HStack(spacing: 2) {
-                buttons()
             }
         }
     }
@@ -1120,8 +1168,109 @@ struct SectionHeader<Buttons: View>: View {
     private var statsText: some View {
         Text(stats)
             .font(.system(size: 11).monospacedDigit())
-            .foregroundStyle(Theme.textMuted)
+            .foregroundStyle(statsColor)
             .lineLimit(1)
+    }
+}
+
+struct SectionHeader<Buttons: View>: View {
+    var label: String
+    var stats: String
+    var help: String? = nil
+    @ViewBuilder var buttons: () -> Buttons
+
+    var body: some View {
+        HStack(spacing: RowGrid.spacing) {
+            SectionTitle(label: label, stats: stats)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(SectionTitleHelp(text: help))
+        }
+        .frame(height: 24)
+        .overlay(alignment: .trailing) {
+            HStack(spacing: 2) {
+                buttons()
+            }
+        }
+    }
+}
+
+/// The header of a section that collapses. The whole 24 pt row is one button: label, stats, empty space, and chevron.
+/// Controls passed as `accessory` sit left of the chevron and take their own clicks.
+private struct CollapsibleSectionHeader<Accessory: View>: View {
+    var label: String
+    var stats: String
+    var statsHighlighted = false
+    /// What a screen reader says first, such as "Later, 4 tasks".
+    var spoken: String
+    var expanded: Bool
+    var reduceMotion: Bool
+    /// Also offered on right-click and as accessibility actions.
+    var menu: [MenuEntry] = []
+    /// True while the pointer is on a control in the accessory. That control shows its own hover, so the row wash steps aside.
+    var washSuppressed = false
+    var onToggle: () -> Void
+    var onFocus: ((Bool) -> Void)? = nil
+    @ViewBuilder var accessory: () -> Accessory
+
+    @FocusState private var focused: Bool
+
+    private static var edge: CGFloat { 6 }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Button(action: onToggle) {
+                HStack(spacing: RowGrid.spacing) {
+                    SectionTitle(label: label, stats: stats, statsColor: statsHighlighted ? Theme.link : Theme.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    chevron
+                }
+                .padding(.horizontal, Self.edge)
+                .frame(height: 24)
+                .contentShape(Rectangle())
+                .overlay {
+                    HoverPlate(cornerRadius: 6, color: Theme.headerHoverWashNS, suppressed: washSuppressed)
+                }
+                .overlay {
+                    if focused {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Theme.link, lineWidth: 2)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+            .buttonStyle(PointingHandButtonStyle())
+            .padding(.horizontal, -Self.edge)
+            .focused($focused)
+            .focusEffectDisabled()
+            .onChange(of: focused) { _, value in onFocus?(value) }
+            .help(expanded ? "Collapse \(label.lowercased())" : "Expand \(label.lowercased())")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(spoken), \(expanded ? "expanded" : "collapsed")")
+            .accessibilityHint(expanded ? "Hides the list" : "Shows the list")
+            .accessibilityAddTraits(.isButton)
+            .rowActions(menu)
+
+            HStack(spacing: 2) {
+                accessory()
+            }
+            .padding(.trailing, IconMetrics.column.width + 2)
+        }
+        .frame(height: 24)
+        .background {
+            if !menu.isEmpty {
+                RowMenuClick(entries: { menu })
+            }
+        }
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.textMuted)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: expanded)
+            .frame(width: IconMetrics.column.width, height: 24)
+            .accessibilityHidden(true)
     }
 }
 
@@ -1149,13 +1298,15 @@ private struct RowCard: ViewModifier {
 }
 
 struct ListRow<Gauge: View, Name: View, Rest: View>: View {
-    var height: CGFloat = RowGrid.height
+    /// Nil lets the row grow with its content. Only a queue row that is being edited does.
+    var height: CGFloat? = RowGrid.height
+    var alignment: VerticalAlignment = .center
     @ViewBuilder var gauge: () -> Gauge
     @ViewBuilder var name: () -> Name
     @ViewBuilder var rest: () -> Rest
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: alignment, spacing: 0) {
             gauge()
                 .frame(width: RowGrid.gauge, alignment: .leading)
             name()
@@ -1232,10 +1383,12 @@ private struct QueueLine: View {
     var gripVisible: Bool
     var floating = false
 
-    @FocusState private var descriptionFocused: Bool
-
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
+    }
+
+    private var isEditing: Bool {
+        !floating && model.editingQueueID == item.id
     }
 
     private var pinned: Bool {
@@ -1273,10 +1426,13 @@ private struct QueueLine: View {
     }
 
     private var nameInk: Color { showsWorkBar ? Theme.textStrong : Theme.textPrimary }
-    private var nameWeight: Font.Weight { showsWorkBar ? .semibold : .regular }
+
+    private var growthAnimation: Animation? {
+        model.reduceMotion ? nil : .easeOut(duration: 0.15)
+    }
 
     private var card: some View {
-        ListRow {
+        ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
             IntensitySwitch(
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
@@ -1285,33 +1441,21 @@ private struct QueueLine: View {
             ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
+            .frame(height: RowGrid.height)
         } name: {
-            ZStack(alignment: .leading) {
-                TextField("Short description", text: descriptionBinding)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: nameWeight).monospacedDigit())
-                    .foregroundStyle(nameInk)
-                    .focused($descriptionFocused)
-                    .opacity(descriptionFocused ? 1 : 0)
-                    .onSubmit { model.commitDescriptionDraft(id: item.id) }
-                    .onChange(of: descriptionFocused) { _, focused in
-                        if !focused { model.commitDescriptionDraft(id: item.id) }
-                    }
-                    .onChange(of: model.textFocusNonce) { _, _ in
-                        descriptionFocused = false
-                        NSApp.keyWindow?.makeFirstResponder(nil)
-                    }
-                if !descriptionFocused {
-                    Text(nameShown.isEmpty ? "Short description" : nameShown)
-                        .font(.system(size: 13, weight: nameWeight).monospacedDigit())
-                        .foregroundStyle(nameShown.isEmpty ? Theme.textTertiary : nameInk)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .allowsHitTesting(false)
-                }
+            if isEditing {
+                editorField
+            } else {
+                TaskNameLabel(
+                    text: nameShown,
+                    color: nameInk,
+                    semibold: showsWorkBar,
+                    placeholder: "Short description",
+                    onEdit: editHandler
+                )
             }
         } rest: {
-            if item.count == 0 || item.count >= 2 {
+            if !isEditing, item.count == 0 || item.count >= 2 {
                 CountBadge(count: item.count, detail: "\(item.count) × \(item.intensity.mode.workMinutes) min") {
                     addPomodoro()
                 } onDecrement: {
@@ -1320,10 +1464,13 @@ private struct QueueLine: View {
                 .padding(.leading, 8)
             }
         }
+        .onChange(of: model.textFocusNonce) { _, _ in
+            if isEditing { finishEditing(save: true) }
+        }
         .modifier(RowCard(fill: showsWorkBar ? Theme.bgCardActive : (cardHovered ? Theme.bgCardHover : Theme.bgCard), bar: showsWorkBar ? Theme.surface(item.intensity) : nil))
         .overlay(alignment: .trailing) {
             HoverCluster(
-                shown: revealed,
+                shown: revealed && !isEditing,
                 reduceMotion: model.reduceMotion,
                 fill: showsWorkBar ? Theme.bgCardActive : Theme.bgCardHover
             ) {
@@ -1352,6 +1499,62 @@ private struct QueueLine: View {
         .accessibilityAction(named: "Remove pomodoro") { removePomodoro() }
     }
 
+    /// The name as a field: `bgField`, a 1 pt border in the task's mode color, and the raw text.
+    /// It starts at the row's height and grows to four lines. The gauge stays level with the first line.
+    private var editorField: some View {
+        let font = NameFieldMetrics.font(semibold: showsWorkBar)
+        return NameEditor(
+            text: descriptionBinding,
+            semibold: showsWorkBar,
+            color: (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB).nsColor,
+            autoFocus: true,
+            caret: model.editCaret,
+            fieldLabel: "Task name",
+            onHeight: { height in
+                withAnimation(growthAnimation) { model.editorContent = height }
+            },
+            onSubmit: { finishEditing(save: true) },
+            onCancel: { finishEditing(save: false) },
+            onEnd: { finishEditing(save: true) }
+        )
+        .frame(height: NameFieldMetrics.fieldHeight(content: model.editorContent, font: font))
+        .padding(.horizontal, 6)
+        .padding(.vertical, (RowGrid.height - 6 - NameFieldMetrics.lineHeight(font)) / 2)
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Theme.bgField)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Theme.surface(item.intensity), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .padding(.leading, -6)
+        .padding(.trailing, -4)
+        .padding(.vertical, 3)
+    }
+
+    private var editHandler: ((CGFloat?) -> Void)? {
+        if floating || model.isTouring { return nil }
+        return { x in beginEditing(at: x) }
+    }
+
+    private func beginEditing(at x: CGFloat?) {
+        guard !floating, model.tour == nil else { return }
+        model.editorContent = 0
+        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar) }
+        withAnimation(growthAnimation) {
+            model.beginNameEdit(id: item.id)
+        }
+    }
+
+    private func finishEditing(save: Bool) {
+        guard model.editingQueueID == item.id else { return }
+        withAnimation(growthAnimation) {
+            model.endNameEdit(id: item.id, save: save)
+        }
+    }
+
     private var grip: some View {
         ZStack {
             Image(systemName: "line.3.horizontal")
@@ -1362,14 +1565,14 @@ private struct QueueLine: View {
                 .accessibilityHidden(true)
             if !floating {
                 QueueGrip(
-                    enabled: model.session.canReorder(id: item.id),
+                    enabled: model.session.canReorder(id: item.id) && model.editingQueueID == nil,
                     toolTip: pinned ? "The running task can't be moved." : nil,
                     onPress: { model.beginQueueDrag(id: item.id) }
                 )
             }
         }
         .frame(width: GripMetrics.width, height: GripMetrics.height)
-        .allowsHitTesting(!floating && model.session.canReorder(id: item.id))
+        .allowsHitTesting(!floating && model.session.canReorder(id: item.id) && model.editingQueueID == nil)
         .tourTarget(item.id == TourSample.emails && !floating ? .reorderGrip : nil)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Reorder \(taskName)")
@@ -1583,7 +1786,7 @@ private struct RowActions: ViewModifier {
     }
 }
 
-/// Right-click anywhere on the row opens the same menu as •••. A count circle keeps its own right-click.
+/// Right-click anywhere on the row opens the same menu as •••. A count circle and an open text field keep their own right-click.
 private struct RowMenuClick: NSViewRepresentable {
     var entries: () -> [MenuEntry]
 
@@ -1631,6 +1834,9 @@ private final class RowMenuClickView: NSView {
         var view: NSView? = hit
         while let current = view {
             if let plate = current as? IconPlate.PlateView, plate.onRight != nil {
+                return true
+            }
+            if current is NSTextView {
                 return true
             }
             view = current.superview
@@ -1771,7 +1977,7 @@ private struct DoneRows: View {
 
     /// One animation for the order change. Reduce Motion fades a new row and does not slide.
     private var listAnimation: Animation? {
-        guard model.tour == nil, !model.reduceMotion, !model.suppressDoneAnimation else { return nil }
+        guard model.tour == nil, !model.reduceMotion else { return nil }
         return .easeOut(duration: 0.2)
     }
 
@@ -2278,18 +2484,77 @@ struct FinishClock: View {
     }
 }
 
+/// A read-only task name on one line. It keeps the muted project label whole and shortens the rest with "…".
 struct TruncatingName: View {
     var text: String
     var color: Color
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 13).monospacedDigit())
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .truncationMode(.tail)
+        TaskNameLabel(text: text, color: color)
+    }
+}
+
+/// A task name on one line: the project label in muted small caps, then the rest of the name.
+/// A name that does not fit shows its full text as a tooltip. With `onEdit`, a click on the name opens the editor.
+struct TaskNameLabel: View {
+    var text: String
+    var color: Color
+    var semibold = false
+    /// Drawn in place of an empty name.
+    var placeholder: String? = nil
+    /// Called with the click's x in the name, or nil from the keyboard or VoiceOver.
+    var onEdit: ((CGFloat?) -> Void)? = nil
+
+    private var parts: TaskName.Parts { TaskName.split(text) }
+
+    var body: some View {
+        content
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .layoutPriority(-1)
+            .overlay {
+                if let onEdit {
+                    NameClickArea(fullText: text, semibold: semibold, onActivate: onEdit)
+                } else {
+                    NameTipArea(fullText: text, semibold: semibold)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text.isEmpty ? (placeholder ?? "") : text)
+            .accessibilityAddTraits(onEdit == nil ? [] : .isButton)
+            .accessibilityHint(onEdit == nil ? "" : "Edit the task name")
+            .accessibilityActions {
+                if let onEdit {
+                    Button("Edit task name") { onEdit(nil) } // cursor-exempt: VoiceOver action, not a visible control
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if text.isEmpty, let placeholder {
+            Text(placeholder)
+                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } else {
+            HStack(spacing: 0) {
+                if let prefix = parts.prefix {
+                    Text(prefix)
+                        .font(.system(size: 11).monospacedDigit().smallCaps())
+                        .foregroundStyle(Theme.textMuted)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.trailing, LabelStyle.gap)
+                }
+                Text(parts.rest)
+                    .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 }
 
@@ -2352,6 +2617,7 @@ struct SquareIconButton: View {
     var slot: CGSize = IconMetrics.header
     var help: String
     var onFocus: ((Bool) -> Void)? = nil
+    var onHover: ((Bool) -> Void)? = nil
     var action: () -> Void
 
     @FocusState private var focused: Bool
@@ -2363,7 +2629,7 @@ struct SquareIconButton: View {
             .frame(width: IconMetrics.side, height: IconMetrics.side)
             .contentShape(Rectangle())
             .overlay {
-                IconPlate(toolTip: help, onLeft: action)
+                IconPlate(toolTip: help, onLeft: action, onHover: onHover)
             }
             .fixedSize()
             .iconSlot(slot)
@@ -2447,6 +2713,7 @@ struct IconPlate: NSViewRepresentable {
     var drawsRing = false
     var onLeft: (() -> Void)? = nil
     var onRight: (() -> Void)? = nil
+    var onHover: ((Bool) -> Void)? = nil
 
     func makeNSView(context: Context) -> PlateView {
         let view = PlateView()
@@ -2464,6 +2731,7 @@ struct IconPlate: NSViewRepresentable {
         view.drawsRing = drawsRing
         view.onLeft = onLeft
         view.onRight = onRight
+        view.onHover = onHover
         view.toolTip = toolTip
         if view.swallowsCursor != swallowsCursor {
             view.swallowsCursor = swallowsCursor
@@ -2478,6 +2746,7 @@ struct IconPlate: NSViewRepresentable {
         var swallowsCursor = false
         var onLeft: (() -> Void)?
         var onRight: (() -> Void)?
+        var onHover: ((Bool) -> Void)?
         private var monitor: Any?
         private var hovering = false
         private var pressed = false
@@ -2654,6 +2923,9 @@ struct IconPlate: NSViewRepresentable {
             guard self.hovering != hovering else { return }
             self.hovering = hovering
             needsDisplay = true
+            if let onHover {
+                Task { @MainActor in onHover(hovering) }
+            }
         }
 
         private func setPressed(_ pressed: Bool) {
@@ -2742,10 +3014,12 @@ struct HoverPlate: NSViewRepresentable {
     var cornerRadius: CGFloat
     var color: NSColor
     var activeDuringTour = false
+    var suppressed = false
 
     func makeNSView(context: Context) -> HoverTrackingView {
         let view = HoverTrackingView()
         view.cornerRadius = cornerRadius
+        view.suppressed = suppressed
         view.color = color
         view.activeDuringTour = activeDuringTour
         return view
@@ -2753,6 +3027,7 @@ struct HoverPlate: NSViewRepresentable {
 
     func updateNSView(_ nsView: HoverTrackingView, context: Context) {
         nsView.cornerRadius = cornerRadius
+        nsView.suppressed = suppressed
         nsView.color = color
         nsView.activeDuringTour = activeDuringTour
         nsView.needsDisplay = true
@@ -2763,6 +3038,7 @@ final class HoverTrackingView: NSView {
     var cornerRadius: CGFloat = 4
     var color: NSColor = Theme.hoverWashNS
     var activeDuringTour = false
+    var suppressed = false
     private var hovering = false
 
     override var isOpaque: Bool { false }
@@ -2822,7 +3098,7 @@ final class HoverTrackingView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard hovering else { return }
+        guard hovering, !suppressed else { return }
         color.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius).fill()
     }

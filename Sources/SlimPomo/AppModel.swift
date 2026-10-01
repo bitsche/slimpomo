@@ -4,6 +4,12 @@ import Observation
 import SwiftUI
 import SlimPomoCore
 
+/// Sections whose header collapses and expands the rows under it.
+enum ListSection {
+    case later
+    case done
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -12,11 +18,22 @@ final class AppModel {
     var draftDescription = ""
     var draftIntensity = Intensity.regular
     var descriptionDrafts: [UUID: String] = [:]
+    /// Add-field editor state. Kept here because this build has no `@State` macro.
+    var draftFocused = false
+    var draftContentHeight: CGFloat = 0
+    /// Done header stats flash: the nonce restarts the 600 ms flash, `doneFlashOn` is the flash itself.
+    var doneFlashOn = false
+    var doneFlashNonce = 0
+    /// Height and first caret of the queue name editor. Only one row edits at a time.
+    var editorContent: CGFloat = 0
+    var editCaret: Int?
     var hoveredQueueID: UUID?
     var hoveredLaterID: UUID?
     var hoveredDoneID: UUID?
     var hoveredHistoryID: String?
     var doneHeaderHovered = false
+    /// The pointer is on the trash button, which paints its own hover instead of the header wash.
+    var doneTrashHovered = false
     /// True while keyboard focus is on a control inside Done other than the trash button.
     var doneSectionFocused = false
     /// The full Done list. Not saved, so a relaunch starts with the latest three.
@@ -26,6 +43,9 @@ final class AppModel {
     var modeHighlight = Intensity.regular
     var depthHintDismissed = false
     var laterExpanded = true
+    var doneExpanded = true
+    /// The queue row whose name is open for editing. Its text lives in `descriptionDrafts` until saved.
+    var editingQueueID: UUID?
     var depthChipHover = false
     var depthHintHover = false
     var depthChipFocused = false
@@ -50,6 +70,8 @@ final class AppModel {
     var tourScrollRequest = 0
     /// LATER starts open during the tour so the sample row is visible. The chevron changes this, and the choice is saved.
     var tourLaterExpanded = true
+    /// Done starts open during the tour so the sample row is visible. Same rule as LATER.
+    var tourDoneExpanded = true
     @ObservationIgnored private var tourHoldSpotlight = false
     @ObservationIgnored private var tourScrollStep: TourStep?
     @ObservationIgnored private var tourScrollTask: Task<Void, Never>?
@@ -107,6 +129,9 @@ final class AppModel {
         if UserDefaults.standard.object(forKey: Self.laterExpandedKey) != nil {
             laterExpanded = UserDefaults.standard.bool(forKey: Self.laterExpandedKey)
         }
+        if UserDefaults.standard.object(forKey: Self.doneExpandedKey) != nil {
+            doneExpanded = UserDefaults.standard.bool(forKey: Self.doneExpandedKey)
+        }
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         syncBreakMessage()
         store.save(loaded)
@@ -150,7 +175,7 @@ final class AppModel {
 
     var tourDoneRevealID: UUID? {
         guard tour?.step == .done else { return nil }
-        return windowSession.done.first?.id
+        return windowSession.mergedDone().first?.id
     }
 
     /// Ends editing when a click misses every text field. Buttons still receive the click.
@@ -236,15 +261,45 @@ final class AppModel {
         descriptionDrafts[id] = text
     }
 
+    /// Saves the open edit. A name that ends up empty is ignored and the old text stays.
     func commitDescriptionDraft(id: UUID) {
         guard let current = descriptionDrafts.removeValue(forKey: id) else { return }
-        updateDescription(id: id, description: current.trimmingCharacters(in: .whitespacesAndNewlines))
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let item = session.queue.first(where: { $0.id == id }),
+              item.description != trimmed
+        else { return }
+        updateDescription(id: id, description: trimmed)
     }
 
     func commitAllDescriptionDrafts() {
         for id in Array(descriptionDrafts.keys) {
             commitDescriptionDraft(id: id)
         }
+        editingQueueID = nil
+    }
+
+    /// Opens a queue name for editing with its raw text. Another open edit is saved first.
+    func beginNameEdit(id: UUID) {
+        guard tour == nil, queueDrag == nil, editingQueueID != id,
+              let item = session.queue.first(where: { $0.id == id })
+        else { return }
+        if let open = editingQueueID {
+            commitDescriptionDraft(id: open)
+        }
+        descriptionDrafts[id] = item.description
+        editingQueueID = id
+    }
+
+    /// Closes the open edit. Cancel drops the typed text; the old name stays.
+    func endNameEdit(id: UUID, save: Bool) {
+        guard editingQueueID == id else { return }
+        if save {
+            commitDescriptionDraft(id: id)
+        } else {
+            descriptionDrafts[id] = nil
+        }
+        editingQueueID = nil
     }
 
     func addDraftItem() {
@@ -307,14 +362,35 @@ final class AppModel {
         }
     }
 
-    func toggleLaterExpanded() {
-        if isTouring {
-            tourLaterExpanded.toggle()
-            laterExpanded = tourLaterExpanded
-        } else {
-            laterExpanded.toggle()
+    func isExpanded(_ section: ListSection) -> Bool {
+        switch section {
+        case .later: isTouring ? tourLaterExpanded : laterExpanded
+        case .done: isTouring ? tourDoneExpanded : doneExpanded
         }
-        UserDefaults.standard.set(laterExpanded, forKey: Self.laterExpandedKey)
+    }
+
+    /// The choice is saved per section. During the tour it also changes the tour's own copy.
+    func toggleSection(_ section: ListSection) {
+        switch section {
+        case .later:
+            if isTouring {
+                tourLaterExpanded.toggle()
+                laterExpanded = tourLaterExpanded
+            } else {
+                laterExpanded.toggle()
+            }
+            hoveredLaterID = nil
+            UserDefaults.standard.set(laterExpanded, forKey: Self.laterExpandedKey)
+        case .done:
+            if isTouring {
+                tourDoneExpanded.toggle()
+                doneExpanded = tourDoneExpanded
+            } else {
+                doneExpanded.toggle()
+            }
+            hoveredDoneID = nil
+            UserDefaults.standard.set(doneExpanded, forKey: Self.doneExpandedKey)
+        }
     }
 
     func snooze(id: UUID, returnDay: String) {
@@ -399,7 +475,9 @@ final class AppModel {
 
     func toggleDoneList() {
         suppressDoneAnimation = true
-        doneListExpanded.toggle()
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+            doneListExpanded.toggle()
+        }
         Task { @MainActor in
             suppressDoneAnimation = false
         }
@@ -521,9 +599,9 @@ final class AppModel {
         }
     }
 
-    func requeueHistory(queueItemId: UUID, day: Date) {
+    func requeueHistory(rowID: String, day: Date) {
         apply { session in
-            session.requeueHistory(queueItemId: queueItemId, day: day)
+            session.requeueHistory(rowID: rowID, day: day)
             return .none
         }
     }
@@ -594,6 +672,14 @@ final class AppModel {
         store.save(session.snapshot(at: now))
         ensureTicker()
         reconcileQueueDrag()
+        dropStaleNameEdit()
+    }
+
+    /// A row that left the queue (finished, deleted, snoozed) takes its open edit with it.
+    private func dropStaleNameEdit() {
+        guard let open = editingQueueID, !session.queue.contains(where: { $0.id == open }) else { return }
+        descriptionDrafts[open] = nil
+        editingQueueID = nil
     }
 
     private func tick() {
@@ -605,6 +691,7 @@ final class AppModel {
         syncBreakMessage()
         store.save(session.snapshot(at: now))
         reconcileQueueDrag()
+        dropStaleNameEdit()
     }
 
     private func refreshDoneDay() {
@@ -720,12 +807,14 @@ final class AppModel {
             cancelQueueDrag()
         }
         releaseTextFocus()
+        commitAllDescriptionDrafts()
         modePickerOpen = false
         tourSample = Session.tourSample()
         tourHoldSpotlight = false
         tourScrollStep = nil
         tourCardSize = .zero
         tourLaterExpanded = true
+        tourDoneExpanded = true
         tour = TourProgress(step: .welcome, spotlight: nil)
         syncTourCursors()
     }
@@ -998,6 +1087,7 @@ final class AppModel {
     private static let draftIntensityKey = "SlimPomo.draftIntensity"
     private static let depthHintKey = "SlimPomo.depthHintDismissed"
     private static let laterExpandedKey = "SlimPomo.laterExpanded"
+    private static let doneExpandedKey = "SlimPomo.doneExpanded"
 
     private func ensureTicker() {
         guard tickTimer == nil else { return }
@@ -1242,7 +1332,7 @@ final class AppModel {
 private func viewContainsTextInput(_ view: NSView) -> Bool {
     var current: NSView? = view
     while let view = current {
-        if view is NSTextView || view is NSTextField { return true }
+        if view is NSTextView || view is NSTextField || view is NameClickAreaView { return true }
         current = view.superview
     }
     return false

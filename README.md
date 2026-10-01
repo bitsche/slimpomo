@@ -8,7 +8,9 @@ If Finder still shows the old icon, run `touch Deeeep.app` or `killall Finder`.
 
 No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
 
-Done is today's finished work. Past days live in History (read-only, local, kept indefinitely).
+Done is today's finished work. Past days live in History (read-only, local, kept indefinitely). Click the DONE or LATER header to collapse it; Deeeep remembers each. Rows with the same name and mode merge into one with a summed count and time.
+
+A name like `Acme: write the report` shows `Acme` as a muted prefix. Click a queue name to edit it; long names wrap to up to four lines while editing. Return saves, Esc cancels.
 
 ## Queue
 
@@ -43,4 +45,5 @@ scripts/dev.sh --stale-done     leave yesterday's Done list so launch clears it
 scripts/dev.sh --reset          wipe the dev store and its remembered settings
 scripts/dev.sh --tour           show the first-run tour again
 scripts/dev.sh --later          add later tasks: tomorrow, next Monday, and two already due
+scripts/dev.sh --tank-level 0.5 [work|break]  freeze the tank at a level (0 to 1), waves still, to check the scale
 ```
