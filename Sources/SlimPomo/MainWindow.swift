@@ -2167,6 +2167,8 @@ struct DepthGauge: View {
     var colorOpacity: Double = 1
     /// Add-row chip uses 11 pt. Queue rows use 12.
     var markSize: CGFloat = 12
+    /// The running task's wave drifts. Every other gauge is still.
+    var drifting = false
 
     static let diameter: CGFloat = 20
     static let hitHeight: CGFloat = 28
@@ -2203,17 +2205,10 @@ struct DepthGauge: View {
     }
 
     private var bowlMark: some View {
-        ZStack {
-            Circle()
-                .fill(Theme.gaugeInner)
-            DepthWater(level: intensity.waterLevel)
-                .fill(ink)
-                .clipShape(Circle())
-            Circle()
-                .strokeBorder(ink, lineWidth: 1.5)
-        }
-        .frame(width: Self.diameter, height: Self.diameter)
-        .accessibilityHidden(true)
+        TankGauge(intensity: intensity, drifting: drifting, reduceMotion: reduceMotion)
+            .frame(width: Self.diameter, height: Self.diameter)
+            .opacity(colorOpacity)
+            .accessibilityHidden(true)
     }
 }
 
@@ -2230,36 +2225,19 @@ private struct GaugeTooltip: ViewModifier {
     }
 }
 
-private struct DepthWater: Shape {
-    var level: CGFloat
-
-    var animatableData: CGFloat {
-        get { level }
-        set { level = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let fraction = min(max(level, 0), 1)
-        let stroke: CGFloat = 1.5
-        let inner = max(0, rect.height - stroke * 2)
-        let water = inner * fraction
-        let top = rect.minY + stroke + (inner - water)
-        return Path(CGRect(x: rect.minX, y: top, width: rect.width, height: rect.maxY - top))
-    }
-}
-
 private struct IntensitySwitch: View {
     var intensity: Intensity
     var locked: Bool = false
     var reduceMotion = false
     var showsMark = true
+    var drifting = false
     var action: () -> Void
 
     private static let lockedHelp = "Intensity can't be changed while the timer is running"
 
     var body: some View {
         Button(action: action) {
-            DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark)
+            DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting)
                 .opacity(locked ? 0.4 : 1)
                 .frame(height: DepthGauge.hitHeight)
                 .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -3117,9 +3095,6 @@ private extension Intensity {
         case .intense: .regular
         }
     }
-
-    /// Share of the gauge's inner height that is water.
-    var waterLevel: CGFloat { CGFloat(gaugeFill) }
 
     var spoken: String {
         "Intensity: \(label), \(mode.workMinutes) minutes work, \(mode.breakMinutes) minutes break"
