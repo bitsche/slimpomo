@@ -154,6 +154,7 @@ private final class Center: @unchecked Sendable {
         case hand, arrow, pass
     }
 
+    @MainActor
     private func claim(windowNumber: Int, point: NSPoint) -> Claim {
         guard let window = NSApp.window(withWindowNumber: windowNumber) else { return .pass }
         if let hit = window.contentView?.hitTest(point), keepsOwnCursor(hit) {
@@ -183,6 +184,7 @@ private final class Center: @unchecked Sendable {
     }
 
     /// A hidden control (opacity 0) must not claim the cursor. A disabled control stays visible.
+    @MainActor
     private func painted(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let view = current {
@@ -193,6 +195,7 @@ private final class Center: @unchecked Sendable {
         return true
     }
 
+    @MainActor
     private func keepsOwnCursor(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let view = current {
