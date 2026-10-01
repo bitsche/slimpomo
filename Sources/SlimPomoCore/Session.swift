@@ -358,6 +358,41 @@ public enum Snooze {
     }
 }
 
+/// A day LATER can hold tasks for.
+public struct PlanDay: Equatable, Identifiable, Sendable {
+    public var day: String
+    public var heading: String
+    public var id: String { day }
+}
+
+extension Snooze {
+    /// The days LATER shows while planning: the offered days plus any day that already holds tasks, earliest first.
+    public static func planDays(on now: Date, existing: [String], calendar: Calendar = .current) -> [PlanDay] {
+        let offered = offers(on: now, calendar: calendar).map(\.returnDay)
+        let days = Set(offered).union(existing).sorted()
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today).map { CalendarDay.stamp($0, calendar: calendar) }
+        return days.map { PlanDay(day: $0, heading: heading(for: $0, tomorrow: tomorrow, calendar: calendar)) }
+    }
+
+    public static func heading(for day: String, tomorrow: String?, calendar: Calendar = .current) -> String {
+        guard let date = CalendarDay.date(day, calendar: calendar) else { return day }
+        if day == tomorrow {
+            let weekday = formatted(date, template: "EEE", calendar: calendar)
+            return calendar.component(.weekday, from: date) == 2 ? "Tomorrow (\(weekday))" : "Tomorrow"
+        }
+        return formatted(date, template: "EEE d MMM", calendar: calendar)
+    }
+
+    private static func formatted(_ date: Date, template: String, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .autoupdatingCurrent
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
+    }
+}
+
 public struct LaterItem: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var intensity: Intensity
