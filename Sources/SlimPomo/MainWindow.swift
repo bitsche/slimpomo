@@ -38,7 +38,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             enforceMinimumSize(of: window)
             window.delegate = self
             self.window = window
-            window.acceptsMouseMovedEvents = model.isTouring
+            window.acceptsMouseMovedEvents = true
             applySavedFrame(to: window)
         }
         Task { @MainActor in
@@ -703,7 +703,7 @@ private struct TankPill: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        Button(action: action) {
+        Button(action: { ClickOnce.perform(action) }) {
             ZStack {
                 Text("Resume").hidden()
                 Text("Pause").hidden()
@@ -720,6 +720,9 @@ private struct TankPill: View {
         .pointingHandCursor(enabled: enabled)
         .focused($focused)
         .focusEffectDisabled()
+        .overlay {
+            ControlHit(shape: .capsule, enabled: enabled, action: { ClickOnce.perform(action) })
+        }
         .overlay {
             if focused && enabled {
                 Capsule()
@@ -763,8 +766,10 @@ private struct PillFill: NSViewRepresentable {
 
     func updateNSView(_ view: PillFillView, context: Context) {
         view.rgb = rgb
-        view.pressed = pressed
         view.tracksHover = enabled
+        if !view.holding {
+            view.pressed = pressed
+        }
         view.needsDisplay = true
     }
 }
@@ -778,6 +783,8 @@ final class PillFillView: NSView {
         }
     }
 
+    /// True while ControlHit is holding the mouse, so a timer refresh cannot clear the press.
+    var holding = false
     private var hovering = false
 
     override var isOpaque: Bool { false }
@@ -807,6 +814,11 @@ final class PillFillView: NSView {
         needsDisplay = true
     }
 
+    fileprivate var pillPath: NSBezierPath {
+        let radius = bounds.height / 2
+        return NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let shift: CGFloat = pressed ? -0.08 : (hovering ? 0.06 : 0)
         NSColor(
@@ -815,8 +827,114 @@ final class PillFillView: NSView {
             blue: min(1, max(0, rgb.b + shift)),
             alpha: 1
         ).setFill()
-        let radius = bounds.height / 2
-        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+        pillPath.fill()
+    }
+}
+
+/// A click can reach both the SwiftUI button and the hit view. The second one, in the same instant, is ignored.
+@MainActor
+private enum ClickOnce {
+    static var last: TimeInterval = 0
+
+    static func perform(_ action: () -> Void) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - last < 0.05 { return }
+        last = now
+        action()
+    }
+}
+
+/// Clear click target over the pill or the link. The whole visible shape hits, and this view never touches the cursor.
+private struct ControlHit: NSViewRepresentable {
+    enum Shape {
+        case capsule
+        case rectangle
+    }
+
+    var shape: Shape
+    var enabled: Bool
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> ControlHitView {
+        let view = ControlHitView()
+        view.shape = shape
+        view.enabled = enabled
+        view.onAction = action
+        return view
+    }
+
+    func updateNSView(_ view: ControlHitView, context: Context) {
+        view.shape = shape
+        view.enabled = enabled
+        view.onAction = action
+    }
+
+    final class ControlHitView: NSView {
+        var shape: ControlHit.Shape = .rectangle
+        var enabled = true
+        var onAction: (() -> Void)?
+
+        override var isOpaque: Bool { false }
+        override var acceptsFirstResponder: Bool { false }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard enabled else { return nil }
+            let local = convert(point, from: superview)
+            switch shape {
+            case .capsule:
+                let radius = bounds.height / 2
+                return NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).contains(local) ? self : nil
+            case .rectangle:
+                return bounds.contains(local) ? self : nil
+            }
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            fill(holding: true, pressed: true)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            let local = convert(event.locationInWindow, from: nil)
+            let inside: Bool
+            switch shape {
+            case .capsule:
+                let radius = bounds.height / 2
+                inside = NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).contains(local)
+            case .rectangle:
+                inside = bounds.contains(local)
+            }
+            fill(holding: false, pressed: false)
+            if inside {
+                onAction?()
+            }
+        }
+
+        private func fill(holding: Bool, pressed: Bool) {
+            guard let fill = nearestFill() else { return }
+            fill.holding = holding
+            fill.pressed = pressed
+            fill.needsDisplay = true
+        }
+
+        private func nearestFill() -> PillFillView? {
+            var view: NSView? = superview
+            for _ in 0..<8 {
+                if let found = view.flatMap(Self.findFill) {
+                    return found
+                }
+                view = view?.superview
+            }
+            return nil
+        }
+
+        private static func findFill(in view: NSView) -> PillFillView? {
+            if let fill = view as? PillFillView { return fill }
+            for child in view.subviews {
+                if let found = findFill(in: child) { return found }
+            }
+            return nil
+        }
     }
 }
 
@@ -827,7 +945,7 @@ private struct TankLink: View {
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button(action: { ClickOnce.perform(action) }) {
             Text(title)
                 .font(.system(size: 12).monospacedDigit())
                 .foregroundStyle(enabled ? Theme.link : Theme.linkDisabled)
@@ -841,6 +959,9 @@ private struct TankLink: View {
         }
         .buttonStyle(PointingHandButtonStyle(enabled: enabled))
         .disabled(!enabled)
+        .overlay {
+            ControlHit(shape: .rectangle, enabled: enabled, action: { ClickOnce.perform(action) })
+        }
         .help(help)
         .accessibilityLabel(title)
     }

@@ -770,7 +770,7 @@ final class AppModel {
 
     private func syncTourCursors() {
         for window in NSApp.windows {
-            window.acceptsMouseMovedEvents = isTouring
+            window.acceptsMouseMovedEvents = true
             window.resetCursorRects()
         }
         NSCursor.arrow.set()

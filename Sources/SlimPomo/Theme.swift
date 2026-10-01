@@ -45,12 +45,12 @@ enum Theme {
     static let countRingRGB = ThemeRGB(hex: 0xCFE6E8)
     static let destructiveRGB = ThemeRGB(hex: 0xF09A8F)
 
-    static let dipSurfaceRGB = ThemeRGB(hex: 0x9EE0D8)
-    static let dipWaterRGB = ThemeRGB(hex: 0x2E8C86)
-    static let diveSurfaceRGB = ThemeRGB(hex: 0x5FC2C9)
-    static let diveWaterRGB = ThemeRGB(hex: 0x1F6C78)
-    static let deepSurfaceRGB = ThemeRGB(hex: 0x4F86D9)
-    static let deepWaterRGB = ThemeRGB(hex: 0x24497F)
+    static let dipSurfaceRGB = ThemeRGB(hex: 0x9BE59A)
+    static let dipWaterRGB = ThemeRGB(hex: 0x2F8A5C)
+    static let diveSurfaceRGB = ThemeRGB(hex: 0x2EC4D6)
+    static let diveWaterRGB = ThemeRGB(hex: 0x1A7686)
+    static let deepSurfaceRGB = ThemeRGB(hex: 0x6F7CF2)
+    static let deepWaterRGB = ThemeRGB(hex: 0x2E3F9A)
 
     static let breakCardRGB = ThemeRGB(hex: 0xF1DFB8)
     static let breakWaterRGB = ThemeRGB(hex: 0xDCBD82)

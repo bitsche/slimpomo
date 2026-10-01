@@ -5,15 +5,33 @@ enum MenuBarGlyph {
     static let side: CGFloat = 18
     /// `y = 13.25 − 7.8 × level`, the reference water line.
     static let waterTravel: CGFloat = 7.8
+    /// `cy = 13.1 − 7.2 × progress`, the rising sun.
+    static let sunTravel: CGFloat = 7.2
+    /// Horizon. The sun is clipped to everything above this line.
+    static let sunHorizon: CGFloat = 10.6
 
     static func waterY(_ level: Double) -> CGFloat {
         let t = CGFloat(min(1, max(0, level)))
         return 13.25 - waterTravel * t
     }
 
+    static func sunY(_ progress: Double) -> CGFloat {
+        let t = CGFloat(min(1, max(0, progress)))
+        return 13.1 - sunTravel * t
+    }
+
     /// Redraw steps of 0.5 pt along the water line.
     static func waterStep(_ fraction: Double) -> Int {
-        let pt = CGFloat(min(1, max(0, fraction))) * waterTravel
+        step(fraction, travel: waterTravel)
+    }
+
+    /// Redraw steps of 0.5 pt along the sun's rise.
+    static func sunStep(_ fraction: Double) -> Int {
+        step(fraction, travel: sunTravel)
+    }
+
+    private static func step(_ fraction: Double, travel: CGFloat) -> Int {
+        let pt = CGFloat(min(1, max(0, fraction))) * travel
         return Int((pt / 0.5).rounded(.down))
     }
 
@@ -70,16 +88,31 @@ enum MenuBarGlyph {
                 stroke(SVGPath.path("M7 6 V12 M11 6 V12"), width: 1.8, color: ink, in: ctx)
             }
         case .breakRunning:
-            fill(SVGPath.path("M5.5 10.5 a3.5 3.5 0 0 1 7 0Z"), color: ink, in: ctx)
-            stroke(SVGPath.path("M2.5 13.5 q1.6 -1.3 3.2 0 t3.2 0 t3.2 0 t3.2 0"), width: 1.5, color: ink, in: ctx)
+            fillSun(progress: level, alpha: 1, color: color, in: ctx)
+            strokeSea(ink, in: ctx)
         case .breakPaused:
-            stroke(SVGPath.path("M2.5 13.5 q1.6 -1.3 3.2 0 t3.2 0 t3.2 0 t3.2 0"), width: 1.5, color: ink, in: ctx)
-            stroke(SVGPath.path("M7 4.5 V10.5 M11 4.5 V10.5"), width: 1.8, color: ink, in: ctx)
+            fillSun(progress: level, alpha: 0.40, color: color, in: ctx)
+            strokeSea(ink, in: ctx)
+            stroke(SVGPath.path("M7 4 V10 M11 4 V10"), width: 1.8, color: ink, in: ctx)
         }
     }
 
     private static func strokeTank(_ color: CGColor, in ctx: CGContext) {
         stroke(tankPath(), width: 1.5, color: color, in: ctx)
+    }
+
+    private static func strokeSea(_ color: CGColor, in ctx: CGContext) {
+        stroke(SVGPath.path("M2 13 q1.75 -1.3 3.5 0 t3.5 0 t3.5 0 t3.5 0"), width: 1.5, color: color, in: ctx)
+    }
+
+    /// Filled disc, cx 9 r 4, clipped to y < 10.6 so only the part above the horizon shows.
+    private static func fillSun(progress: Double, alpha: CGFloat, color: NSColor, in ctx: CGContext) {
+        let cy = sunY(progress)
+        ctx.saveGState()
+        ctx.clip(to: CGRect(x: 0, y: 0, width: side, height: sunHorizon))
+        ctx.setFillColor(color.withAlphaComponent(alpha).cgColor)
+        ctx.fillEllipse(in: CGRect(x: 5, y: cy - 4, width: 8, height: 8))
+        ctx.restoreGState()
     }
 
     private static func fillWater(level: Double, alpha: CGFloat, color: NSColor, in ctx: CGContext) {
@@ -288,8 +321,10 @@ enum MenuBarGlyphExport {
         ("work-running-45", .work, 0.45),
         ("work-running-90", .work, 0.90),
         ("work-paused-45", .workPaused, 0.45),
-        ("break-running", .breakRunning, 0),
-        ("break-paused", .breakPaused, 0),
+        ("break-running-05", .breakRunning, 0.05),
+        ("break-running-50", .breakRunning, 0.50),
+        ("break-running-95", .breakRunning, 0.95),
+        ("break-paused-50", .breakPaused, 0.50),
     ]
 
     /// Writes each reference state at 1× and 2×, then exits. Returns true when this launch is an export.

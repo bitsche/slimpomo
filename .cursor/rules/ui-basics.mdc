@@ -50,7 +50,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 
 ## Look ("Deep water")
 - Colors come only from the named tokens in `Theme.swift`. Never hard-code colors.
-- Mode colors: Dip `#9EE0D8`, Dive `#5FC2C9`, Deep dive `#4F86D9` (surface); matching `water` tones for the tank. Break uses the sand tokens.
+- Mode colors (surface): Dip `#9BE59A`, Dive `#2EC4D6`, Deep dive `#6F7CF2`; water: `#2F8A5C` / `#1A7686` / `#2E3F9A`. Modes must stay distinguishable by hue, not only lightness. Break uses the sand tokens.
 - Base `#0E1A21`. Queue and LATER rows are rounded cards (`bgCard`, radius 10, 5 pt gaps). Done and History rows are flat.
 - Timer digits: SF Pro Rounded. Everything else: SF Pro with monospaced digits.
 - Primary actions are pills in the mode color. Secondary actions are text links.

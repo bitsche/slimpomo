@@ -93,7 +93,7 @@ enum TourStep: Hashable {
         case .later:
             "From •••, move a task to tomorrow or next Monday. It waits in LATER, then returns to the top of the queue on that day. Its own ••• can bring it back sooner, or change the day. The chevron collapses the list, and Deeeep remembers whether it was open."
         case .menuBar:
-            "Deeeep lives up there. An empty tank means idle, the water rises as time passes, pause bars mean paused, and the sun over the water means you're on a break. Click it for quick controls, right-click to open this window."
+            "Deeeep lives up there. An empty tank means idle, the water rises as you work, and during a break the sun rises over the sea. Pause bars mean paused. Click it for quick controls, right-click to open this window."
         case .done:
             "Finished tasks land here with the time you worked. Hover one and use the arrow to put it back in the queue. Done starts fresh every night at midnight, and nothing is lost."
         case .history:

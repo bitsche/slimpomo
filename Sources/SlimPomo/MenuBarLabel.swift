@@ -12,8 +12,8 @@ enum MenuBarTourIcon: CaseIterable {
 struct MenuBarIconKey: Equatable {
     var kind: Kind
     var minutes: Int
-    /// Work fill, counted in 0.5 pt steps. Other states stay at 0.
-    var waterStep: Int
+    /// Work water or break sun, counted in 0.5 pt steps. Idle stays at 0.
+    var levelStep: Int
 
     enum Kind: Equatable {
         case idle
@@ -41,15 +41,24 @@ enum MenuBarLabel {
             kind = session.isRunning ? .breakRunning : .breakPaused
         }
         let minutes = session.phase == .idle ? -1 : MenuClock.minutes(session.displayedRemaining(at: now))
-        let waterStep = session.phase == .work ? MenuBarGlyph.waterStep(session.elapsedFraction(at: now)) : 0
-        return MenuBarIconKey(kind: kind, minutes: minutes, waterStep: waterStep)
+        let fraction = session.elapsedFraction(at: now)
+        let levelStep: Int
+        switch session.phase {
+        case .work:
+            levelStep = MenuBarGlyph.waterStep(fraction)
+        case .breakTime:
+            levelStep = MenuBarGlyph.sunStep(fraction)
+        case .idle:
+            levelStep = 0
+        }
+        return MenuBarIconKey(kind: kind, minutes: minutes, levelStep: levelStep)
     }
 
     /// Menu-bar image. Idle is the icon alone. A running or paused timer reserves two digits.
     static func statusImage(session: Session, now: Date) -> NSImage {
         let key = iconKey(session: session, now: now)
         let minutes = key.minutes >= 0 ? String(key.minutes) : nil
-        let level = session.phase == .work ? session.elapsedFraction(at: now) : 0
+        let level = session.phase == .idle ? 0 : session.elapsedFraction(at: now)
         return draw(kind: key.kind, level: level, minutes: minutes, color: .black, template: true)
     }
 
@@ -64,7 +73,7 @@ enum MenuBarLabel {
         case .paused:
             image = MenuBarGlyph.image(kind: .workPaused, level: 0.42, color: .white)
         case .onBreak:
-            image = MenuBarGlyph.image(kind: .breakRunning, level: 0, color: .white)
+            image = MenuBarGlyph.image(kind: .breakRunning, level: 0.5, color: .white)
         }
         image.isTemplate = false
         return image

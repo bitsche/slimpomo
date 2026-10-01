@@ -159,6 +159,7 @@ private final class Center: @unchecked Sendable {
         if let hit = window.contentView?.hitTest(point), keepsOwnCursor(hit) {
             return .pass
         }
+        let inOurWindow = entries.values.contains { $0.view?.window === window }
         prune()
         var best: (area: CGFloat, enabled: Bool)?
         for entry in entries.values {
@@ -170,7 +171,14 @@ private final class Center: @unchecked Sendable {
                 best = (area, entry.enabled)
             }
         }
-        guard let best else { return .pass }
+        guard let best else {
+            // Still showing the hand after the pointer left a control. Put the arrow
+            // back without touching a resize cursor or an I-beam.
+            if inOurWindow, NSCursor.current == NSCursor.pointingHand {
+                return .arrow
+            }
+            return .pass
+        }
         return best.enabled ? .hand : .arrow
     }
 

@@ -7,8 +7,10 @@ let states = [
     "work-running-45",
     "work-running-90",
     "work-paused-45",
-    "break-running",
-    "break-paused",
+    "break-running-05",
+    "break-running-50",
+    "break-running-95",
+    "break-paused-50",
 ]
 
 guard CommandLine.arguments.count >= 2 else {

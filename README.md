@@ -20,7 +20,7 @@ A small round gauge shows the depth: the water level rises from Dip to Dive to D
 
 ## Menu bar
 
-The icon is a mini tank, drawn as a monochrome template so macOS tints it. Idle is an empty tank with a still wave. While work is running the water rises with the time elapsed, and the minutes left sit beside it. Paused work keeps that water at 40% and adds two pause bars. A running break is a sun over a wave, with no tank. A paused break keeps the wave and the pause bars. The icon does not animate, and its width stays the same in every state.
+The icon is a monochrome template so macOS tints it for light and dark menu bars. Idle is an empty tank with a still wave. While you work, the water rises with the time elapsed, and the minutes left sit beside it. Paused work keeps that water at 40% and adds two pause bars. During a break there is no tank: the sun rises out of the sea, from a small cap at the start to a full disc just above the horizon at the end. A paused break keeps the sun where it is, dimmed to 40%, with the sea line and the pause bars. The icon does not animate, and its width stays the same in every state.
 
 Left-click the icon to open the menu: the current status, Show Window, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.
 
