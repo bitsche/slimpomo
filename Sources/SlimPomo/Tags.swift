@@ -5,10 +5,8 @@ import SlimPomoCore
 /// Look and measure of a tag, the project label in front of a task name. Display only: the stored name keeps its text.
 enum TagStyle {
     static let fontSize: CGFloat = 11
-    /// The task under NOW is one step larger.
-    static let nowFontSize: CGFloat = 11.5
     /// 0.04 em of the font size.
-    static func tracking(for size: CGFloat) -> CGFloat { size * 0.04 }
+    static let tracking: CGFloat = fontSize * 0.04
     /// Space between the widest label and the name column.
     static let columnGap: CGFloat = 8
     static let minColumn: CGFloat = 28
@@ -16,27 +14,27 @@ enum TagStyle {
     /// A tag in Done and History is quieter.
     static let doneStrength = 0.6
 
+    @MainActor private static let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
+
     @MainActor private static var widths: [String: CGFloat] = [:]
 
     @MainActor
-    static func labelWidth(_ tag: String, size: CGFloat = fontSize) -> CGFloat {
-        let key = "\(size)|\(tag)"
-        if let known = widths[key] { return known }
-        let font = NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
-        let width = ceil((tag as NSString).size(withAttributes: [.font: font, .kern: tracking(for: size)]).width)
-        widths[key] = width
+    static func labelWidth(_ tag: String) -> CGFloat {
+        if let known = widths[tag] { return known }
+        let width = ceil((tag as NSString).size(withAttributes: [.font: font, .kern: tracking]).width)
+        widths[tag] = width
         return width
     }
 
     /// The column every row of one list gets when any of its rows shows a tag: the widest label plus 8 pt, from 28 to 60 pt.
     /// Zero without tags. A label wider than the column ends in "…".
     @MainActor
-    static func columnWidth<S: Sequence>(for names: S, size: CGFloat = fontSize) -> CGFloat where S.Element == String {
+    static func columnWidth<S: Sequence>(for names: S) -> CGFloat where S.Element == String {
         var widest: CGFloat = 0
         var seen = Set<String>()
         for name in names {
             guard let tag = TaskName.tag(of: name), seen.insert(tag).inserted else { continue }
-            widest = max(widest, labelWidth(tag, size: size))
+            widest = max(widest, labelWidth(tag))
         }
         guard widest > 0 else { return 0 }
         return min(maxColumn, max(minColumn, widest + columnGap))
@@ -63,12 +61,11 @@ struct TagLabel: View {
     var strength = 1.0
     /// The row's tag column. A label wider than the column minus its gap is cut with "…". Nil keeps the whole label.
     var column: CGFloat?
-    var size = TagStyle.fontSize
 
     var body: some View {
         let text = Text(tag)
-            .font(.system(size: size).monospacedDigit().smallCaps())
-            .tracking(TagStyle.tracking(for: size))
+            .font(.system(size: TagStyle.fontSize).monospacedDigit().smallCaps())
+            .tracking(TagStyle.tracking)
             .foregroundStyle(Theme.tag(model.tagColorIndex(tag)).opacity(strength))
             .lineLimit(1)
             .truncationMode(.tail)

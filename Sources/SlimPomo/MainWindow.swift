@@ -326,7 +326,7 @@ struct MainWindow: View {
                 model: model,
                 isNow: true
             )
-            .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description], size: TagStyle.nowFontSize))
+            .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description]))
             .id(item.id)
             Rectangle()
                 .fill(Theme.lineSubtle)
@@ -1717,7 +1717,6 @@ private struct RowNameEditor: View {
     var saved: String
     var intensity: Intensity
     var semibold: Bool
-    var size = NameFieldMetrics.size
     var ink: NSColor
     var onFinish: (Bool) -> Void
 
@@ -1733,11 +1732,10 @@ private struct RowNameEditor: View {
     }
 
     var body: some View {
-        let font = NameFieldMetrics.font(semibold: semibold, size: size)
+        let font = NameFieldMetrics.font(semibold: semibold)
         return NameEditor(
             text: text,
             semibold: semibold,
-            size: size,
             color: ink,
             autoFocus: true,
             caret: model.editCaret,
@@ -1777,9 +1775,6 @@ private struct QueueLine: View {
     var isNow = false
 
     @Environment(\.tagColumn) private var tagColumn
-
-    private var nameSize: CGFloat { isNow ? NameFieldMetrics.nowSize : NameFieldMetrics.size }
-    private var tagSize: CGFloat { isNow ? TagStyle.nowFontSize : TagStyle.fontSize }
 
     /// Work is paused on this row's task.
     private var paused: Bool { isNow && !model.windowSession.isRunning }
@@ -1861,10 +1856,8 @@ private struct QueueLine: View {
             }
     }
 
-    private var nameInk: Color {
-        if paused { return Theme.pausedText }
-        return showsWorkBar ? Theme.textStrong : Theme.textPrimary
-    }
+    /// The current task's name looks like any other row's. Only the card, the marker, the gauge and the grey say it is current.
+    private var nameInk: Color { paused ? Theme.pausedText : Theme.textPrimary }
 
     private var growthAnimation: Animation? {
         model.reduceMotion ? nil : .easeOut(duration: 0.15)
@@ -1885,7 +1878,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             .frame(height: RowGrid.height)
         } tag: {
             if let rowTag {
-                TagLabel(tag: rowTag, model: model, strength: paused ? 0.6 : 1, column: tagColumn, size: tagSize)
+                TagLabel(tag: rowTag, model: model, strength: paused ? 0.6 : 1, column: tagColumn)
             }
         } name: {
             if isEditing {
@@ -1894,17 +1887,15 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                     id: item.id,
                     saved: item.description,
                     intensity: item.intensity,
-                    semibold: showsWorkBar,
-                    size: nameSize,
-                    ink: (paused ? Theme.pausedTextRGB : (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB)).nsColor,
+                    semibold: false,
+                    ink: (paused ? Theme.pausedTextRGB : Theme.textPrimaryRGB).nsColor,
                     onFinish: { finishEditing(save: $0) }
                 )
             } else {
                 TaskNameLabel(
                     text: nameShown,
                     color: nameInk,
-                    semibold: showsWorkBar,
-                    size: nameSize,
+                    semibold: false,
                     placeholder: "Short description",
                     onEdit: editHandler
                 )
@@ -1997,7 +1988,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     private func beginEditing(at x: CGFloat?) {
         guard !floating, model.tour == nil else { return }
         model.editorContent = 0
-        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar, size: nameSize) }
+        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: false) }
         withAnimation(growthAnimation) {
             model.beginNameEdit(id: item.id)
         }
@@ -3192,7 +3183,6 @@ struct TaskNameLabel: View {
     var text: String
     var color: Color
     var semibold = false
-    var size = NameFieldMetrics.size
     /// Drawn in place of an empty name.
     var placeholder: String? = nil
     /// Called with the click's x in the name, or nil from the keyboard or VoiceOver.
@@ -3206,9 +3196,9 @@ struct TaskNameLabel: View {
             .layoutPriority(-1)
             .overlay {
                 if let onEdit {
-                    NameClickArea(fullText: text, semibold: semibold, size: size, onActivate: onEdit)
+                    NameClickArea(fullText: text, semibold: semibold, onActivate: onEdit)
                 } else {
-                    NameTipArea(fullText: text, semibold: semibold, size: size)
+                    NameTipArea(fullText: text, semibold: semibold)
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -3226,13 +3216,13 @@ struct TaskNameLabel: View {
     private var content: some View {
         if text.isEmpty, let placeholder {
             Text(placeholder)
-                .font(.system(size: size, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         } else {
             Text(parts.rest)
-                .font(.system(size: size, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .truncationMode(.tail)

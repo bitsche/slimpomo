@@ -394,6 +394,9 @@ final class TankWaveView: NSView {
     private var builtWidth: CGFloat = 0
     private var placed = false
     private var playing = false
+    /// The waves stand still on a static offset. Their slide animation is removed, never slowed to speed 0:
+    /// a layer at speed 0 also freezes every other animation on it, and the color fade would stay at its first frame.
+    private var frozen = false
     private var shownY: CGFloat = -.greatestFiniteMagnitude
     private var observers: [NSObjectProtocol] = []
 
@@ -485,7 +488,7 @@ final class TankWaveView: NSView {
         let background = paint.nsBackground.cgColor
         let frontFill = paint.nsFront.cgColor
         let backFill = paint.nsBack.cgColor
-        let crestStroke = NSColor(srgbRed: paint.backR, green: paint.backG, blue: paint.backB, alpha: 0.55).cgColor
+        let crestStroke = NSColor(srgbRed: paint.backR, green: paint.backG, blue: paint.backB, alpha: paused ? 1 : 0.55).cgColor
         let fromBackground = layer?.presentation()?.backgroundColor ?? layer?.backgroundColor
         let fromFront = front.presentation()?.fillColor ?? front.fillColor
         let fromBack = back.presentation()?.fillColor ?? back.fillColor
@@ -519,7 +522,7 @@ final class TankWaveView: NSView {
     private func rebuildPaths(width: CGFloat) {
         let frontPhase = slidePhase(of: front, from: 0, to: -width, duration: 6)
         let backPhase = slidePhase(of: back, from: -width, to: 0, duration: 9)
-        let frozen = playing && front.speed == 0
+        let wasFrozen = frozen
         let wasPlaying = playing
         let depth: CGFloat = 400
         let amplitude: CGFloat = 3
@@ -538,8 +541,13 @@ final class TankWaveView: NSView {
         back.position = CGPoint(x: 0, y: 3)
         CATransaction.commit()
         if wasPlaying {
-            installSlide(on: front, from: 0, to: -width, duration: 6, phase: frontPhase, frozen: frozen)
-            installSlide(on: back, from: -width, to: 0, duration: 9, phase: backPhase, frozen: frozen)
+            if wasFrozen {
+                hold(front, from: 0, to: -width, phase: frontPhase)
+                hold(back, from: -width, to: 0, phase: backPhase)
+            } else {
+                installSlide(on: front, from: 0, to: -width, duration: 6, phase: frontPhase)
+                installSlide(on: back, from: -width, to: 0, duration: 9, phase: backPhase)
+            }
         }
     }
 
@@ -616,19 +624,16 @@ final class TankWaveView: NSView {
         }
         if !playing {
             let width = bounds.width
-            installSlide(on: front, from: 0, to: -width, duration: 6, phase: 0, frozen: false)
-            installSlide(on: back, from: -width, to: 0, duration: 9, phase: 0, frozen: false)
+            installSlide(on: front, from: 0, to: -width, duration: 6, phase: 0)
+            installSlide(on: back, from: -width, to: 0, duration: 9, phase: 0)
             playing = true
+            frozen = false
         }
         let moving = running && windowVisible
         if moving {
-            if front.speed == 0 {
-                resume(front)
-                resume(back)
-            }
-        } else if front.speed != 0 {
-            pause(front)
-            pause(back)
+            if frozen { thaw() }
+        } else if !frozen {
+            freeze()
         }
     }
 
@@ -645,8 +650,7 @@ final class TankWaveView: NSView {
         from: CGFloat,
         to: CGFloat,
         duration: CFTimeInterval,
-        phase: Double,
-        frozen: Bool
+        phase: Double
     ) {
         layer.removeAnimation(forKey: "wave")
         let anim = CABasicAnimation(keyPath: "transform.translation.x")
@@ -657,46 +661,53 @@ final class TankWaveView: NSView {
         anim.timingFunction = CAMediaTimingFunction(name: .linear)
         anim.isRemovedOnCompletion = false
         anim.fillMode = .forwards
-        layer.speed = 1
-        layer.timeOffset = 0
-        layer.beginTime = 0
-        layer.add(anim, forKey: "wave")
         let elapsed = max(0, min(0.999, phase)) * duration
-        if frozen {
-            layer.speed = 0
-            layer.timeOffset = elapsed
-        } else if elapsed > 0 {
-            let now = layer.convertTime(CACurrentMediaTime(), from: nil)
-            layer.beginTime = now - elapsed
-        }
+        anim.beginTime = CACurrentMediaTime() - elapsed
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.transform = CATransform3DIdentity
+        CATransaction.commit()
+        layer.add(anim, forKey: "wave")
     }
 
-    private func pause(_ layer: CALayer) {
-        let time = layer.convertTime(CACurrentMediaTime(), from: nil)
-        layer.speed = 0
-        layer.timeOffset = time
+    /// Stops a wave where it is: the slide animation goes and the offset it reached stays as the layer's transform.
+    private func hold(_ layer: CALayer, from: CGFloat, to: CGFloat, phase: Double) {
+        layer.removeAnimation(forKey: "wave")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.transform = CATransform3DMakeTranslation(from + CGFloat(phase) * (to - from), 0, 0)
+        CATransaction.commit()
     }
 
-    private func resume(_ layer: CALayer) {
-        let paused = layer.timeOffset
-        layer.speed = 1
-        layer.timeOffset = 0
-        layer.beginTime = 0
-        let since = layer.convertTime(CACurrentMediaTime(), from: nil) - paused
-        layer.beginTime = since
+    private func freeze() {
+        let width = bounds.width
+        guard width > 1 else { return }
+        let frontPhase = slidePhase(of: front, from: 0, to: -width, duration: 6)
+        let backPhase = slidePhase(of: back, from: -width, to: 0, duration: 9)
+        hold(front, from: 0, to: -width, phase: frontPhase)
+        hold(back, from: -width, to: 0, phase: backPhase)
+        frozen = true
+    }
+
+    private func thaw() {
+        let width = bounds.width
+        guard width > 1 else { return }
+        let frontPhase = slidePhase(of: front, from: 0, to: -width, duration: 6)
+        let backPhase = slidePhase(of: back, from: -width, to: 0, duration: 9)
+        installSlide(on: front, from: 0, to: -width, duration: 6, phase: frontPhase)
+        installSlide(on: back, from: -width, to: 0, duration: 9, phase: backPhase)
+        frozen = false
     }
 
     private func resetSlides() {
         for wave in [front, back] {
             wave.removeAnimation(forKey: "wave")
-            wave.speed = 1
-            wave.timeOffset = 0
-            wave.beginTime = 0
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             wave.transform = CATransform3DIdentity
             CATransaction.commit()
         }
+        frozen = false
     }
 
     private var windowVisible: Bool {

@@ -6,12 +6,8 @@ import SlimPomoCore
 enum NameFieldMetrics {
     static let maxLines = 4
 
-    /// The size of a name in a list row. The task under NOW is one step larger.
-    static let size: CGFloat = 13
-    static let nowSize: CGFloat = 14
-
-    static func font(semibold: Bool = false, size: CGFloat = size) -> NSFont {
-        NSFont.monospacedDigitSystemFont(ofSize: size, weight: semibold ? .semibold : .regular)
+    static func font(semibold: Bool = false) -> NSFont {
+        NSFont.monospacedDigitSystemFont(ofSize: 13, weight: semibold ? .semibold : .regular)
     }
 
     static func lineHeight(_ font: NSFont) -> CGFloat {
@@ -29,9 +25,9 @@ enum NameFieldMetrics {
 @MainActor
 enum NameCaret {
     /// UTF-16 offset in the raw name nearest to `x`, measured from the left edge of the drawn name.
-    static func offset(in raw: String, x: CGFloat, semibold: Bool, size: CGFloat = NameFieldMetrics.size) -> Int {
+    static func offset(in raw: String, x: CGFloat, semibold: Bool) -> Int {
         let parts = TaskName.split(raw)
-        let storage = NSTextStorage(string: parts.rest, attributes: [.font: NameFieldMetrics.font(semibold: semibold, size: size)])
+        let storage = NSTextStorage(string: parts.rest, attributes: [.font: NameFieldMetrics.font(semibold: semibold)])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: 100_000, height: 100_000))
         container.lineFragmentPadding = 0
@@ -59,7 +55,6 @@ enum LabelStyle {
 struct NameClickArea: NSViewRepresentable {
     var fullText: String
     var semibold: Bool
-    var size: CGFloat = NameFieldMetrics.size
     /// The click's x in the name column, or nil for the keyboard.
     var onActivate: (CGFloat?) -> Void
 
@@ -79,7 +74,6 @@ struct NameClickArea: NSViewRepresentable {
         view.onActivate = onActivate
         view.fullText = fullText
         view.semibold = semibold
-        view.size = size
         view.updateTip()
     }
 }
@@ -87,10 +81,10 @@ struct NameClickArea: NSViewRepresentable {
 /// Decides whether a name is cut short, and measures it the way the label draws it.
 @MainActor
 enum NameTruncation {
-    static func isTruncated(_ text: String, semibold: Bool, size: CGFloat = NameFieldMetrics.size, width: CGFloat) -> Bool {
+    static func isTruncated(_ text: String, semibold: Bool, width: CGFloat) -> Bool {
         guard width > 1 else { return false }
         let parts = TaskName.split(text)
-        let drawn = (parts.rest as NSString).size(withAttributes: [.font: NameFieldMetrics.font(semibold: semibold, size: size)]).width
+        let drawn = (parts.rest as NSString).size(withAttributes: [.font: NameFieldMetrics.font(semibold: semibold)]).width
         return drawn > width + 0.5
     }
 }
@@ -99,7 +93,6 @@ enum NameTruncation {
 struct NameTipArea: NSViewRepresentable {
     var fullText: String
     var semibold: Bool
-    var size: CGFloat = NameFieldMetrics.size
 
     func makeNSView(context: Context) -> NameTipView {
         let view = NameTipView()
@@ -115,7 +108,6 @@ struct NameTipArea: NSViewRepresentable {
     private func apply(to view: NameTipView) {
         view.fullText = fullText
         view.semibold = semibold
-        view.size = size
         view.updateTip()
     }
 }
@@ -123,7 +115,6 @@ struct NameTipArea: NSViewRepresentable {
 final class NameTipView: NSView {
     var fullText = ""
     var semibold = false
-    var size = NameFieldMetrics.size
 
     override var isOpaque: Bool { false }
 
@@ -135,7 +126,7 @@ final class NameTipView: NSView {
     }
 
     func updateTip() {
-        let cut = NameTruncation.isTruncated(fullText, semibold: semibold, size: size, width: bounds.width)
+        let cut = NameTruncation.isTruncated(fullText, semibold: semibold, width: bounds.width)
         let tip = cut ? fullText : nil
         if toolTip != tip { toolTip = tip }
     }
@@ -145,7 +136,6 @@ final class NameClickAreaView: PointingHandAnchorView {
     var onActivate: ((CGFloat?) -> Void)?
     var fullText = ""
     var semibold = false
-    var size = NameFieldMetrics.size
     private var pressedAt: NSPoint?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -154,7 +144,7 @@ final class NameClickAreaView: PointingHandAnchorView {
     }
 
     func updateTip() {
-        let cut = NameTruncation.isTruncated(fullText, semibold: semibold, size: size, width: bounds.width)
+        let cut = NameTruncation.isTruncated(fullText, semibold: semibold, width: bounds.width)
         let tip = cut ? fullText : nil
         if toolTip != tip { toolTip = tip }
     }
@@ -203,7 +193,6 @@ final class NameClickAreaView: PointingHandAnchorView {
 struct NameEditor: NSViewRepresentable {
     @Binding var text: String
     var semibold = false
-    var size = NameFieldMetrics.size
     var color: NSColor
     /// Two-way focus for a field that is always on screen. Nil for an editor that takes focus once when it appears.
     var focus: Binding<Bool>? = nil
@@ -222,7 +211,7 @@ struct NameEditor: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NameEditorView {
-        let view = NameEditorView(font: NameFieldMetrics.font(semibold: semibold, size: size), color: color)
+        let view = NameEditorView(font: NameFieldMetrics.font(semibold: semibold), color: color)
         let coordinator = context.coordinator
         view.textView.delegate = coordinator
         view.textView.setAccessibilityLabel(fieldLabel)
@@ -243,7 +232,7 @@ struct NameEditor: NSViewRepresentable {
 
     func updateNSView(_ view: NameEditorView, context: Context) {
         context.coordinator.parent = self
-        view.apply(font: NameFieldMetrics.font(semibold: semibold, size: size), color: color)
+        view.apply(font: NameFieldMetrics.font(semibold: semibold), color: color)
         view.syncText(text)
         view.syncFocus()
     }
