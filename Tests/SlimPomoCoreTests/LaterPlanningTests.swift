@@ -103,7 +103,7 @@ struct LaterPlanningTests {
         #expect(s.queue.map(\.description) == ["B", "C", "A"])
     }
 
-    @Test func queueSlotsStartBelowARunningTask() {
+    @Test func queueSlotsStartBelowTheTaskUnderNow() {
         var s = session(["Running", "B", "C"])
         #expect(s.queueSlots(excluding: nil) == 0...3)
         _ = s.start(now: start)

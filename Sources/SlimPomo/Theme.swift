@@ -28,6 +28,7 @@ enum Theme {
     static let bgCardRGB = ThemeRGB(hex: 0x13262E)
     static let bgCardHoverRGB = ThemeRGB(hex: 0x183640)
     static let bgCardActiveRGB = ThemeRGB(hex: 0x17343F)
+    static let bgCardActiveHoverRGB = ThemeRGB(hex: 0x1B3B46)
     static let bgFieldRGB = ThemeRGB(hex: 0x0B161C)
     static let lineFieldRGB = ThemeRGB(hex: 0x22404A)
     static let lineSubtleRGB = ThemeRGB(hex: 0x1A2D35)
@@ -69,11 +70,25 @@ enum Theme {
     static let breakScaleRGB = ThemeRGB(hex: 0x7A6A45)
     static let breakPillRGB = ThemeRGB(hex: 0xE8CF9E)
 
+    /// Paused work: the tank and the NOW row turn grey. Water, wave, scale, and gauge keep one hue, and the pause button
+    /// stays in its mode color.
+    static let pausedAirRGB = ThemeRGB(hex: 0x16282F)
+    static let pausedWaterRGB = ThemeRGB(hex: 0x3E555C)
+    static let pausedSurfaceRGB = ThemeRGB(hex: 0x7D9298)
+    static let pausedTimeRGB = ThemeRGB(hex: 0x9DB5BA)
+    static let pausedTextRGB = ThemeRGB(hex: 0xB9CDD1)
+    /// Paused break: the sand turns to a dusty grey-brown.
+    static let pausedBreakAirRGB = ThemeRGB(hex: 0x2A2823)
+    static let pausedBreakWaterRGB = ThemeRGB(hex: 0x5C564A)
+    static let pausedBreakSurfaceRGB = ThemeRGB(hex: 0x9A9180)
+    static let pausedBreakTextRGB = ThemeRGB(hex: 0xD8CFBE)
+
     static let bgBase = bgBaseRGB.color
     static let bgBaseNS = bgBaseRGB.nsColor
     static let bgCard = bgCardRGB.color
     static let bgCardHover = bgCardHoverRGB.color
     static let bgCardActive = bgCardActiveRGB.color
+    static let bgCardActiveHover = bgCardActiveHoverRGB.color
     static let bgField = bgFieldRGB.color
     static let lineField = lineFieldRGB.color
     static let lineSubtle = lineSubtleRGB.color
@@ -98,6 +113,12 @@ enum Theme {
     static let breakTextSecondary = breakTextSecondaryRGB.color
     static let breakScale = breakScaleRGB.color
     static let breakPill = breakPillRGB.color
+
+    static let pausedSurface = pausedSurfaceRGB.color
+    static let pausedTime = pausedTimeRGB.color
+    static let pausedText = pausedTextRGB.color
+    static let pausedBreakSurface = pausedBreakSurfaceRGB.color
+    static let pausedBreakText = pausedBreakTextRGB.color
 
     static let diveSurface = diveSurfaceRGB.color
 
