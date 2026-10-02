@@ -1383,26 +1383,36 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
-/// The card behind a queue or LATER row. The marker of the running task, or of the next one at 40%, is the crescent
-/// between the card shape and the same shape shifted 3 pt right: 3 pt wide along the straight edge, curved on the inside
-/// too, so it tapers to nothing into the top and bottom edges. The shifted card sticks out on the right and the clip cuts it.
+/// The region between the card shape and the same shape shifted right: `width` pt wide along the straight left edge,
+/// curved on the inside too, so it tapers to nothing into the top and bottom edges. It is one path, so nothing is
+/// drawn along the straight edges. Painting the marker full size and covering it with a shifted card instead leaves an
+/// anti-aliased fringe of the marker color along the whole top and bottom edge.
+private struct Crescent: Shape {
+    var width: CGFloat
+    var cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let card = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return card.path(in: rect).subtracting(card.path(in: rect.offsetBy(dx: width, dy: 0)))
+    }
+}
+
+/// The card behind a queue or LATER row. The marker of the running task, or of the next one at 40%, is a `Crescent`
+/// over the card, and the card's clip keeps it inside.
 private struct RowCard: ViewModifier {
     var fill: Color
     var bar: Color? = nil
 
     private static let shape = RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
-    private static let markerWidth: CGFloat = 3
 
     func body(content: Content) -> some View {
         content
             .background {
                 ZStack {
-                    if let bar {
-                        Self.shape.fill(fill)
-                        Self.shape.fill(bar)
-                    }
                     Self.shape.fill(fill)
-                        .offset(x: bar == nil ? 0 : Self.markerWidth)
+                    if let bar {
+                        Crescent(width: 3, cornerRadius: RowGrid.radius).fill(bar)
+                    }
                 }
             }
             .clipShape(Self.shape)
