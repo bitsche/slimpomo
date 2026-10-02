@@ -10,6 +10,7 @@ enum TagStyle {
     /// Space between the widest label and the name column.
     static let columnGap: CGFloat = 8
     static let minColumn: CGFloat = 28
+    static let maxColumn: CGFloat = 60
     /// A tag in Done and History is quieter.
     static let doneStrength = 0.6
 
@@ -25,8 +26,8 @@ enum TagStyle {
         return width
     }
 
-    /// The column every row gets when any row shows a tag: the widest label plus 8 pt, at least 28 pt. Zero without tags.
-    /// A label is never cut, so a long one widens the column instead of being clamped.
+    /// The column every row of one list gets when any of its rows shows a tag: the widest label plus 8 pt, from 28 to 60 pt.
+    /// Zero without tags. A label wider than the column ends in "…".
     @MainActor
     static func columnWidth<S: Sequence>(for names: S) -> CGFloat where S.Element == String {
         var widest: CGFloat = 0
@@ -36,7 +37,7 @@ enum TagStyle {
             widest = max(widest, labelWidth(tag))
         }
         guard widest > 0 else { return 0 }
-        return max(minColumn, widest + columnGap)
+        return min(maxColumn, max(minColumn, widest + columnGap))
     }
 }
 
@@ -45,7 +46,7 @@ private struct TagColumnKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// Width of the tag column in the rows below. Zero when no row shows a tag.
+    /// Width of the tag column in the rows below, decided by their own list. Zero when no row of that list shows a tag.
     var tagColumn: CGFloat {
         get { self[TagColumnKey.self] }
         set { self[TagColumnKey.self] = newValue }
@@ -58,14 +59,21 @@ struct TagLabel: View {
     var model: AppModel
     /// 1 in the queue and LATER, `TagStyle.doneStrength` in Done and History.
     var strength = 1.0
+    /// The row's tag column. A label wider than the column minus its gap is cut with "…". Nil keeps the whole label.
+    var column: CGFloat?
 
     var body: some View {
-        Text(tag)
+        let text = Text(tag)
             .font(.system(size: TagStyle.fontSize).monospacedDigit().smallCaps())
             .tracking(TagStyle.tracking)
             .foregroundStyle(Theme.tag(model.tagColorIndex(tag)).opacity(strength))
             .lineLimit(1)
-            .fixedSize()
+            .truncationMode(.tail)
+        if let column {
+            text.frame(width: max(0, column - TagStyle.columnGap), alignment: .leading)
+        } else {
+            text.fixedSize()
+        }
     }
 }
 

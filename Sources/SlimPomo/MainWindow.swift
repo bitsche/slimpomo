@@ -231,7 +231,6 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .environment(\.tagColumn, tagColumn)
         .background(Theme.bgBase.ignoresSafeArea())
         .accessibilityHidden(model.isTouring)
         .overlayPreferenceValue(TourAnchorKey.self) { anchors in
@@ -263,17 +262,40 @@ struct MainWindow: View {
         }
     }
 
-    /// One tag column for queue, LATER, and Done, so names line up across the window. Zero when no visible row has a tag.
-    private var tagColumn: CGFloat {
-        var names = shown.queue.map(\.description)
-        if model.laterRowsShown {
-            names += shown.later.map(\.description)
-        }
-        if !shown.done.isEmpty, model.isExpanded(.done) {
-            let items = shown.mergedDone()
-            names += (model.doneListExpanded ? items : Array(items.prefix(3))).map(\.description)
-        }
-        return TagStyle.columnWidth(for: names)
+    /// Each list decides its own tag column. A tagged row anywhere in the list gives every row of it the column;
+    /// a list without tags has none. A held row counts for the list it is over, not the one it came from.
+    private func tagColumn(of names: [String]) -> CGFloat {
+        TagStyle.columnWidth(for: names)
+    }
+
+    private var heldName: String? {
+        guard let drag = model.queueDrag else { return nil }
+        return (shown.queue.first { $0.id == drag.itemID }?.description)
+            ?? (shown.later.first { $0.id == drag.itemID }?.description)
+    }
+
+    private var holdIsOverQueue: Bool { model.queueDrag?.slot.region == .queue }
+
+    private var queueTagColumn: CGFloat {
+        var names = shown.queue.filter { $0.id != model.queueDrag?.itemID }.map(\.description)
+        if holdIsOverQueue, let held = heldName { names.append(held) }
+        return tagColumn(of: names)
+    }
+
+    private var laterTagColumn: CGFloat {
+        var names = shown.later.filter { $0.id != model.queueDrag?.itemID }.map(\.description)
+        if model.queueDrag != nil, !holdIsOverQueue, let held = heldName { names.append(held) }
+        return tagColumn(of: names)
+    }
+
+    private var doneTagColumn: CGFloat {
+        let items = shown.mergedDone()
+        return tagColumn(of: (model.doneListExpanded ? items : Array(items.prefix(3))).map(\.description))
+    }
+
+    /// 150 ms, and none with Reduce Motion: the names slide when a column appears, disappears, or changes width.
+    private var columnAnimation: Animation? {
+        model.reduceMotion || model.tour != nil ? nil : .easeOut(duration: 0.15)
     }
 
     /// Finished pomodoros today. A rise while Done is collapsed flashes the header stats.
@@ -437,6 +459,8 @@ struct MainWindow: View {
                 }
             }
         }
+        .environment(\.tagColumn, queueTagColumn)
+        .animation(columnAnimation, value: queueTagColumn)
         .animation(
             model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
             value: queueDisplay.map(\.id)
@@ -553,6 +577,8 @@ struct MainWindow: View {
                     }
                 }
                 .padding(.top, DragMetrics.laterTopPadding)
+                .environment(\.tagColumn, laterTagColumn)
+                .animation(columnAnimation, value: laterTagColumn)
                 .animation(
                     model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
                     value: laterDays.flatMap { day in laterDisplay(day.day).map(\.id) }
@@ -646,6 +672,8 @@ struct MainWindow: View {
             .animation(model.reduceMotion ? nil : .easeOut(duration: 0.2), value: model.doneFlashOn)
             if open {
                 DoneRows(items: visible, model: model)
+                    .environment(\.tagColumn, doneTagColumn)
+                    .animation(columnAnimation, value: doneTagColumn)
                     .padding(.top, 6)
                 if hidden > 0 {
                     MoreDoneLink(hidden: hidden, expanded: model.doneListExpanded) {
@@ -695,6 +723,7 @@ struct MainWindow: View {
                     LaterLine(item: item, model: model, floating: true)
                 }
             }
+            .environment(\.tagColumn, holdIsOverQueue ? queueTagColumn : laterTagColumn)
             .frame(width: max(drag.rowWidth, 1))
             .scaleEffect(drag.lifted && !model.reduceMotion ? 1.02 : 1)
             .shadow(
@@ -1390,10 +1419,12 @@ struct ListRow<Gauge: View, TagContent: View, Name: View, Rest: View>: View {
         HStack(alignment: alignment, spacing: 0) {
             gauge()
                 .frame(width: RowGrid.gauge, alignment: .leading)
-            if tagWidth > 0 {
+            ZStack(alignment: .leading) {
+                Color.clear.frame(width: tagWidth, height: 1)
                 tag()
-                    .frame(width: tagWidth, alignment: .leading)
             }
+            .frame(width: tagWidth, alignment: .leading)
+            .clipped()
             name()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
@@ -1693,8 +1724,9 @@ private struct QueueLine: View {
 
     private var rowTag: String? { TaskName.tag(of: item.description) }
 
-    /// The tag column is out of the way while the name is edited: the field shows the whole raw name.
-    private var tagWidth: CGFloat { isEditing ? 0 : tagColumn }
+    /// A tagged row gives up its column while the name is edited: the field shows the whole raw name.
+    /// An untagged row keeps it, so its name stays where the others start.
+    private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
 
     /// The task START, or the end of a break, begins next.
     private var isNext: Bool { model.windowSession.nextStartID == item.id }
@@ -1777,7 +1809,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             .frame(height: RowGrid.height)
         } tag: {
             if let rowTag {
-                TagLabel(tag: rowTag, model: model)
+                TagLabel(tag: rowTag, model: model, column: tagColumn)
             }
         } name: {
             if isEditing {
@@ -1960,7 +1992,7 @@ private struct LaterLine: View {
 
     private var rowTag: String? { TaskName.tag(of: item.description) }
 
-    private var tagWidth: CGFloat { isEditing ? 0 : tagColumn }
+    private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
 
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
@@ -2013,7 +2045,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             .frame(height: RowGrid.height)
         } tag: {
             if let rowTag {
-                TagLabel(tag: rowTag, model: model)
+                TagLabel(tag: rowTag, model: model, column: tagColumn)
             }
         } name: {
             if isEditing {
@@ -2537,7 +2569,7 @@ private struct DoneLine: View {
             )
         } tag: {
             if let rowTag {
-                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength)
+                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength, column: tagColumn)
             }
         } name: {
             TruncatingName(text: taskName, color: Theme.textSecondary)
@@ -2815,16 +2847,45 @@ private final class ReleaseClickView: PointingHandAnchorView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// A real cursor rect keeps AppKit's own cursor handling on the hand too. Without one, the rects of the views
+    /// around the gauge put the arrow back after a click, and the app-wide monitor then flips it again on the next move.
+    override func resetCursorRects() {
+        discardCursorRects()
+        guard !AppRuntime.model.isTouring else { return }
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func layout() {
+        super.layout()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
+    }
+
     override func mouseDown(with event: NSEvent) {
         pressedAt = event.locationInWindow
+        if !AppRuntime.model.isTouring { NSCursor.pointingHand.set() }
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { pressedAt = nil }
         guard let pressedAt, !AppRuntime.model.isTouring else { return }
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
         let moved = hypot(event.locationInWindow.x - pressedAt.x, event.locationInWindow.y - pressedAt.y)
-        guard moved < RowDrag.threshold, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        guard moved < RowDrag.threshold, inside else { return }
+        NSCursor.pointingHand.set()
         onClick?()
+        // The click changes the gauge and its tooltip, which makes AppKit rebuild tracking and cursor rects.
+        // Put the hand back once that has settled, while the pointer is still over the gauge.
+        Task { @MainActor [weak self] in
+            guard let self, let window = self.window, !AppRuntime.model.isTouring else { return }
+            window.invalidateCursorRects(for: self)
+            let pointer = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            if self.bounds.contains(pointer), AppRuntime.model.queueDrag == nil { NSCursor.pointingHand.set() }
+        }
     }
 }
 
