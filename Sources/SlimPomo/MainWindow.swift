@@ -1831,12 +1831,18 @@ private struct QueueLine: View {
         !floating && model.queueDrag?.highlightedID == item.id
     }
 
+    /// The current task's row lightens a step on hover.
+    private var workHovered: Bool {
+        showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id)
+    }
+
     private var cardHovered: Bool {
         !showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id || passedOver)
     }
 
     private var fill: Color {
-        showsWorkBar ? Theme.bgCardActive : (cardHovered ? Theme.bgCardHover : Theme.bgCard)
+        if showsWorkBar { return workHovered ? Theme.bgCardActiveHover : Theme.bgCardActive }
+        return cardHovered ? Theme.bgCardHover : Theme.bgCard
     }
 
     /// The gauge's wave drifts only while this task is running.
@@ -1919,7 +1925,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             FadeOverlay(
                 shown: overlayShown,
                 reduceMotion: model.reduceMotion,
-                fill: showsWorkBar ? Theme.bgCardActive : Theme.bgCardHover,
+                fill: showsWorkBar ? Theme.bgCardActiveHover : Theme.bgCardHover,
                 trailingInset: 0
             ) {
                 HStack(spacing: 0) {

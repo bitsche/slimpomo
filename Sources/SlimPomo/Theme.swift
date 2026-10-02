@@ -28,6 +28,7 @@ enum Theme {
     static let bgCardRGB = ThemeRGB(hex: 0x13262E)
     static let bgCardHoverRGB = ThemeRGB(hex: 0x183640)
     static let bgCardActiveRGB = ThemeRGB(hex: 0x17343F)
+    static let bgCardActiveHoverRGB = ThemeRGB(hex: 0x1B3B46)
     static let bgFieldRGB = ThemeRGB(hex: 0x0B161C)
     static let lineFieldRGB = ThemeRGB(hex: 0x22404A)
     static let lineSubtleRGB = ThemeRGB(hex: 0x1A2D35)
@@ -87,6 +88,7 @@ enum Theme {
     static let bgCard = bgCardRGB.color
     static let bgCardHover = bgCardHoverRGB.color
     static let bgCardActive = bgCardActiveRGB.color
+    static let bgCardActiveHover = bgCardActiveHoverRGB.color
     static let bgField = bgFieldRGB.color
     static let lineField = lineFieldRGB.color
     static let lineSubtle = lineSubtleRGB.color
