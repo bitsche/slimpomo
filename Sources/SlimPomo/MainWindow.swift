@@ -1815,11 +1815,12 @@ private struct QueueLine: View {
     }
 
     private var pointerHover: Bool {
-        !floating && model.tour == nil && model.queueDrag == nil && model.hoveredQueueID == item.id
+        !floating && model.tour == nil && model.queueDrag == nil
+            && (model.hoveredQueueID == item.id || (model.landedHover && model.landedID == item.id))
     }
 
     private var revealed: Bool {
-        floating || pointerHover || model.tourQueueRevealID == item.id
+        floating || pointerHover || model.landedID == item.id || model.tourQueueRevealID == item.id
     }
 
     /// The row under a dragged task shows only the card hover.
@@ -2074,11 +2075,12 @@ private struct LaterLine: View {
     }
 
     private var pointerHover: Bool {
-        !floating && model.tour == nil && model.queueDrag == nil && model.hoveredLaterID == item.id
+        !floating && model.tour == nil && model.queueDrag == nil
+            && (model.hoveredLaterID == item.id || (model.landedHover && model.landedID == item.id))
     }
 
     private var revealed: Bool {
-        floating || pointerHover || model.tourLaterRevealID == item.id
+        floating || pointerHover || model.landedID == item.id || model.tourLaterRevealID == item.id
     }
 
     private var passedOver: Bool {

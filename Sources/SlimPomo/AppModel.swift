@@ -30,6 +30,11 @@ final class AppModel {
     var hoveredQueueID: UUID?
     var hoveredLaterID: UUID?
     var hoveredDoneID: UUID?
+    /// The row a drag has just put down. It keeps the look the floating copy had until the pointer or a timer takes over,
+    /// so the real row does not blink in under a pointer that has not moved.
+    var landedID: UUID?
+    /// The pointer is over the landed row, so it counts as hovered before the system reports it.
+    var landedHover = false
     var hoveredHistoryID: String?
     var doneHeaderHovered = false
     /// The pointer is on the trash button, which paints its own hover instead of the header wash.
@@ -99,6 +104,8 @@ final class AppModel {
     @ObservationIgnored private var focusMonitor: Any?
     @ObservationIgnored private var inputModeMonitor: Any?
     @ObservationIgnored private var queueDragMonitor: Any?
+    @ObservationIgnored private var landedMonitor: Any?
+    @ObservationIgnored private var landedTask: Task<Void, Never>?
     @ObservationIgnored private var queueScrollTask: Task<Void, Never>?
     @ObservationIgnored private var queueSettleTask: Task<Void, Never>?
     @ObservationIgnored private weak var queueScrollView: NSScrollView?
@@ -486,6 +493,7 @@ final class AppModel {
 
     func setQueueHover(_ id: UUID, hovering: Bool) {
         if hovering {
+            if landedID == id { clearLanded(animated: false) }
             hoveredQueueID = id
         } else if hoveredQueueID == id {
             hoveredQueueID = nil
@@ -494,6 +502,7 @@ final class AppModel {
 
     func setLaterHover(_ id: UUID, hovering: Bool) {
         if hovering {
+            if landedID == id { clearLanded(animated: false) }
             hoveredLaterID = id
         } else if hoveredLaterID == id {
             hoveredLaterID = nil
@@ -1446,6 +1455,7 @@ final class AppModel {
         // The floating row is already on the gap, and the list already has its final layout.
         // Commit that order with no animation, in the same update that removes the floating copy.
         suppressQueueAnimation = true
+        let underPointer = pointerIsOverRow(at: slot, excluding: id)
         var commit = Transaction()
         commit.disablesAnimations = true
         withTransaction(commit) {
@@ -1453,11 +1463,62 @@ final class AppModel {
             if drop {
                 commitDrop(id: id, source: source, slot: slot)
             }
+            landRow(id: id, underPointer: underPointer)
         }
         // Keep the flag up past this render, so no animated pass can slip in behind the commit.
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             self.suppressQueueAnimation = false
+        }
+    }
+
+    /// Whether the pointer is on the row that will sit at `slot` once the list has settled.
+    private func pointerIsOverRow(at slot: DragSlot, excluding id: UUID) -> Bool {
+        guard let pointer = pointerInQueueList(), let anchor = queueListAnchor else { return false }
+        let specs = dragRegions(layout: .final, excluding: id)
+        guard let blockIndex = specs.firstIndex(where: { $0.id == slot.region }) else { return false }
+        let blocks = DragGeometry.blocks(specs, held: slot.region)
+        let top = DragGeometry.tops(blocks)[blockIndex] + CGFloat(slot.index) * DragMetrics.stride
+        return pointer.y >= top && pointer.y < top + RowGrid.height
+            && pointer.x >= PageInset.horizontal && pointer.x <= anchor.bounds.width - PageInset.horizontal
+    }
+
+    /// A row that has just landed looks as the floating copy did (full strength, details shown). Over a pointer that has
+    /// not moved it counts as hovered at once; otherwise it settles to rest after a moment, with the normal fade.
+    private func landRow(id: UUID, underPointer: Bool) {
+        clearLanded(animated: false)
+        landedID = id
+        landedHover = underPointer
+        if underPointer {
+            landedMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .scrollWheel]) { event in
+                MainActor.assumeIsolated { AppRuntime.model.clearLanded(animated: false) }
+                return event
+            }
+        } else {
+            landedTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(40))
+                guard !Task.isCancelled, let self, self.landedID == id else { return }
+                self.clearLanded(animated: true)
+            }
+        }
+    }
+
+    func clearLanded(animated: Bool) {
+        landedTask?.cancel()
+        landedTask = nil
+        if let landedMonitor {
+            NSEvent.removeMonitor(landedMonitor)
+            self.landedMonitor = nil
+        }
+        guard landedID != nil else { return }
+        if animated && !reduceMotion {
+            withAnimation(.easeOut(duration: 0.12)) {
+                landedID = nil
+                landedHover = false
+            }
+        } else {
+            landedID = nil
+            landedHover = false
         }
     }
 
