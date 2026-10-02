@@ -9,8 +9,8 @@ struct TankAxisTests {
         #expect(TankAxis.y(level: 1, height: height) == TankAxis.fullInset)
         let middle = (TankAxis.fullInset + (height - TankAxis.emptyInset)) / 2
         #expect(abs(TankAxis.y(level: 0.5, height: height) - middle) < 0.000_001)
-        #expect(TankAxis.y(level: 0, height: height) == 142)
-        #expect(TankAxis.y(level: 1, height: height) == 12)
+        #expect(TankAxis.y(level: 0, height: height) == 136)
+        #expect(TankAxis.y(level: 1, height: height) == 18)
         #expect(TankAxis.y(level: 0.5, height: height) == 77)
     }
 

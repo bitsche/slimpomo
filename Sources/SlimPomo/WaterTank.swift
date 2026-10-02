@@ -207,12 +207,8 @@ struct WaterTank: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, 5)
             }
-            if let prefix = parts.prefix {
-                Text(prefix)
-                    .font(.system(size: 11).monospacedDigit().smallCaps())
-                    .foregroundStyle(Theme.textMuted)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+            if let tag = parts.tag {
+                TagLabel(tag: tag, model: AppRuntime.model)
                     .padding(.trailing, LabelStyle.gap)
             }
             Text(parts.rest)
@@ -247,12 +243,13 @@ struct WaterTank: View {
                 Text(label)
                     .lineLimit(1)
                     .fixedSize()
+                    .shadow(color: .black.opacity(0.35), radius: 2)
             }
             Rectangle()
                 .fill(scaleColor.opacity(0.6))
                 .frame(width: 6, height: 1)
         }
-        .padding(.trailing, 12)
+        .padding(.trailing, 16)
         .frame(height: row, alignment: .trailing)
         .offset(y: y - row / 2)
     }
