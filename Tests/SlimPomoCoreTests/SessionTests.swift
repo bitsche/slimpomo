@@ -1308,7 +1308,7 @@ struct SessionTests {
         #expect(session.later.contains { $0.id == zero && $0.count == 0 })
     }
 
-    @Test func dueLaterItemsReturnAtTheTopInOrder() {
+    @Test func dueLaterItemsReturnAtTheEndInOrder() {
         let calendar = HistoryClock.calendar
         let friday = HistoryClock.date(2026, 9, 25, 18, 0)
         var session = Session()
@@ -1325,9 +1325,9 @@ struct SessionTests {
         let mondayID = session.later.first { $0.description == "Monday" }!.id
         let returnedOnFriday = session.returnDueLater(now: friday, calendar: calendar)
         #expect(returnedOnFriday)
-        #expect(session.queue.map(\.description) == ["Earlier yesterday", "Later yesterday", "Stay"])
-        #expect(session.queue[0].count == 2)
-        #expect(session.queue[0].intensity == .regular)
+        #expect(session.queue.map(\.description) == ["Stay", "Earlier yesterday", "Later yesterday"])
+        #expect(session.queue[1].count == 2)
+        #expect(session.queue[1].intensity == .regular)
         #expect(session.later.map(\.description) == ["Monday", "Tomorrow"])
         #expect(session.later.contains { $0.id == mondayID })
 
@@ -1338,11 +1338,11 @@ struct SessionTests {
         let saturday = HistoryClock.date(2026, 9, 26, 8, 0)
         let returnedOnSaturday = session.returnDueLater(now: saturday, calendar: calendar)
         #expect(returnedOnSaturday)
-        #expect(session.queue.map(\.description) == ["Tomorrow", "Earlier yesterday", "Later yesterday", "Stay"])
+        #expect(session.queue.map(\.description) == ["Stay", "Earlier yesterday", "Later yesterday", "Tomorrow"])
         #expect(session.later.map(\.description) == ["Monday"])
     }
 
-    @Test func returningLaterItemsSitBelowTheRunningTask() {
+    @Test func returningLaterItemsAreAppendedBelowTheRunningTask() {
         let calendar = HistoryClock.calendar
         let start = HistoryClock.date(2026, 9, 25, 9, 0)
         var session = Session()
@@ -1355,7 +1355,7 @@ struct SessionTests {
         session.snooze(id: session.queue.last!.id, returnDay: "2026-09-25", now: start)
         let returned = session.returnDueLater(now: start, calendar: calendar)
         #expect(returned)
-        #expect(session.queue.map(\.description) == ["Running", "Back later", "Back", "Queued"])
+        #expect(session.queue.map(\.description) == ["Running", "Queued", "Back later", "Back"])
         #expect(session.phase == .work)
     }
 

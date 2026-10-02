@@ -328,7 +328,7 @@ public enum Snooze {
         let monday = nextMonday(after: today, calendar: calendar)
         let mondayStamp = CalendarDay.stamp(monday, calendar: calendar)
         if tomorrowStamp == mondayStamp {
-            let weekday = shortWeekday(monday, calendar: calendar)
+            let weekday = DateLabel.weekday(monday, calendar: calendar)
             return [SnoozeOffer(title: "Move to tomorrow (\(weekday))", returnDay: tomorrowStamp)]
         }
         return [
@@ -347,14 +347,6 @@ public enum Snooze {
         let daysUntilMonday = (9 - weekday) % 7
         let offset = daysUntilMonday == 0 ? 7 : daysUntilMonday
         return calendar.date(byAdding: .day, value: offset, to: today) ?? today
-    }
-
-    private static func shortWeekday(_ date: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = calendar.locale ?? .autoupdatingCurrent
-        formatter.setLocalizedDateFormatFromTemplate("EEE")
-        return formatter.string(from: date)
     }
 }
 
@@ -378,18 +370,10 @@ extension Snooze {
     public static func heading(for day: String, tomorrow: String?, calendar: Calendar = .current) -> String {
         guard let date = CalendarDay.date(day, calendar: calendar) else { return day }
         if day == tomorrow {
-            let weekday = formatted(date, template: "EEE", calendar: calendar)
+            let weekday = DateLabel.weekday(date, calendar: calendar)
             return calendar.component(.weekday, from: date) == 2 ? "Tomorrow (\(weekday))" : "Tomorrow"
         }
-        return formatted(date, template: "EEE d MMM", calendar: calendar)
-    }
-
-    private static func formatted(_ date: Date, template: String, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = calendar.locale ?? .autoupdatingCurrent
-        formatter.setLocalizedDateFormatFromTemplate(template)
-        return formatter.string(from: date)
+        return DateLabel.dayMonth(date, calendar: calendar)
     }
 }
 
@@ -969,8 +953,8 @@ public struct Session: Equatable, Codable {
         later[index].count = min(max(0, count), Self.maxPomodoros)
     }
 
-    /// Puts one snoozed task back now. `index` is its place in the queue, kept below a running task. Nil uses the
-    /// spot a scheduled return would use.
+    /// Puts one snoozed task back now. `index` is its place in the queue, kept below a running task. Nil appends it
+    /// to the end of the queue, like a scheduled return.
     public mutating func returnLater(id: UUID, to index: Int? = nil) {
         guard let from = later.firstIndex(where: { $0.id == id }) else { return }
         let item = later.remove(at: from)
@@ -978,7 +962,7 @@ public struct Session: Equatable, Codable {
     }
 
     /// Moves every later item whose day is today or earlier back into the queue. Does not wait for an idle timer.
-    /// Earlier days go first, each day in its saved order.
+    /// They are appended to the end of the queue. Earlier days go first, each day in its saved order.
     @discardableResult
     public mutating func returnDueLater(now: Date, calendar: Calendar = .current) -> Bool {
         let today = CalendarDay.stamp(now, calendar: calendar)
@@ -1014,7 +998,7 @@ public struct Session: Equatable, Codable {
 
     private mutating func insertReturned(_ items: [LaterItem], at requested: Int? = nil) {
         let lowest = (activeWorkIndex() ?? -1) + 1
-        let index = max(lowest, requested ?? lowest)
+        let index = max(lowest, requested ?? queue.count)
         let rows = items.map {
             QueueItem(id: $0.id, intensity: $0.intensity, description: $0.description, count: $0.count)
         }

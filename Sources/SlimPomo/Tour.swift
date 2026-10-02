@@ -91,7 +91,7 @@ enum TourStep: Hashable {
         case .markFinished:
             "Open ••• and choose Mark as finished. It counts one pomodoro done without running the timer, and records a full session. The running task still uses FINISH on the card."
         case .later:
-            "From •••, move a task to tomorrow or next Monday. It waits in LATER, then returns to the top of the queue on that day. Its own ••• can bring it back sooner, or change the day. Click the LATER header to collapse the list, and Deeeep remembers whether it was open."
+            "From •••, move a task to tomorrow or next Monday. It waits in LATER, then joins the end of the queue on that day. Its own ••• can bring it back sooner, to the end of the queue, or change the day. Click the LATER header to collapse the list, and Deeeep remembers whether it was open."
         case .menuBar:
             "Deeeep lives up there. An empty tank means idle, the water rises as you work, and during a break the sun rises over the sea. Pause bars mean paused. Click it for quick controls, right-click to open this window."
         case .done:

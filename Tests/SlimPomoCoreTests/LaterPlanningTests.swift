@@ -96,6 +96,13 @@ struct LaterPlanningTests {
         #expect(s.queue[2].intensity == .focus)
     }
 
+    @Test func backToQueueAppendsToTheEnd() {
+        var s = session(["A", "B", "C"])
+        s.snooze(id: id("A", in: s), returnDay: tomorrow, now: start)
+        s.returnLater(id: s.later[0].id)
+        #expect(s.queue.map(\.description) == ["B", "C", "A"])
+    }
+
     @Test func queueSlotsStartBelowARunningTask() {
         var s = session(["Running", "B", "C"])
         #expect(s.queueSlots(excluding: nil) == 0...3)
@@ -137,7 +144,7 @@ struct LaterPlanningTests {
         let saturday = PlanClock.date(2026, 9, 26, 0, 5)
         let returned = s.returnDueLater(now: saturday, calendar: calendar)
         #expect(returned)
-        #expect(s.queue.map(\.description) == ["D", "C", "A", "B", "Stay"])
+        #expect(s.queue.map(\.description) == ["Stay", "D", "C", "A", "B"])
         #expect(s.later.isEmpty)
     }
 
