@@ -1383,17 +1383,23 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
-/// The region between the card shape and the same shape shifted right: `width` pt wide along the straight left edge,
-/// curved on the inside too, so it tapers to nothing into the top and bottom edges. It is one path, so nothing is
-/// drawn along the straight edges. Painting the marker full size and covering it with a shifted card instead leaves an
-/// anti-aliased fringe of the marker color along the whole top and bottom edge.
+/// The marker: `width` pt wide along the straight left edge, curved on the inside too, tapering to nothing into the
+/// top and bottom edges. It is one path, so nothing is drawn along the straight edges.
+///
+/// The inner edge is the card shape moved right by `width`, with a corner radius smaller by about `width / 1.5`.
+/// A continuous corner runs about 1.5 radii along each edge, so the inner curve then reaches the straight top and bottom
+/// at the very point where the card's own corner does, and the two curves meet tangentially there. With the same radius
+/// the gap between them stays a fraction of a point for many points past the corner, which shows as a thin wing along the edge.
 private struct Crescent: Shape {
     var width: CGFloat
     var cornerRadius: CGFloat
 
     func path(in rect: CGRect) -> Path {
-        let card = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        return card.path(in: rect).subtracting(card.path(in: rect.offsetBy(dx: width, dy: 0)))
+        let outer = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let inner = RoundedRectangle(cornerRadius: max(0, cornerRadius - width / 1.5), style: .continuous)
+        // Wider than the card so the inner shape's right corners lie outside it and take nothing away there.
+        let innerRect = CGRect(x: rect.minX + width, y: rect.minY, width: rect.width + 2 * cornerRadius, height: rect.height)
+        return outer.path(in: rect).subtracting(inner.path(in: innerRect))
     }
 }
 
