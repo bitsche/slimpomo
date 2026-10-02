@@ -6,17 +6,31 @@ If an older SlimPomo.app is still installed, delete it so two menu-bar icons don
 
 If Finder still shows the old icon, run `touch Deeeep.app` or `killall Finder`.
 
-No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
+No project lists, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker. History shows worked time per day and per project prefix. No charts or long-term statistics.
 
 Done is today's finished work. Past days live in History (read-only, local, kept indefinitely). Click the DONE or LATER header to collapse it; Deeeep remembers each. Rows with the same name and mode merge into one with a summed count and time.
 
-A name like `Acme: write the report` shows `Acme` as a muted prefix. Click a queue or LATER name to edit it; long names wrap to up to four lines while editing. Return saves, Esc cancels.
+Click a queue or LATER name to edit it; long names wrap to up to four lines while editing. Return saves, Esc cancels.
+
+## Tags
+
+A name like `Acme: write the report` starts with a project prefix (1 to 12 characters, no spaces, then a colon and a space). Deeeep shows it as a tag. This is display only: the name is stored as typed, and nothing else is added to the task.
+
+- **Identity and look:** `Acme`, `ACME`, and `acme` are one tag, always shown in uppercase, small and semibold, in the tag's color (60% in Done and History). The menu-bar menu and the edit field show plain text.
+- **Colors:** six warm colors (Coral, Amber, Rose, Lilac, Peach, Sage grey), kept apart from the mode colors and the break sand. A tag seen for the first time gets the first color no known tag uses; with all six taken, the color assigned longest ago. A tag keeps its color across days and relaunches. Right-click a tag, anywhere it is shown, to pick another color for it everywhere.
+- **Column:** when any visible row in the queue, LATER, or Done has a tag, every row gets a tag column between gauge and name, as wide as the widest tag plus 8 pt, so names line up across the window. Without tags there is no column. History has its own.
+- **Focus:** click a tag in the main window to dim every row with another tag or none to 35%, in the queue, LATER, and Done. The TODO header shows a chip with the tag and the work still planned for it. Click the tag again, the chip's ×, or press Esc to end it. Focus is visual only and is not saved; START, order, drag and drop, and editing work as before, and a dimmed row returns to full strength on hover.
+- **History:** under each day header, worked time per tag, biggest first, untagged work as Other, at most four entries and then `+N more`.
 
 Each task has a pomodoro count of 0 to 5 (at least 1 while it runs). Hover a row to show − and + in a fixed slot at the right; at rest only `×2` and above is shown. Done and History show the count in the same place.
 
 ## Queue
 
-Unfinished tasks stay in the queue across days until they are finished, deleted, or snoozed. From a task's ••• menu, move it to tomorrow or next Monday. It leaves the queue and waits in LATER, then returns to the top of the queue at the start of that day.
+Unfinished tasks stay in the queue across days until they are finished, deleted, or snoozed. From a task's ••• menu, move it to tomorrow or next Monday. It leaves the queue and waits in LATER, then returns to the end of the queue at the start of that day.
+
+While the timer is idle or in a break, the task that START (or the end of the break) will begin next has a thin bar at its left edge in its mode color at 40%. It becomes the full running style when work starts, and moves at once when the order, counts, or snoozes change.
+
+Dates are always English, whatever the system region: `Mon 5 Oct` in LATER and `TUE 22 SEP` in History (with the year when it is not this one).
 
 ## Planning in LATER
 
@@ -29,7 +43,7 @@ Queue and LATER are one drag area. Press a row anywhere and move the pointer 4 p
 
 While a row is held, LATER opens and shows both days, with a dashed drop zone for an empty day. Holding a row over a collapsed LATER header for 0.6 s opens it for good. The pointer's y alone picks the place: the upper half of a row means before it, the lower half after it, a day label or the LATER header the start of that day, an empty day's drop zone that day, and anything below the last row (Done included) the end of the last day. Esc, or releasing off to the side or outside the list area, puts the row back. A task that is running can't be dragged and nothing can be dropped above it. Done rows are not drop targets.
 
-At midnight of a day, that day's tasks return to the top of the queue (below a running task) in the order planned in LATER. A task moved with ••• goes to the end of its day. In LATER you can also edit names, click the gauge to change the mode, and set the count; rows rest at 60% and come to full strength on hover.
+At the start of a day (midnight, launch, or wake), that day's tasks are appended to the end of the queue in the order planned in LATER; several days catching up at once go earlier day first. "Back to queue" in the ••• menu also appends to the end, while a drag from LATER lands exactly where you drop it. A task moved with ••• goes to the end of its day. In LATER you can also edit names, click the gauge to change the mode, and set the count; rows rest at 60% and come to full strength on hover.
 
 ## Modes
 

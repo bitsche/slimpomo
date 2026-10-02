@@ -51,6 +51,16 @@ enum Theme {
     static let deepSurfaceRGB = ThemeRGB(hex: 0x6F7CF2)
     static let deepWaterRGB = ThemeRGB(hex: 0x2E3F9A)
 
+    /// Tag colors. Warm on purpose, so a tag never reads as a mode color or the break sand.
+    static let tag1RGB = ThemeRGB(hex: 0xF0A08C)
+    static let tag2RGB = ThemeRGB(hex: 0xE6C46E)
+    static let tag3RGB = ThemeRGB(hex: 0xE79BC2)
+    static let tag4RGB = ThemeRGB(hex: 0xC4A8F2)
+    static let tag5RGB = ThemeRGB(hex: 0xF2B880)
+    static let tag6RGB = ThemeRGB(hex: 0xB7C4A8)
+    static let tagRGBs = [tag1RGB, tag2RGB, tag3RGB, tag4RGB, tag5RGB, tag6RGB]
+    static let tagNames = ["Coral", "Amber", "Rose", "Lilac", "Peach", "Sage grey"]
+
     static let breakCardRGB = ThemeRGB(hex: 0xF1DFB8)
     static let breakWaterRGB = ThemeRGB(hex: 0xDCBD82)
     static let breakSurfaceRGB = ThemeRGB(hex: 0xC9A868)
@@ -90,6 +100,18 @@ enum Theme {
     static let breakPill = breakPillRGB.color
 
     static let diveSurface = diveSurfaceRGB.color
+
+    static let tag1 = tag1RGB.color
+    static let tag2 = tag2RGB.color
+    static let tag3 = tag3RGB.color
+    static let tag4 = tag4RGB.color
+    static let tag5 = tag5RGB.color
+    static let tag6 = tag6RGB.color
+    static let tags = [tag1, tag2, tag3, tag4, tag5, tag6]
+
+    /// The tag color for a palette index. Out-of-range indexes wrap.
+    static func tag(_ index: Int) -> Color { tags[((index % tags.count) + tags.count) % tags.count] }
+    static func tagRGB(_ index: Int) -> ThemeRGB { tagRGBs[((index % tagRGBs.count) + tagRGBs.count) % tagRGBs.count] }
 
     /// Icon hover and press from the UI basics: white at 6% and 10%.
     static let hoverWashNS = NSColor(white: 1, alpha: 0.06)

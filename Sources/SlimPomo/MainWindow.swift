@@ -231,6 +231,7 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.tagColumn, tagColumn)
         .background(Theme.bgBase.ignoresSafeArea())
         .accessibilityHidden(model.isTouring)
         .overlayPreferenceValue(TourAnchorKey.self) { anchors in
@@ -262,6 +263,19 @@ struct MainWindow: View {
         }
     }
 
+    /// One tag column for queue, LATER, and Done, so names line up across the window. Zero when no visible row has a tag.
+    private var tagColumn: CGFloat {
+        var names = shown.queue.map(\.description)
+        if model.laterRowsShown {
+            names += shown.later.map(\.description)
+        }
+        if !shown.done.isEmpty, model.isExpanded(.done) {
+            let items = shown.mergedDone()
+            names += (model.doneListExpanded ? items : Array(items.prefix(3))).map(\.description)
+        }
+        return TagStyle.columnWidth(for: names)
+    }
+
     /// Finished pomodoros today. A rise while Done is collapsed flashes the header stats.
     private var doneCompletions: Int {
         shown.done.reduce(0) { $0 + $1.count }
@@ -291,8 +305,14 @@ struct MainWindow: View {
         SectionHeader(
             label: "TODO",
             stats: todoStats,
-            help: todoStats.isEmpty ? nil : "Work still in the queue, and when the last task would finish"
+            help: todoStats.isEmpty ? nil : "Work still in the queue, and when the last task would finish",
+            accessoryTrailing: IconMetrics.column.width * 2 + 8
         ) {
+            if let focus = model.tagFocus, !model.isTouring {
+                TagFocusChip(tag: focus, remaining: shown.plannedWork(tag: focus), model: model)
+                    .transition(.opacity)
+            }
+        } buttons: {
             SquareIconButton(systemName: "questionmark.circle", size: 15, slot: IconMetrics.column, help: "Tour") {
                 model.replayTour()
             }
@@ -302,6 +322,7 @@ struct MainWindow: View {
             }
             .tourTarget(.historyButton)
         }
+        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: model.tagFocus)
     }
 
     private var listScroller: some View {
@@ -1231,17 +1252,38 @@ struct SectionTitle: View {
     }
 }
 
-struct SectionHeader<Buttons: View>: View {
+struct SectionHeader<Accessory: View, Buttons: View>: View {
     var label: String
     var stats: String
     var help: String? = nil
+    /// Room kept free at the right of the accessory for the buttons.
+    var accessoryTrailing: CGFloat = 0
+    @ViewBuilder var accessory: () -> Accessory
     @ViewBuilder var buttons: () -> Buttons
+
+    init(
+        label: String,
+        stats: String,
+        help: String? = nil,
+        accessoryTrailing: CGFloat = 0,
+        @ViewBuilder accessory: @escaping () -> Accessory,
+        @ViewBuilder buttons: @escaping () -> Buttons
+    ) {
+        self.label = label
+        self.stats = stats
+        self.help = help
+        self.accessoryTrailing = accessoryTrailing
+        self.accessory = accessory
+        self.buttons = buttons
+    }
 
     var body: some View {
         HStack(spacing: RowGrid.spacing) {
             SectionTitle(label: label, stats: stats)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(SectionTitleHelp(text: help))
+            accessory()
+                .padding(.trailing, accessoryTrailing)
         }
         .frame(height: 24)
         .overlay(alignment: .trailing) {
@@ -1249,6 +1291,12 @@ struct SectionHeader<Buttons: View>: View {
                 buttons()
             }
         }
+    }
+}
+
+extension SectionHeader where Accessory == EmptyView {
+    init(label: String, stats: String, help: String? = nil, @ViewBuilder buttons: @escaping () -> Buttons) {
+        self.init(label: label, stats: stats, help: help, accessory: { EmptyView() }, buttons: buttons)
     }
 }
 
@@ -1356,11 +1404,14 @@ private struct RowCard: ViewModifier {
     }
 }
 
-struct ListRow<Gauge: View, Name: View, Rest: View>: View {
+struct ListRow<Gauge: View, TagContent: View, Name: View, Rest: View>: View {
     /// Nil lets the row grow with its content. Only a queue row that is being edited does.
     var height: CGFloat? = RowGrid.height
     var alignment: VerticalAlignment = .center
+    /// Width of the tag column between the gauge and the name. Zero leaves no column.
+    var tagWidth: CGFloat = 0
     @ViewBuilder var gauge: () -> Gauge
+    @ViewBuilder var tag: () -> TagContent
     @ViewBuilder var name: () -> Name
     @ViewBuilder var rest: () -> Rest
 
@@ -1368,6 +1419,10 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
         HStack(alignment: alignment, spacing: 0) {
             gauge()
                 .frame(width: RowGrid.gauge, alignment: .leading)
+            if tagWidth > 0 {
+                tag()
+                    .frame(width: tagWidth, alignment: .leading)
+            }
             name()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
@@ -1663,6 +1718,21 @@ private struct QueueLine: View {
     var model: AppModel
     var floating = false
 
+    @Environment(\.tagColumn) private var tagColumn
+
+    private var rowTag: String? { TaskName.tag(of: item.description) }
+
+    /// The tag column is out of the way while the name is edited: the field shows the whole raw name.
+    private var tagWidth: CGFloat { isEditing ? 0 : tagColumn }
+
+    /// The task START, or the end of a break, begins next.
+    private var isNext: Bool { model.windowSession.nextStartID == item.id }
+
+    private var barColor: Color? {
+        if showsWorkBar { return Theme.surface(item.intensity) }
+        return isNext ? Theme.surface(item.intensity).opacity(0.4) : nil
+    }
+
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
@@ -1707,6 +1777,11 @@ private struct QueueLine: View {
 
     var body: some View {
         card
+            .modifier(TagDim(
+                dimmed: !floating && model.dimmedByTagFocus(item.description),
+                hovered: revealed,
+                reduceMotion: model.reduceMotion
+            ))
             .tourTarget(!floating && item.id == TourSample.emails ? .reorderRow : nil)
             .padding(.horizontal, PageInset.horizontal)
             .padding(.bottom, floating ? 0 : RowGrid.gap)
@@ -1723,7 +1798,7 @@ private struct QueueLine: View {
     }
 
     private var card: some View {
-ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center, tagWidth: tagWidth) {
             IntensitySwitch(
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
@@ -1734,6 +1809,10 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
             .frame(height: RowGrid.height)
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model)
+            }
         } name: {
             if isEditing {
                 RowNameEditor(
@@ -1765,7 +1844,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: fill, bar: showsWorkBar ? Theme.surface(item.intensity) : nil))
+        .modifier(RowCard(fill: fill, bar: barColor))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
@@ -1793,7 +1872,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    leadingControls: RowGrid.leading + RowGrid.gauge,
+                    leadingControls: RowGrid.leading + RowGrid.gauge + (rowTag == nil ? 0 : tagWidth),
                     trailingControls: RowGrid.controlsWidth,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
@@ -1912,6 +1991,12 @@ private struct LaterLine: View {
     var model: AppModel
     var floating = false
 
+    @Environment(\.tagColumn) private var tagColumn
+
+    private var rowTag: String? { TaskName.tag(of: item.description) }
+
+    private var tagWidth: CGFloat { isEditing ? 0 : tagColumn }
+
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
@@ -1937,6 +2022,12 @@ private struct LaterLine: View {
     /// LATER rows rest at 60%. Hover, editing, and dragging bring them to full strength.
     private var full: Bool { revealed || isEditing || floating }
 
+    /// A tag focus on another tag takes a row down to 35% until it is hovered.
+    private var rowOpacity: Double {
+        if !full, !floating, model.dimmedByTagFocus(item.description) { return 0.35 }
+        return full ? 1 : 0.6
+    }
+
     private var growthAnimation: Animation? {
         model.reduceMotion ? nil : .easeOut(duration: 0.15)
     }
@@ -1952,7 +2043,7 @@ private struct LaterLine: View {
     }
 
     private var card: some View {
-ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center, tagWidth: tagWidth) {
             IntensitySwitch(
                 intensity: item.intensity,
                 reduceMotion: model.reduceMotion,
@@ -1961,6 +2052,10 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 model.updateLaterIntensity(id: item.id, intensity: item.intensity.next)
             }
             .frame(height: RowGrid.height)
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model)
+            }
         } name: {
             if isEditing {
                 RowNameEditor(
@@ -2003,8 +2098,8 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
-        .opacity(full ? 1 : 0.6)
-        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: full)
+        .opacity(rowOpacity)
+        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: rowOpacity)
         .animation(.easeOut(duration: 0.15), value: cardHovered)
         .background {
             if !floating {
@@ -2015,7 +2110,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    leadingControls: RowGrid.leading + RowGrid.gauge,
+                    leadingControls: RowGrid.leading + RowGrid.gauge + (rowTag == nil ? 0 : tagWidth),
                     trailingControls: RowGrid.controlsWidth,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
@@ -2288,7 +2383,7 @@ private final class RowMenuClickView: NSView {
         guard let hit = window?.contentView?.hitTest(event.locationInWindow) else { return false }
         var view: NSView? = hit
         while let current = view {
-            if current is NSTextView {
+            if current is NSTextView || current is TagPlateView {
                 return true
             }
             view = current.superview
@@ -2452,6 +2547,10 @@ private struct DoneLine: View {
     var item: QueueItem
     var model: AppModel
 
+    @Environment(\.tagColumn) private var tagColumn
+
+    private var rowTag: String? { TaskName.tag(of: item.description) }
+
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
@@ -2470,7 +2569,7 @@ private struct DoneLine: View {
     }
 
     private var row: some View {
-        let stack = ListRow(height: RowGrid.doneHeight) {
+        let stack = ListRow(height: RowGrid.doneHeight, tagWidth: tagColumn) {
             DepthGauge(
                 intensity: item.intensity,
                 reduceMotion: model.reduceMotion,
@@ -2478,6 +2577,10 @@ private struct DoneLine: View {
                 captionHelp: WorkedGaugeCopy.help(intensity: item.intensity, count: item.count, seconds: item.workedSeconds),
                 colorOpacity: 0.6
             )
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength)
+            }
         } name: {
             TruncatingName(text: taskName, color: Theme.textSecondary)
         } rest: {
@@ -2521,6 +2624,11 @@ private struct DoneLine: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { model.setDoneHover(item.id, hovering: $0) }
         .accessibilityAction(named: "Copy to the end of the queue") { model.requeue(id: item.id) }
+        .modifier(TagDim(
+            dimmed: model.dimmedByTagFocus(item.description),
+            hovered: revealed,
+            reduceMotion: model.reduceMotion
+        ))
         .padding(.horizontal, PageInset.horizontal)
         .padding(.bottom, RowGrid.doneGap)
         return Group {
@@ -2930,7 +3038,7 @@ struct TruncatingName: View {
     }
 }
 
-/// A task name on one line: the project label in muted small caps, then the rest of the name.
+/// A task name on one line, without its project label: the label is a tag in its own column.
 /// A name that does not fit shows its full text as a tooltip. With `onEdit`, a click on the name opens the editor.
 struct TaskNameLabel: View {
     var text: String
@@ -2974,22 +3082,12 @@ struct TaskNameLabel: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         } else {
-            HStack(spacing: 0) {
-                if let prefix = parts.prefix {
-                    Text(prefix)
-                        .font(.system(size: 11).monospacedDigit().smallCaps())
-                        .foregroundStyle(Theme.textMuted)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(.trailing, LabelStyle.gap)
-                }
-                Text(parts.rest)
-                    .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            }
+            Text(parts.rest)
+                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
     }
 }

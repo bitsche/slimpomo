@@ -21,22 +21,12 @@ enum NameFieldMetrics {
     }
 }
 
-/// Where the caret goes when a click lands on a task name drawn as a muted label plus the rest.
+/// Where the caret goes when a click lands on a task name. The tag has its own column, so the drawn name is only the rest.
 @MainActor
 enum NameCaret {
-    private static let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-
     /// UTF-16 offset in the raw name nearest to `x`, measured from the left edge of the drawn name.
     static func offset(in raw: String, x: CGFloat, semibold: Bool) -> Int {
         let parts = TaskName.split(raw)
-        var origin: CGFloat = 0
-        if let prefix = parts.prefix {
-            let width = (prefix as NSString).size(withAttributes: [.font: labelFont]).width
-            if x < width + LabelStyle.gap {
-                return x < width / 2 ? 0 : parts.restOffset
-            }
-            origin = width + LabelStyle.gap
-        }
         let storage = NSTextStorage(string: parts.rest, attributes: [.font: NameFieldMetrics.font(semibold: semibold)])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: 100_000, height: 100_000))
@@ -46,7 +36,7 @@ enum NameCaret {
         guard layout.numberOfGlyphs > 0 else { return parts.restOffset }
         var fraction: CGFloat = 0
         let index = layout.characterIndex(
-            for: NSPoint(x: max(0, x - origin), y: 4),
+            for: NSPoint(x: max(0, x), y: 4),
             in: container,
             fractionOfDistanceBetweenInsertionPoints: &fraction
         )
@@ -55,7 +45,7 @@ enum NameCaret {
     }
 }
 
-/// The muted project label in front of a task name.
+/// The gap between a tag and the name after it where the tag is drawn inline, as in the tank's Next line.
 enum LabelStyle {
     static let gap: CGFloat = 6
 }
@@ -94,13 +84,8 @@ enum NameTruncation {
     static func isTruncated(_ text: String, semibold: Bool, width: CGFloat) -> Bool {
         guard width > 1 else { return false }
         let parts = TaskName.split(text)
-        var available = width
-        if let prefix = parts.prefix {
-            let prefixWidth = (prefix as NSString).size(withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)]).width
-            available -= prefixWidth + LabelStyle.gap
-        }
         let drawn = (parts.rest as NSString).size(withAttributes: [.font: NameFieldMetrics.font(semibold: semibold)]).width
-        return drawn > available + 0.5
+        return drawn > width + 0.5
     }
 }
 

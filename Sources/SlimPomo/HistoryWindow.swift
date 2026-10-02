@@ -169,6 +169,13 @@ private enum HistoryMetrics {
 struct HistoryWindow: View {
     var model: AppModel
 
+    private var historyDays: [HistoryDay] { model.historyDays }
+
+    /// History has its own tag column, as wide as the widest tag on any day.
+    private var tagColumn: CGFloat {
+        TagStyle.columnWidth(for: historyDays.lazy.flatMap { $0.rows }.map(\.taskName))
+    }
+
     var body: some View {
         Group {
             if model.historyDays.isEmpty {
@@ -180,7 +187,7 @@ struct HistoryWindow: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(model.historyDays.enumerated()), id: \.element.id) { index, day in
+                        ForEach(Array(historyDays.enumerated()), id: \.element.id) { index, day in
                             HistoryDaySection(day: day, now: model.now, model: model)
                                 .padding(.top, index == 0 ? 0 : 14 - RowGrid.doneGap)
                         }
@@ -192,6 +199,7 @@ struct HistoryWindow: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.tagColumn, tagColumn)
         .background(Theme.bgBase.ignoresSafeArea())
         .preferredColorScheme(.dark)
     }
@@ -206,6 +214,10 @@ private struct HistoryDaySection: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeader(label: HistoryDayTitle.text(for: day.day, now: now), stats: TimeFormat.span(TimeInterval(day.workedSeconds))) {
                 EmptyView()
+            }
+            let breakdown = TagBreakdown(rows: day.rows)
+            if !breakdown.all.isEmpty {
+                TagBreakdownLine(breakdown: breakdown, model: model)
             }
             VStack(spacing: 0) {
                 ForEach(day.rows, id: \.id) { row in
@@ -222,6 +234,10 @@ private struct HistoryLine: View {
     var day: Date
     var row: HistoryRow
     var model: AppModel
+
+    @Environment(\.tagColumn) private var tagColumn
+
+    private var rowTag: String? { TaskName.tag(of: row.taskName) }
     private var revealed: Bool {
         model.hoveredHistoryID == hoverID
     }
@@ -231,7 +247,7 @@ private struct HistoryLine: View {
     }
 
     var body: some View {
-        ListRow(height: RowGrid.doneHeight) {
+        ListRow(height: RowGrid.doneHeight, tagWidth: tagColumn) {
             DepthGauge(
                 intensity: row.mode,
                 reduceMotion: model.reduceMotion,
@@ -239,6 +255,10 @@ private struct HistoryLine: View {
                 captionHelp: WorkedGaugeCopy.help(intensity: row.mode, count: row.count, seconds: row.workedSeconds),
                 colorOpacity: 0.6
             )
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength, focusable: false)
+            }
         } name: {
             TruncatingName(
                 text: row.taskName.isEmpty ? "Untitled" : row.taskName,
@@ -283,24 +303,5 @@ private struct HistoryLine: View {
         .accessibilityAction(named: "Copy to the end of the queue") {
             model.requeueHistory(rowID: row.id, day: day)
         }
-    }
-}
-
-enum HistoryDayTitle {
-    static func text(for day: Date, now: Date, calendar: Calendar = .current) -> String {
-        if calendar.isDate(day, inSameDayAs: now) {
-            return "Today"
-        }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)),
-           calendar.isDate(day, inSameDayAs: yesterday) {
-            return "Yesterday"
-        }
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = calendar.locale ?? .current
-        formatter.timeZone = calendar.timeZone
-        let sameYear = calendar.component(.year, from: day) == calendar.component(.year, from: now)
-        formatter.dateFormat = sameYear ? "EEE d MMM" : "EEE d MMM yyyy"
-        return formatter.string(from: day)
     }
 }
