@@ -1383,45 +1383,28 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
-/// The marker: `width` pt wide along the straight left edge, curved on the inside too, tapering to nothing into the
-/// top and bottom edges. It is one path, so nothing is drawn along the straight edges.
-///
-/// The inner edge is the card shape moved right by `width`, with a corner radius smaller by about `width / 1.5`.
-/// A continuous corner runs about 1.5 radii along each edge, so the inner curve then reaches the straight top and bottom
-/// at the very point where the card's own corner does, and the two curves meet tangentially there. With the same radius
-/// the gap between them stays a fraction of a point for many points past the corner, which shows as a thin wing along the edge.
-private struct Crescent: Shape {
-    var width: CGFloat
-    var cornerRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let outer = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        let inner = RoundedRectangle(cornerRadius: max(0, cornerRadius - width / 1.5), style: .continuous)
-        // Wider than the card so the inner shape's right corners lie outside it and take nothing away there.
-        let innerRect = CGRect(x: rect.minX + width, y: rect.minY, width: rect.width + 2 * cornerRadius, height: rect.height)
-        return outer.path(in: rect).subtracting(inner.path(in: innerRect))
-    }
-}
-
-/// The card behind a queue or LATER row. The marker of the running task, or of the next one at 40%, is a `Crescent`
-/// over the card, and the card's clip keeps it inside.
+/// The card behind a queue or LATER row. The running task, and the next one at 40%, get a 3 pt bar at the left edge,
+/// clipped by the card's rounded corners.
 private struct RowCard: ViewModifier {
     var fill: Color
     var bar: Color? = nil
 
-    private static let shape = RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
-
     func body(content: Content) -> some View {
         content
             .background {
-                ZStack {
-                    Self.shape.fill(fill)
-                    if let bar {
-                        Crescent(width: 3, cornerRadius: RowGrid.radius).fill(bar)
+                RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+                    .fill(fill)
+            }
+            .overlay {
+                if let bar {
+                    HStack(spacing: 0) {
+                        bar.frame(width: 3)
+                        Spacer(minLength: 0)
                     }
+                    .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
+                    .allowsHitTesting(false)
                 }
             }
-            .clipShape(Self.shape)
     }
 }
 
