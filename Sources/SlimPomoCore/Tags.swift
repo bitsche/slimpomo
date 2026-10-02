@@ -107,14 +107,6 @@ extension Session {
         return queue.first { $0.count > 0 }?.id
     }
 
-    /// Planned work still in the queue for one tag.
-    public func plannedWork(tag: String) -> TimeInterval {
-        queue.reduce(0) { total, item in
-            guard TaskName.tag(of: item.description) == tag else { return total }
-            return total + TimeInterval(max(0, item.count)) * item.intensity.workDuration
-        }
-    }
-
     /// Every tag in use, in order of first appearance: History events, then Done, LATER, and the queue.
     public func tagsByFirstAppearance() -> [String] {
         var seen = Set<String>()

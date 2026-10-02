@@ -4,16 +4,16 @@ import SlimPomoCore
 
 /// Look and measure of a tag, the project label in front of a task name. Display only: the stored name keeps its text.
 enum TagStyle {
-    static let fontSize: CGFloat = 10.5
-    /// 0.06 em of the font size.
-    static let tracking: CGFloat = fontSize * 0.06
+    static let fontSize: CGFloat = 11
+    /// 0.04 em of the font size.
+    static let tracking: CGFloat = fontSize * 0.04
     /// Space between the widest label and the name column.
     static let columnGap: CGFloat = 8
     static let minColumn: CGFloat = 28
     /// A tag in Done and History is quieter.
     static let doneStrength = 0.6
 
-    @MainActor private static let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold)
+    @MainActor private static let font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .regular)
 
     @MainActor private static var widths: [String: CGFloat] = [:]
 
@@ -52,255 +52,20 @@ extension EnvironmentValues {
     }
 }
 
-/// A tag in its color. In the main window a click focuses the tag; everywhere, a right-click changes its color.
+/// A tag in its color: the old muted prefix, 11 pt regular, with only the color changed. Plain text, not a control.
 struct TagLabel: View {
     var tag: String
     var model: AppModel
     /// 1 in the queue and LATER, `TagStyle.doneStrength` in Done and History.
     var strength = 1.0
-    /// False in History, where a click does nothing.
-    var focusable = true
-
-    private var index: Int { model.tagColorIndex(tag) }
-    private var focused: Bool { model.tagFocus == tag }
 
     var body: some View {
         Text(tag)
-            .font(.system(size: TagStyle.fontSize, weight: .semibold).monospacedDigit())
+            .font(.system(size: TagStyle.fontSize).monospacedDigit().smallCaps())
             .tracking(TagStyle.tracking)
-            .foregroundStyle(Theme.tag(index).opacity(strength))
+            .foregroundStyle(Theme.tag(model.tagColorIndex(tag)).opacity(strength))
             .lineLimit(1)
             .fixedSize()
-            .overlay {
-                TagPlate(
-                    tip: focusable ? (focused ? "Show all tasks" : "Show only \(tag)") : "Right-click to change the color",
-                    clickable: focusable,
-                    onClick: { model.toggleTagFocus(tag) },
-                    onContext: { TagColorMenu.show(tag: tag, model: model) }
-                )
-                .padding(.horizontal, -4)
-                .padding(.vertical, -6)
-            }
-            .pointingHandCursor(enabled: focusable)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(focusable ? "Focus \(tag)" : tag)
-            .accessibilityAddTraits(focusable ? .isButton : [])
-            .accessibilityAction(.default) {
-                if focusable { model.toggleTagFocus(tag) }
-            }
-            .accessibilityAction(named: "Change color of \(tag)") {
-                TagColorMenu.show(tag: tag, model: model)
-            }
-    }
-}
-
-/// The tag's hit area: a click, a right-click, a tooltip, and a hover wash. It sits over the text.
-struct TagPlate: NSViewRepresentable {
-    var tip: String
-    var clickable: Bool
-    var onClick: () -> Void
-    var onContext: () -> Void
-
-    func makeNSView(context: Context) -> TagPlateView {
-        let view = TagPlateView()
-        view.setAccessibilityElement(false)
-        apply(to: view)
-        return view
-    }
-
-    func updateNSView(_ nsView: TagPlateView, context: Context) {
-        apply(to: nsView)
-    }
-
-    private func apply(to view: TagPlateView) {
-        view.toolTip = tip
-        view.clickable = clickable
-        view.onClick = onClick
-        view.onContext = onContext
-        view.window?.invalidateCursorRects(for: view)
-    }
-}
-
-final class TagPlateView: NSView {
-    var clickable = true
-    var onClick: (() -> Void)?
-    var onContext: (() -> Void)?
-    private var hovering = false
-    private var pressed = false
-
-    override var isOpaque: Bool { false }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func resetCursorRects() {
-        discardCursorRects()
-        if clickable, !AppRuntime.model.isTouring {
-            addCursorRect(bounds, cursor: .pointingHand)
-        }
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas {
-            removeTrackingArea(area)
-        }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        ))
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        setHovering(true)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        setHovering(false)
-    }
-
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
-        super.viewWillMove(toWindow: newWindow)
-        if newWindow == nil {
-            setHovering(false)
-            pressed = false
-        }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard clickable, let fill = pressed ? IconMetrics.pressed : (hovering ? IconMetrics.hover : nil) else { return }
-        fill.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: IconMetrics.radius, yRadius: IconMetrics.radius).fill()
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard clickable, !AppRuntime.model.isTouring else { return }
-        pressed = true
-        needsDisplay = true
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        let wasPressed = pressed
-        pressed = false
-        needsDisplay = true
-        guard wasPressed, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
-        onClick?()
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        guard !AppRuntime.model.isTouring else { return }
-        onContext?()
-    }
-
-    private func setHovering(_ value: Bool) {
-        guard hovering != value else { return }
-        hovering = value
-        needsDisplay = true
-    }
-}
-
-private final class TagColorTarget: NSObject {
-    let action: () -> Void
-
-    init(_ action: @escaping () -> Void) {
-        self.action = action
-    }
-
-    @objc func fire(_ sender: Any?) {
-        action()
-    }
-}
-
-/// The menu a right-click on a tag opens: the tag's name, then the six colors with a swatch and a checkmark on the current one.
-@MainActor
-enum TagColorMenu {
-    static func show(tag: String, model: AppModel) {
-        let menu = NSMenu(title: tag)
-        menu.appearance = NSAppearance(named: .darkAqua)
-        let header = NSMenuItem(title: tag, action: nil, keyEquivalent: "")
-        header.isEnabled = false
-        menu.addItem(header)
-        menu.addItem(.separator())
-        let current = model.tagColorIndex(tag)
-        var targets: [TagColorTarget] = []
-        for index in 0..<TagPalette.size {
-            let item = NSMenuItem(title: Theme.tagNames[index], action: #selector(TagColorTarget.fire(_:)), keyEquivalent: "")
-            let target = TagColorTarget { model.setTagColor(tag, colorIndex: index) }
-            targets.append(target)
-            item.target = target
-            item.image = swatch(index)
-            item.state = index == current ? .on : .off
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-        _ = targets
-    }
-
-    private static func swatch(_ index: Int) -> NSImage {
-        let color = Theme.tagRGB(index).nsColor
-        let image = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
-            return true
-        }
-        image.isTemplate = false
-        return image
-    }
-}
-
-/// Fades a row to 35% while another tag has the focus. Hover brings it back to full strength.
-struct TagDim: ViewModifier {
-    var dimmed: Bool
-    var hovered: Bool
-    var reduceMotion: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(dimmed && !hovered ? 0.35 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: dimmed && !hovered)
-    }
-}
-
-/// The TODO header's chip while a tag has the focus: the tag, the work still planned for it, and a clear button.
-struct TagFocusChip: View {
-    var tag: String
-    var remaining: TimeInterval
-    var model: AppModel
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(tag)
-                .font(.system(size: TagStyle.fontSize, weight: .semibold).monospacedDigit())
-                .tracking(TagStyle.tracking)
-                .foregroundStyle(Theme.tag(model.tagColorIndex(tag)))
-                .lineLimit(1)
-                .fixedSize()
-            Text("· \(TimeFormat.span(remaining))")
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(Theme.textMuted)
-                .lineLimit(1)
-                .fixedSize()
-            SquareIconButton(
-                systemName: "xmark",
-                size: 9,
-                weight: .bold,
-                slot: IconMetrics.column,
-                help: "Clear focus"
-            ) {
-                model.clearTagFocus()
-            }
-            .padding(.vertical, -2)
-        }
-        .padding(.leading, 8)
-        .padding(.trailing, 0)
-        .frame(height: 24)
-        .background {
-            RoundedRectangle(cornerRadius: IconMetrics.radius, style: .continuous)
-                .fill(Theme.bgCard)
-        }
-        .fixedSize()
-        .accessibilityElement(children: .contain)
     }
 }
 

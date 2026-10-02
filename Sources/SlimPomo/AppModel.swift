@@ -57,10 +57,8 @@ final class AppModel {
     var pointerDrivenInput = false
     /// The row whose stepper has keyboard focus, so its hover cluster stays visible.
     var focusedStepperID: UUID?
-    /// Which of the six colors each tag has. Saved with the other UI state.
+    /// Which of the six colors each tag has. Assigned automatically and saved with the other UI state.
     var tagColors = TagPalette()
-    /// The tag the lists are narrowed to by dimming. Visual only, and not saved.
-    var tagFocus: String?
     var reduceMotion = false
     var queueDrag: QueueDragController?
     /// True for the frame that commits a drag, so the list does not animate a second time.
@@ -876,19 +874,11 @@ final class AppModel {
         let effect = change(&session)
         bell.play(effect)
         syncTagColors()
-        dropStaleTagFocus()
         syncBreakMessage()
         store.save(session.snapshot(at: now))
         ensureTicker()
         reconcileQueueDrag()
         dropStaleNameEdit()
-    }
-
-    /// Focus on a tag that no row shows any more ends by itself.
-    private func dropStaleTagFocus() {
-        guard let focus = tagFocus else { return }
-        let rows = session.queue.map(\.description) + session.later.map(\.description) + session.done.map(\.description)
-        if !rows.contains(where: { TaskName.tag(of: $0) == focus }) { tagFocus = nil }
     }
 
     /// A row that left the queue (finished, deleted, snoozed) takes its open edit with it.
@@ -1243,7 +1233,7 @@ final class AppModel {
             }
             if event.keyCode == 53 {
                 let handled = MainActor.assumeIsolated {
-                    AppRuntime.model.cancelQueueDrag() || AppRuntime.model.endTagFocusFromKeyboard()
+                    AppRuntime.model.cancelQueueDrag()
                 }
                 if handled { return nil }
             }
@@ -1266,14 +1256,6 @@ final class AppModel {
             }
             return handled ? nil : event
         }
-    }
-
-    /// Esc ends tag focus, unless a text field is open: its Esc cancels the edit first.
-    func endTagFocusFromKeyboard() -> Bool {
-        guard tagFocus != nil else { return false }
-        if NSApp.keyWindow?.firstResponder is NSText { return false }
-        tagFocus = nil
-        return true
     }
 
     private func installInputModeMonitor() {
@@ -1353,27 +1335,6 @@ final class AppModel {
     /// The palette index a tag is drawn with.
     func tagColorIndex(_ tag: String) -> Int {
         tagColors.colorIndex(for: tag) ?? 0
-    }
-
-    func setTagColor(_ tag: String, colorIndex: Int) {
-        tagColors.set(tag, colorIndex: colorIndex)
-        saveTagColors()
-    }
-
-    /// Clicking a tag narrows the lists to it. Clicking it again ends that.
-    func toggleTagFocus(_ tag: String) {
-        guard tour == nil else { return }
-        tagFocus = tagFocus == tag ? nil : tag
-    }
-
-    func clearTagFocus() {
-        tagFocus = nil
-    }
-
-    /// Whether a row with this name is dimmed by the tag focus.
-    func dimmedByTagFocus(_ name: String) -> Bool {
-        guard let focus = tagFocus else { return false }
-        return TaskName.tag(of: name) != focus
     }
 
     private func ensureTicker() {

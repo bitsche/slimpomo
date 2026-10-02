@@ -75,17 +75,6 @@ struct TagTests {
         #expect(palette.colorIndex(for: "QUEUE") == 2)
     }
 
-    @Test func plannedWorkSumsCountTimesModeForOneTag() {
-        var s = Session()
-        s.addItem(description: "NIQO: a", intensity: .regular, count: 2)
-        s.addItem(description: "niqo: b", intensity: .focus, count: 1)
-        s.addItem(description: "ANTI: c", intensity: .regular, count: 3)
-        s.addItem(description: "d", intensity: .regular, count: 3)
-        let expected = 2 * Intensity.regular.workDuration + Intensity.focus.workDuration
-        #expect(s.plannedWork(tag: "NIQO") == expected)
-        #expect(s.plannedWork(tag: "NONE") == 0)
-    }
-
     @Test func breakdownSortsBiggestFirstAndOtherLast() {
         let rows = [
             row("ANTI: a", 4_500),

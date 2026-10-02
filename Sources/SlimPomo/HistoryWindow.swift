@@ -257,7 +257,7 @@ private struct HistoryLine: View {
             )
         } tag: {
             if let rowTag {
-                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength, focusable: false)
+                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength)
             }
         } name: {
             TruncatingName(
