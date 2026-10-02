@@ -53,6 +53,10 @@ final class AppModel {
     var breakMessage: String?
     /// Bumped when a click lands outside a text field, so open editors resign.
     var textFocusNonce = 0
+    /// True from a mouse press until the next key press. Focus rings and focus-driven reveals only show for keyboard focus.
+    var pointerDrivenInput = false
+    /// The row whose stepper has keyboard focus, so its hover cluster stays visible.
+    var focusedStepperID: UUID?
     var reduceMotion = false
     var queueDrag: QueueDragController?
     /// True for the frame that commits a drag, so the list does not animate a second time.
@@ -89,6 +93,7 @@ final class AppModel {
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var tourCursorMonitor: Any?
     @ObservationIgnored private var focusMonitor: Any?
+    @ObservationIgnored private var inputModeMonitor: Any?
     @ObservationIgnored private var queueDragMonitor: Any?
     @ObservationIgnored private var queueScrollTask: Task<Void, Never>?
     @ObservationIgnored private var queueSettleTask: Task<Void, Never>?
@@ -118,6 +123,7 @@ final class AppModel {
         loaded.migrateWorkedSecondsIfNeeded()
         loaded.refreshDoneDay(now: moment)
         loaded.orderDoneNewestFirst()
+        loaded.migrateLaterOrderIfNeeded()
         loaded.returnDueLater(now: moment)
         session = loaded
         if let raw = UserDefaults.standard.string(forKey: Self.draftIntensityKey),
@@ -140,6 +146,7 @@ final class AppModel {
         scheduleMidnight()
         installKeyMonitor()
         installFocusMonitor()
+        installInputModeMonitor()
         installTourCursorMonitor()
         PointingHand.install()
         if !store.tourSeen {
@@ -151,11 +158,6 @@ final class AppModel {
 
     /// What the main window draws. The menu bar and the saved session stay on `session`.
     var windowSession: Session { tourSample ?? session }
-
-    var tourGripItemID: UUID? {
-        guard tour?.step == .reorder else { return nil }
-        return TourSample.emails
-    }
 
     /// Sample row whose hover-only details the current tour step is pointing at.
     var tourQueueRevealID: UUID? {
@@ -176,6 +178,11 @@ final class AppModel {
     var tourDoneRevealID: UUID? {
         guard tour?.step == .done else { return nil }
         return windowSession.mergedDone().first?.id
+    }
+
+    /// Whether a focused custom control draws its focus ring or its focus-driven reveal.
+    func focusVisible(_ focused: Bool) -> Bool {
+        focused && !pointerDrivenInput
     }
 
     /// Ends editing when a click misses every text field. Buttons still receive the click.
@@ -257,19 +264,28 @@ final class AppModel {
         descriptionDrafts[item.id] ?? item.description
     }
 
+    func descriptionDraft(id: UUID, fallback: String) -> String {
+        descriptionDrafts[id] ?? fallback
+    }
+
     func setDescriptionDraft(id: UUID, text: String) {
         descriptionDrafts[id] = text
+    }
+
+    private func savedDescription(of id: UUID) -> String? {
+        session.queue.first { $0.id == id }?.description ?? session.later.first { $0.id == id }?.description
     }
 
     /// Saves the open edit. A name that ends up empty is ignored and the old text stays.
     func commitDescriptionDraft(id: UUID) {
         guard let current = descriptionDrafts.removeValue(forKey: id) else { return }
         let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              let item = session.queue.first(where: { $0.id == id }),
-              item.description != trimmed
-        else { return }
-        updateDescription(id: id, description: trimmed)
+        guard !trimmed.isEmpty, let saved = savedDescription(of: id), saved != trimmed else { return }
+        if session.queue.contains(where: { $0.id == id }) {
+            updateDescription(id: id, description: trimmed)
+        } else {
+            updateLaterDescription(id: id, description: trimmed)
+        }
     }
 
     func commitAllDescriptionDrafts() {
@@ -279,15 +295,15 @@ final class AppModel {
         editingQueueID = nil
     }
 
-    /// Opens a queue name for editing with its raw text. Another open edit is saved first.
+    /// Opens a queue or LATER name for editing with its raw text. Another open edit is saved first.
     func beginNameEdit(id: UUID) {
         guard tour == nil, queueDrag == nil, editingQueueID != id,
-              let item = session.queue.first(where: { $0.id == id })
+              let text = savedDescription(of: id)
         else { return }
         if let open = editingQueueID {
             commitDescriptionDraft(id: open)
         }
-        descriptionDrafts[id] = item.description
+        descriptionDrafts[id] = text
         editingQueueID = id
     }
 
@@ -326,9 +342,10 @@ final class AppModel {
               let clip = anchor.enclosingScrollView?.contentView,
               let index = session.queue.firstIndex(where: { $0.id == id })
         else { return true }
-        let rowHeight = queueRowHeight(anchor: anchor)
-        let top = clip.convert(CGPoint(x: 0, y: CGFloat(index) * rowHeight), from: anchor)
-        let bottom = clip.convert(CGPoint(x: 0, y: CGFloat(index + 1) * rowHeight), from: anchor)
+        let rowHeight = DragMetrics.stride
+        let first = DragMetrics.queueTopPadding
+        let top = clip.convert(CGPoint(x: 0, y: first + CGFloat(index) * rowHeight), from: anchor)
+        let bottom = clip.convert(CGPoint(x: 0, y: first + CGFloat(index + 1) * rowHeight), from: anchor)
         let minY = min(top.y, bottom.y)
         let maxY = max(top.y, bottom.y)
         return minY < clip.bounds.minY + 1 || maxY > clip.bounds.maxY - 1
@@ -351,6 +368,27 @@ final class AppModel {
     func updateIntensity(id: UUID, intensity: Intensity) {
         apply { session in
             session.updateIntensity(id: id, intensity: intensity)
+            return .none
+        }
+    }
+
+    func updateLaterDescription(id: UUID, description: String) {
+        apply { session in
+            session.updateLaterDescription(id: id, description: description)
+            return .none
+        }
+    }
+
+    func updateLaterIntensity(id: UUID, intensity: Intensity) {
+        apply { session in
+            session.updateLaterIntensity(id: id, intensity: intensity)
+            return .none
+        }
+    }
+
+    func setLaterCount(id: UUID, count: Int) {
+        apply { session in
+            session.setLaterCount(id: id, count: count)
             return .none
         }
     }
@@ -508,36 +546,139 @@ final class AppModel {
         queueScrollView = anchor.enclosingScrollView
     }
 
-    func beginQueueDrag(id: UUID) {
-        guard tour == nil else { return }
-        guard queueDrag == nil, session.canReorder(id: id) else { return }
-        guard let index = session.queue.firstIndex(where: { $0.id == id }),
-              let anchor = queueListAnchor,
-              let pointer = pointerInQueueList()
-        else { return }
-        let rowHeight = queueRowHeight(anchor: anchor)
-        guard rowHeight > 1 else { return }
+    /// Where a task of this day may land, and what the list looks like around it. See `DragGeometry`.
+    private enum DragLayout {
+        case resting
+        case planning
+        case final
+    }
+
+    /// The queue and every LATER day as the drag logic sees them. `held` is left out of its region's count.
+    private func dragRegions(layout: DragLayout, excluding held: UUID?) -> [DragRegionSpec] {
+        let queue = session.queue.filter { $0.id != held }.count
+        let open = layout == .planning || isExpanded(.later)
+        var specs = [
+            DragRegionSpec(
+                id: .queue,
+                items: queue,
+                slots: held == nil ? 0...queue : session.queueSlots(excluding: held),
+                showsZoneWhenEmpty: false
+            )
+        ]
+        for day in planDays {
+            let items = session.later.filter { $0.returnDay == day.day && $0.id != held }.count
+            specs.append(DragRegionSpec(
+                id: .day(day.day),
+                items: items,
+                slots: 0...items,
+                showsZoneWhenEmpty: layout == .planning,
+                visible: open
+            ))
+        }
+        return specs
+    }
+
+    /// The days LATER offers while planning, plus any day that already holds tasks.
+    var planDays: [PlanDay] {
+        Snooze.planDays(on: now, existing: session.later.map(\.returnDay))
+    }
+
+    private func dragLayout(for drag: QueueDragController) -> DragLayout {
+        drag.finalLayout ? .final : .planning
+    }
+
+    /// The bands the pointer maps through, for the dev overlay.
+    func dropBands(for drag: QueueDragController) -> [DropBand] {
+        DropMap.bands(regions: dragRegions(layout: .planning, excluding: drag.itemID), held: drag.slot)
+    }
+
+    private func dragBlocks(for drag: QueueDragController) -> [DragBlock] {
+        DragGeometry.blocks(dragRegions(layout: dragLayout(for: drag), excluding: drag.itemID), held: drag.slot.region)
+    }
+
+    /// Row ids of one region in the order they are drawn, with the held task at its slot and a nil for a drop zone.
+    func dragRowIDs(region: DragRegionID, drag: QueueDragController) -> [UUID?] {
+        var ids: [UUID?]
+        switch region {
+        case .queue:
+            ids = session.queue.map(\.id).filter { $0 != drag.itemID }
+        case .day(let day):
+            ids = session.later.filter { $0.returnDay == day && $0.id != drag.itemID }.map(\.id)
+        }
+        if drag.slot.region == region {
+            ids.insert(drag.itemID, at: min(max(0, drag.slot.index), ids.count))
+        } else if ids.isEmpty, case .day = region, drag.isPlanning {
+            ids = [nil]
+        }
+        return ids
+    }
+
+    /// Whether the LATER block exists while a task is held.
+    var laterBlockShown: Bool {
+        let shown = windowSession
+        guard let drag = queueDrag else { return !shown.later.isEmpty }
+        if drag.isPlanning { return true }
+        var count = session.later.count
+        if drag.source == .queue, drag.slot.region != .queue { count += 1 }
+        if drag.source == .later, drag.slot.region == .queue { count -= 1 }
+        return count > 0
+    }
+
+    /// Whether LATER's rows are on screen. A held task opens LATER for as long as it is held.
+    var laterRowsShown: Bool {
+        if let drag = queueDrag, drag.isPlanning { return true }
+        return isExpanded(.later)
+    }
+
+    /// True while the list shows drop targets, so hover details and the depth hint step aside.
+    var isDraggingRow: Bool { queueDrag != nil }
+
+    func canDragRow(id: UUID) -> Bool {
+        tour == nil && session.canDrag(id: id)
+    }
+
+    /// Lifts a row. `pressedAt` is where the button went down (window coordinates), so the row
+    /// keeps the offset the pointer had when it was grabbed, not where it was after the 4 pt move.
+    func beginQueueDrag(id: UUID, pressedAt: NSPoint? = nil) {
+        guard tour == nil, queueDrag == nil, session.canDrag(id: id) else { return }
+        let source: QueueDragController.Source
+        let region: DragRegionID
+        let index: Int
+        if let position = session.queue.firstIndex(where: { $0.id == id }) {
+            source = .queue
+            region = .queue
+            index = position
+        } else if let later = session.later.first(where: { $0.id == id }) {
+            let day = session.later.filter { $0.returnDay == later.returnDay }
+            source = .later
+            region = .day(later.returnDay)
+            index = day.firstIndex { $0.id == id } ?? 0
+        } else {
+            return
+        }
+        guard let anchor = queueListAnchor, let pointer = pointerInQueueList() else { return }
+        let grabbed = pressedAt.map { anchor.convert($0, from: nil) } ?? pointer
         commitAllDescriptionDrafts()
         releaseTextFocus()
-        let rowTop = CGFloat(index) * rowHeight
+        let resting = DragGeometry.blocks(dragRegions(layout: .resting, excluding: nil), held: nil)
+        guard let blockIndex = dragRegions(layout: .resting, excluding: nil).firstIndex(where: { $0.id == region }) else { return }
+        let rowTop = DragGeometry.tops(resting)[blockIndex] + CGFloat(index) * DragMetrics.stride
         let origin = viewportPoint(forListPoint: CGPoint(x: 0, y: rowTop))
         let drag = QueueDragController(
             itemID: id,
-            originIndex: index,
-            gapIndex: index,
-            rowHeight: rowHeight,
+            source: source,
+            origin: DragSlot(region: region, index: index),
             rowWidth: anchor.bounds.width,
             visualX: origin.x,
             visualY: origin.y,
-            grabOffset: pointer.y - rowTop
+            grabOffset: grabbed.y - rowTop
         )
-        queueDrag = drag
-        let snapped = session.nearestReorderDestination(for: id, proposed: index) ?? index
-        if snapped != index {
-            withAnimation(QueueMotion.slide(reduceMotion)) {
-                drag.gapIndex = snapped
-            }
+        let restingTop = viewportPoint(forListPoint: CGPoint(x: 0, y: rowTop)).y
+        let restingHeight = queueScrollView?.documentView?.frame.height ?? 0
+        withAnimation(reduceMotion ? nil : QueueMotion.slide(false)) {
+            queueDrag = drag
         }
+        keepRowUnderPointer(id: id, region: region, index: index, restingTop: restingTop, restingHeight: restingHeight)
         if !reduceMotion {
             withAnimation(QueueMotion.lift(reduceMotion)) {
                 drag.lifted = true
@@ -545,28 +686,68 @@ final class AppModel {
         }
         NSCursor.closedHand.set()
         installQueueDragMonitor()
+        trackQueueDrag()
+    }
+
+    /// LATER opens and empty days draw drop zones when a row lifts. If that pushes the held row's own
+    /// slot down (a zone above it), the list scrolls by the same amount so the area under the pointer stays put.
+    /// The new layout is only on screen once the list's height has changed, so this looks again a few times.
+    private func keepRowUnderPointer(id: UUID, region: DragRegionID, index: Int, restingTop: CGFloat, restingHeight: CGFloat) {
+        Task { @MainActor [weak self] in
+            for delay in [0, 16, 32, 64] {
+                if delay > 0 { try? await Task.sleep(for: .milliseconds(delay)) }
+                guard let self, let drag = self.queueDrag, drag.itemID == id, drag.phase == .dragging else { return }
+                self.queueScrollView?.documentView?.layoutSubtreeIfNeeded()
+                guard abs((self.queueScrollView?.documentView?.frame.height ?? 0) - restingHeight) > 0.5 else { continue }
+                let planned = DragGeometry.blocks(self.dragRegions(layout: .planning, excluding: id), held: region)
+                guard let blockIndex = self.dragRegions(layout: .planning, excluding: id).firstIndex(where: { $0.id == region }) else { return }
+                let top = DragGeometry.tops(planned)[blockIndex] + CGFloat(index) * DragMetrics.stride
+                let shift = self.viewportPoint(forListPoint: CGPoint(x: 0, y: top)).y - restingTop
+                guard abs(shift) > 0.5 else { continue }
+                self.scrollList(by: shift)
+                return
+            }
+        }
+    }
+
+    private func scrollList(by delta: CGFloat) {
+        guard let scroll = queueScrollView else { return }
+        let clip = scroll.contentView
+        let visible = clip.bounds.height
+        var origin = clip.bounds.origin
+        let before = origin
+        origin.y += clip.isFlipped ? delta : -delta
+        let docHeight = scroll.documentView?.frame.height ?? 0
+        origin.y = min(max(origin.y, 0), max(0, docHeight - visible))
+        guard origin != before else { return }
+        clip.scroll(to: origin)
+        scroll.reflectScrolledClipView(clip)
     }
 
     func trackQueueDrag() {
         guard let drag = queueDrag, drag.phase == .dragging else { return }
         guard let pointer = pointerInQueueList(), let anchor = queueListAnchor else { return }
-        let rowHeight = queueRowHeight(anchor: anchor)
-        drag.rowHeight = rowHeight
         drag.rowWidth = anchor.bounds.width
-        if let range = session.reorderDestinations(for: drag.itemID) {
-            let next = QueueDrop.gapIndex(
-                pointerY: pointer.y,
-                rowHeight: rowHeight,
-                gap: drag.gapIndex,
-                lower: range.lowerBound,
-                upper: range.upperBound
-            )
-            if next != drag.gapIndex {
-                withAnimation(QueueMotion.slide(reduceMotion)) {
-                    drag.gapIndex = next
-                }
+        let specs = dragRegions(layout: .planning, excluding: drag.itemID)
+        let next = DropMap.resolve(pointerY: pointer.y, regions: specs, current: DropTarget(slot: drag.slot, carried: drag.carried))
+        drag.carried = next.carried
+        if next.slot != drag.slot {
+            withAnimation(QueueMotion.slide(reduceMotion)) {
+                drag.slot = next.slot
             }
         }
+        let blocks = DragGeometry.blocks(specs, held: drag.slot.region)
+        var highlighted: UUID?
+        if let hit = DragGeometry.rowCell(at: pointer.y, in: blocks) {
+            let ids = dragRowIDs(region: hit.region, drag: drag)
+            if hit.row < ids.count, let id = ids[hit.row], id != drag.itemID {
+                highlighted = id
+            }
+        }
+        if drag.highlightedID != highlighted {
+            drag.highlightedID = highlighted
+        }
+        springLoadLater(pointerY: pointer.y, blocks: blocks, drag: drag)
         let rowTop = pointer.y - drag.grabOffset
         let origin = viewportPoint(forListPoint: CGPoint(x: 0, y: rowTop))
         drag.visualX = origin.x
@@ -574,12 +755,33 @@ final class AppModel {
         NSCursor.closedHand.set()
     }
 
+    /// Holding a task over a collapsed LATER header for 0.6 s opens it for good.
+    private func springLoadLater(pointerY: CGFloat, blocks: [DragBlock], drag: QueueDragController) {
+        guard !laterExpanded, let header = DragGeometry.laterHeader(blocks), header.contains(pointerY) else {
+            drag.springStart = nil
+            return
+        }
+        guard let start = drag.springStart else {
+            drag.springStart = Date()
+            return
+        }
+        guard Date().timeIntervalSince(start) >= 0.6 else { return }
+        drag.springStart = nil
+        setLaterExpanded(true)
+    }
+
+    private func setLaterExpanded(_ expanded: Bool) {
+        guard laterExpanded != expanded else { return }
+        laterExpanded = expanded
+        if isTouring { tourLaterExpanded = expanded }
+        UserDefaults.standard.set(expanded, forKey: Self.laterExpandedKey)
+    }
+
     func endQueueDrag() {
         guard let drag = queueDrag, drag.phase == .dragging else { return }
         stopQueueDragTracking()
-        let inside = pointerIsInsideQueue()
-        let moved = drag.gapIndex != drag.originIndex
-        settleQueueDrag(drop: inside && moved)
+        let inside = pointerIsInsideDropArea(drag: drag)
+        settleQueueDrag(drop: inside && drag.slot != drag.origin)
     }
 
     @discardableResult
@@ -677,7 +879,10 @@ final class AppModel {
 
     /// A row that left the queue (finished, deleted, snoozed) takes its open edit with it.
     private func dropStaleNameEdit() {
-        guard let open = editingQueueID, !session.queue.contains(where: { $0.id == open }) else { return }
+        guard let open = editingQueueID,
+              !session.queue.contains(where: { $0.id == open }),
+              !session.later.contains(where: { $0.id == open })
+        else { return }
         descriptionDrafts[open] = nil
         editingQueueID = nil
     }
@@ -1049,6 +1254,18 @@ final class AppModel {
         }
     }
 
+    private func installInputModeMonitor() {
+        inputModeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { event in
+            let pointer = event.type != .keyDown
+            MainActor.assumeIsolated {
+                if AppRuntime.model.pointerDrivenInput != pointer {
+                    AppRuntime.model.pointerDrivenInput = pointer
+                }
+            }
+            return event
+        }
+    }
+
     private func installFocusMonitor() {
         focusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             let point = event.locationInWindow
@@ -1123,49 +1340,50 @@ final class AppModel {
 
     private func reconcileQueueDrag() {
         guard let drag = queueDrag else { return }
-        guard session.queue.contains(where: { $0.id == drag.itemID }) else {
+        let present = drag.source == .queue
+            ? session.queue.contains { $0.id == drag.itemID }
+            : session.later.contains { $0.id == drag.itemID }
+        guard present else {
             clearQueueDrag()
             return
         }
-        if session.phase == .work, session.activeItemID == drag.itemID {
+        guard session.canDrag(id: drag.itemID) else {
             if drag.phase == .settling, !drag.drop { return }
             queueSettleTask?.cancel()
             stopQueueDragTracking()
             settleQueueDrag(drop: false)
             return
         }
-        guard let range = session.reorderDestinations(for: drag.itemID) else {
-            clearQueueDrag()
-            return
+        let allowed = dragRegions(layout: .planning, excluding: drag.itemID)
+            .first { $0.id == drag.slot.region }?.slots
+        if let allowed, !allowed.contains(drag.slot.index) {
+            let nearest = min(max(drag.slot.index, allowed.lowerBound), allowed.upperBound)
+            withAnimation(QueueMotion.slide(reduceMotion)) {
+                drag.slot.index = nearest
+            }
         }
         if drag.phase == .dragging {
             trackQueueDrag()
-            if !range.contains(drag.gapIndex) {
-                let nearest = min(max(drag.gapIndex, range.lowerBound), range.upperBound)
-                withAnimation(QueueMotion.slide(reduceMotion)) {
-                    drag.gapIndex = nearest
-                }
-            }
-            return
-        }
-        if drag.drop, !range.contains(drag.gapIndex) {
-            queueSettleTask?.cancel()
-            settleQueueDrag(drop: false)
         }
     }
 
     private func settleQueueDrag(drop: Bool) {
         guard let drag = queueDrag else { return }
-        let index = drop ? drag.gapIndex : drag.originIndex
-        let target = viewportPoint(forListPoint: CGPoint(x: 0, y: CGFloat(index) * drag.rowHeight))
-        if !drop, drag.gapIndex != drag.originIndex {
-            withAnimation(QueueMotion.slide(reduceMotion)) {
-                drag.gapIndex = drag.originIndex
-            }
+        let slot = drop ? drag.slot : drag.origin
+        if drop, case .day = slot.region {
+            setLaterExpanded(true)
         }
+        let specs = dragRegions(layout: .final, excluding: drag.itemID)
+        let blocks = DragGeometry.blocks(specs, held: slot.region)
+        let blockIndex = specs.firstIndex { $0.id == slot.region } ?? 0
+        let rowTop = DragGeometry.tops(blocks)[blockIndex] + CGFloat(slot.index) * DragMetrics.stride
+        let target = viewportPoint(forListPoint: CGPoint(x: 0, y: rowTop))
         withAnimation(QueueMotion.settle(reduceMotion)) {
+            drag.slot = slot
             drag.phase = .settling
             drag.drop = drop
+            drag.finalLayout = true
+            drag.highlightedID = nil
             drag.lifted = false
             drag.visualX = target.x
             drag.visualY = target.y
@@ -1186,14 +1404,24 @@ final class AppModel {
         guard let drag = queueDrag, drag.phase == .settling else { return }
         let drop = drag.drop
         let id = drag.itemID
-        let destination = drag.gapIndex
-        // The floating row is already on the gap. Commit that order with no animation,
-        // in the same update that removes the floating copy.
+        let slot = drag.slot
+        let source = drag.source
+        // The floating row is already on the gap, and the list already has its final layout.
+        // Commit that order with no animation, in the same update that removes the floating copy.
         suppressQueueAnimation = true
         queueDrag = nil
         if drop {
             apply { session in
-                session.reorder(id: id, to: destination)
+                switch (source, slot.region) {
+                case (.queue, .queue):
+                    session.reorder(id: id, to: slot.index)
+                case (.queue, .day(let day)):
+                    session.snooze(id: id, returnDay: day, now: now, position: slot.index)
+                case (.later, .queue):
+                    session.returnLater(id: id, to: slot.index)
+                case (.later, .day(let day)):
+                    session.moveLater(id: id, toDay: day, position: slot.index, now: now)
+                }
                 return .none
             }
         }
@@ -1280,19 +1508,15 @@ final class AppModel {
         scroll.reflectScrolledClipView(clip)
     }
 
-    private func queueRowHeight(anchor: QueueListAnchorView) -> CGFloat {
-        let count = max(session.queue.count, 1)
-        let height = anchor.bounds.height / CGFloat(count)
-        return height > 1 ? height : 48
-    }
-
     private func pointerInQueueList() -> CGPoint? {
         guard let anchor = queueListAnchor, let window = anchor.window else { return nil }
         let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         return anchor.convert(inWindow, from: nil)
     }
 
-    private func pointerIsInsideQueue() -> Bool {
+    /// A release over the list drops the task where the gap is, also over Done at the bottom.
+    /// A release off to the side, above the list, or below the scroller is not a drop.
+    private func pointerIsInsideDropArea(drag: QueueDragController) -> Bool {
         guard let anchor = queueListAnchor, let window = anchor.window else { return false }
         let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
         let inAnchor = anchor.convert(inWindow, from: nil)
@@ -1300,7 +1524,7 @@ final class AppModel {
             pointerX: inAnchor.x,
             pointerY: inAnchor.y,
             listWidth: anchor.bounds.width,
-            listHeight: anchor.bounds.height
+            listHeight: .greatestFiniteMagnitude
         ) else { return false }
         guard let clip = queueScrollView?.contentView else { return true }
         let inClip = clip.convert(inWindow, from: nil)
@@ -1308,6 +1532,7 @@ final class AppModel {
             ? inClip.y - clip.bounds.minY
             : clip.bounds.maxY - inClip.y
         return QueueDrop.pointerIsInScrollArea(yFromTop: yFromTop)
+            && yFromTop <= clip.bounds.height + DragMetrics.releaseSlack
     }
 
     private func viewportPoint(forListPoint point: CGPoint) -> CGPoint {

@@ -8,8 +8,8 @@ alwaysApply: true
 Every new or changed UI element must meet these rules. Check them before finishing any task.
 
 ## Cursors
-- Pointing hand (`NSCursor.pointingHand`) on every clickable custom control: buttons, icon buttons, mode gauges, count circles, ••• menus, push-back icons, disclosure chevrons, header icons (History, Tour, trash).
-- I-beam on editable text. Open hand / closed hand for drag handles and while dragging.
+- Pointing hand (`NSCursor.pointingHand`) on every clickable custom control: buttons, icon buttons, mode gauges, the − and + of the pomodoro stepper, ••• menus, push-back icons, disclosure chevrons, header icons (History, Tour, trash).
+- I-beam on editable text. Open hand over movable rows (not over the name, which keeps the arrow until it is edited) and closed hand while dragging.
 - Disabled or display-only elements keep the arrow cursor.
 - Standard `NSMenu` items and system controls keep their system cursors.
 
@@ -17,6 +17,7 @@ Every new or changed UI element must meet these rules. Check them before finishi
 - Every clickable custom control has a subtle hover state (e.g. a rounded background at white 6%, radius 6).
 - Icon-only buttons: square 28×28 pt hit area with the icon centered. The hover/pressed background fills the square (radius 6). Round controls get a 28 pt circular hover. The icon size and the layout never change.
 - Disabled: 40% opacity, no hover, a tooltip explaining why when that's useful.
+- Clicking a custom control never takes keyboard focus; focus rings only for keyboard navigation.
 - Hover must never shift the layout (no size or padding changes).
 
 ## Tooltips and accessibility
@@ -32,8 +33,11 @@ Every new or changed UI element must meet these rules. Check them before finishi
 ## Row grid
 - All list rows (Queue, LATER, Done, History) start with the gauge column (28 pt: 20 pt gauge + 8 pt gap) and a name that takes the rest of the row. An essential value may sit at the right edge. Names truncate with a trailing "…".
 - Same column = same meaning. Never place a different kind of value in a column.
-- Count circles are controls. Display-only counts use plain text `×n`.
+- Right-side order: finish time (hover) · ••• (hover) · stepper (count at rest when ≠ 1). The stepper is always the rightmost element; the count's x position never changes. Done and History: finish time (hover) · ↩ (hover) · worked time · `×n`, with `×n` at the same x as the queue's count.
+- Count = fixed 72 pt stepper slot with its right edge 10 pt from the card edge (••• 4 pt left of it); − and + appear on hover; the number never moves. Done and History show a display-only `×n` in the same slot position.
+- Reserve only what is visible at rest. Queue and LATER at count 1 show nothing on the right, so the name runs to the row's 10 pt right padding; any other count shows only `×n` at the center of the stepper slot (46 pt from the card edge) and the name ends 8 pt before it. The hover cluster (finish time, •••, − ×n +) is an overlay with the hover background and a 24 pt left fade; it never changes the name's frame, and the count number stays at the same x. Done and History keep the worked time and `×n` in fixed columns; the name ends before them.
 - Queue and LATER rows are cards without dividers. Done and History rows are flat without dividers.
+- While a row's name is edited, its stepper, ••• and finish-time overlay fade out (120 ms) and the field runs to the row's right padding; they return when editing ends.
 - Rows show only the essentials at rest (gauge, name, non-default values). Secondary values and row actions appear on hover.
 - Hover controls appear as a right-aligned overlay with a 24 pt left fade. The gauge and name start never move. Names truncate with "…".
 - Every hover-only action is also reachable by right-click (context menu), keyboard, and VoiceOver.
@@ -46,6 +50,8 @@ Every new or changed UI element must meet these rules. Check them before finishi
 ## Motion
 - Animations are short (150–300 ms) and play once. Never a second "catch-up" animation.
 - Lists use stable ids. Reordering animates as a move, never remove + insert.
+- Rows drag from anywhere after 4 pt of movement; controls never start a drag; a click without movement keeps its normal action.
+- Queue and LATER are one drag area. While a row is held, LATER opens with every day as a drop target, and the row under the pointer shows only the card hover.
 - Respect Reduce Motion: replace movement and scaling with a simple fade.
 
 ## Look ("Deep water")

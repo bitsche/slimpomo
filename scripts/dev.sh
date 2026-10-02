@@ -6,9 +6,24 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 usage() {
-    echo "Usage: scripts/dev.sh [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour | --later | --tank-level <0..1> [work|break] | --export-menubar-icons <dir>]" >&2
+    echo "Usage: scripts/dev.sh [--debug-drop-zones] [--seed | --seed-large | --clear-history | --stale-done | --reset | --tour | --later | --tank-level <0..1> [work|break] | --export-menubar-icons <dir> | --export-gauges <dir>]" >&2
     exit 1
 }
+
+debug_drop_zones=0
+remaining=()
+for argument in "$@"; do
+    if [[ "$argument" == "--debug-drop-zones" ]]; then
+        debug_drop_zones=1
+    else
+        remaining+=("$argument")
+    fi
+done
+if [[ ${#remaining[@]} -gt 0 ]]; then
+    set -- "${remaining[@]}"
+else
+    set --
+fi
 
 flag=""
 export_dir=""
@@ -35,6 +50,11 @@ case "${1:-}" in
         export_dir="${2:-}"
         [[ -n "$export_dir" ]] || usage
         flag="-exportMenuBarIcons"
+        ;;
+    --export-gauges)
+        export_dir="${2:-}"
+        [[ -n "$export_dir" ]] || usage
+        flag="-exportGauges"
         ;;
     *) usage ;;
 esac
@@ -70,10 +90,23 @@ codesign --force --sign - "$app"
 if [[ "$flag" == "-exportMenuBarIcons" ]]; then
     "$app/Contents/MacOS/Deeeep" -exportMenuBarIcons "$export_dir"
     echo "Exported menu-bar icons to $export_dir"
-elif [[ -n "$flag" ]]; then
-    open "$app" --args "$flag" ${extra_args[@]+"${extra_args[@]}"}
-    echo "Launched $app $flag ${extra_args[*]-}"
+elif [[ "$flag" == "-exportGauges" ]]; then
+    "$app/Contents/MacOS/Deeeep" -exportGauges "$export_dir"
+    echo "Exported gauges to $export_dir"
 else
-    open "$app"
-    echo "Launched $app"
+    launch_args=()
+    if [[ -n "$flag" ]]; then
+        launch_args+=("$flag")
+        launch_args+=(${extra_args[@]+"${extra_args[@]}"})
+    fi
+    if [[ "$debug_drop_zones" == 1 ]]; then
+        launch_args+=("-debugDropZones")
+    fi
+    if [[ ${#launch_args[@]} -gt 0 ]]; then
+        open "$app" --args "${launch_args[@]}"
+        echo "Launched $app ${launch_args[*]}"
+    else
+        open "$app"
+        echo "Launched $app"
+    fi
 fi

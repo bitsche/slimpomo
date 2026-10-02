@@ -18,7 +18,7 @@ struct SessionTests {
         #expect(Intensity.intense.sessionScale == 3)
         #expect(Intensity.regular.gaugeFill == 0.30)
         #expect(Intensity.focus.gaugeFill == 0.55)
-        #expect(Intensity.intense.gaugeFill == 0.78)
+        #expect(Intensity.intense.gaugeFill == 0.70)
     }
 
     @Test func emptyQueueCannotStart() {

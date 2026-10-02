@@ -245,32 +245,35 @@ private struct HistoryLine: View {
                 color: Theme.textSecondary
             )
         } rest: {
-            WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
-                .padding(.leading, 8)
+            HStack(spacing: 0) {
+                WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
+                    .frame(width: RowGrid.workedWidth, alignment: .trailing)
+                CountSlot(count: row.count, revealed: revealed)
+                Color.clear.frame(width: RowGrid.edgeExtra, height: 1)
+            }
         }
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(revealed ? Theme.bgCard : Color.clear)
         }
         .overlay(alignment: .trailing) {
-            HoverCluster(
+            FadeOverlay(
                 shown: revealed,
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
-                cornerRadius: 8
+                trailingInset: RowGrid.doneRestWidth
             ) {
-                FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
-                WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
-                    .accessibilityHidden(true)
-                CountText(count: row.count)
-                SquareIconButton(
-                    systemName: "arrow.uturn.backward",
-                    weight: .semibold,
-                    tint: Theme.link,
-                    slot: IconMetrics.column,
-                    help: "Copy to the end of the queue"
-                ) {
-                    model.requeueHistory(rowID: row.id, day: day)
+                HStack(spacing: 8) {
+                    FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
+                    SquareIconButton(
+                        systemName: "arrow.uturn.backward",
+                        weight: .semibold,
+                        tint: Theme.link,
+                        slot: IconMetrics.column,
+                        help: "Copy to the end of the queue"
+                    ) {
+                        model.requeueHistory(rowID: row.id, day: day)
+                    }
                 }
             }
         }

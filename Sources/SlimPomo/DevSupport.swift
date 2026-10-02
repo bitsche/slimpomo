@@ -387,4 +387,61 @@ enum DevTitleBadge {
         return accessory
     }
 }
+
+/// `-debugDropZones` draws the bands the pointer maps through while a row is held, so gaps and overlaps show.
+enum DevDropZones {
+    static let enabled = ProcessInfo.processInfo.arguments.contains("-debugDropZones")
+}
+
+struct DropZoneOverlay: View {
+    var model: AppModel
+
+    var body: some View {
+        if DevDropZones.enabled, let drag = model.queueDrag {
+            let bands = model.dropBands(for: drag)
+            let reach = (bands.map(\.minY).filter(\.isFinite).max() ?? 0) + 600
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+                    let top = band.minY.isFinite ? band.minY : -400
+                    let bottom = band.maxY.isFinite ? band.maxY : reach
+                    Rectangle()
+                        .fill(Self.tint(band.kind).opacity(0.22))
+                        .overlay(alignment: .top) {
+                            Rectangle().fill(Self.tint(band.kind)).frame(height: 1)
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            Text(Self.label(band))
+                                .font(.system(size: 9).monospacedDigit())
+                                .foregroundStyle(Theme.textPrimary)
+                                .padding(.horizontal, 4)
+                        }
+                        .frame(width: max(drag.rowWidth, 1), height: max(bottom - top, 0))
+                        .offset(y: top)
+                }
+            }
+            .frame(width: max(drag.rowWidth, 1), alignment: .topLeading)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private static func tint(_ kind: DropBand.Kind) -> Color {
+        switch kind {
+        case .before: Theme.diveSurfaceRGB.color
+        case .after: Theme.deepSurfaceRGB.color
+        case .held: Theme.dipSurfaceRGB.color
+        case .zone, .label: Theme.breakSurfaceRGB.color
+        case .tail: Theme.destructiveRGB.color
+        }
+    }
+
+    private static func label(_ band: DropBand) -> String {
+        let region: String
+        switch band.slot.region {
+        case .queue: region = "queue"
+        case .day(let day): region = day
+        }
+        return "\(band.kind) \(region) @\(band.slot.index)"
+    }
+}
 #endif

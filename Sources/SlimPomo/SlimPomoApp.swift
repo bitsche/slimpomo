@@ -26,6 +26,7 @@ final class SlimPomoDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             #if SLIMPOMO_DEV
             if MenuBarGlyphExport.performIfRequested() { return }
+            if GaugeExport.performIfRequested() { return }
             #endif
             StatusItemController.shared.start()
         }

@@ -30,12 +30,12 @@ public enum Intensity: String, Codable, CaseIterable, Equatable, Sendable {
     /// Work minutes, as shown on the chip. The prime marks minutes.
     public var workMark: String { "\(mode.workMinutes)′" }
 
-    /// Share of the gauge's inner height that is water. Dip 30%, Dive 55%, Deep dive 78%.
+    /// Share of the gauge's inner height that is water. Dip 30%, Dive 55%, Deep dive 70%.
     public var gaugeFill: Double {
         switch self {
         case .regular: 0.30
         case .focus: 0.55
-        case .intense: 0.78
+        case .intense: 0.70
         }
     }
 
@@ -358,6 +358,41 @@ public enum Snooze {
     }
 }
 
+/// A day LATER can hold tasks for.
+public struct PlanDay: Equatable, Identifiable, Sendable {
+    public var day: String
+    public var heading: String
+    public var id: String { day }
+}
+
+extension Snooze {
+    /// The days LATER shows while planning: the offered days plus any day that already holds tasks, earliest first.
+    public static func planDays(on now: Date, existing: [String], calendar: Calendar = .current) -> [PlanDay] {
+        let offered = offers(on: now, calendar: calendar).map(\.returnDay)
+        let days = Set(offered).union(existing).sorted()
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today).map { CalendarDay.stamp($0, calendar: calendar) }
+        return days.map { PlanDay(day: $0, heading: heading(for: $0, tomorrow: tomorrow, calendar: calendar)) }
+    }
+
+    public static func heading(for day: String, tomorrow: String?, calendar: Calendar = .current) -> String {
+        guard let date = CalendarDay.date(day, calendar: calendar) else { return day }
+        if day == tomorrow {
+            let weekday = formatted(date, template: "EEE", calendar: calendar)
+            return calendar.component(.weekday, from: date) == 2 ? "Tomorrow (\(weekday))" : "Tomorrow"
+        }
+        return formatted(date, template: "EEE d MMM", calendar: calendar)
+    }
+
+    private static func formatted(_ date: Date, template: String, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = calendar.locale ?? .autoupdatingCurrent
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter.string(from: date)
+    }
+}
+
 public struct LaterItem: Identifiable, Equatable, Codable, Sendable {
     public var id: UUID
     public var intensity: Intensity
@@ -398,6 +433,8 @@ public struct Session: Equatable, Codable {
     public private(set) var didMigrateHistory: Bool
     /// Older events and Done rows receive full-length worked time once.
     public private(set) var didMigrateWorkedSeconds: Bool
+    /// LATER keeps an explicit order within each day. Older files get it once, from the snooze times.
+    public private(set) var didMigrateLaterOrder: Bool
 
     public init() {
         queue = []
@@ -415,11 +452,12 @@ public struct Session: Equatable, Codable {
         doneDay = nil
         didMigrateHistory = false
         didMigrateWorkedSeconds = true
+        didMigrateLaterOrder = true
     }
 
     private enum CodingKeys: String, CodingKey {
         case queue, later, done, phase, isRunning, remaining, phaseDuration, activeItemID, activeDescription, endsAt, lockedBreakDuration
-        case history, doneDay, didMigrateHistory, didMigrateWorkedSeconds
+        case history, doneDay, didMigrateHistory, didMigrateWorkedSeconds, didMigrateLaterOrder
     }
 
     public init(from decoder: Decoder) throws {
@@ -439,6 +477,7 @@ public struct Session: Equatable, Codable {
         doneDay = try container.decodeIfPresent(Date.self, forKey: .doneDay)
         didMigrateHistory = try container.decodeIfPresent(Bool.self, forKey: .didMigrateHistory) ?? false
         didMigrateWorkedSeconds = try container.decodeIfPresent(Bool.self, forKey: .didMigrateWorkedSeconds) ?? false
+        didMigrateLaterOrder = try container.decodeIfPresent(Bool.self, forKey: .didMigrateLaterOrder) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -460,6 +499,7 @@ public struct Session: Equatable, Codable {
         try container.encodeIfPresent(doneDay, forKey: .doneDay)
         try container.encode(didMigrateHistory, forKey: .didMigrateHistory)
         try container.encode(didMigrateWorkedSeconds, forKey: .didMigrateWorkedSeconds)
+        try container.encode(didMigrateLaterOrder, forKey: .didMigrateLaterOrder)
     }
 
     public var activeItem: QueueItem? {
@@ -846,34 +886,52 @@ public struct Session: Equatable, Codable {
         return !(phase == .work && activeItemID == id)
     }
 
-    public mutating func snooze(id: UUID, returnDay: String, now: Date) {
+    /// Moves a queue task into LATER. `position` is its place among that day's tasks; nil means the end.
+    public mutating func snooze(id: UUID, returnDay: String, now: Date, position: Int? = nil) {
         guard canSnooze(id: id), let index = queue.firstIndex(where: { $0.id == id }) else { return }
         let item = queue.remove(at: index)
-        later.append(LaterItem(
+        let row = LaterItem(
             id: item.id,
             intensity: item.intensity,
             description: item.description,
             count: item.count,
             returnDay: returnDay,
             snoozedAt: now
-        ))
+        )
+        later.insert(row, at: laterArrayIndex(day: returnDay, position: position))
     }
 
+    /// LATER tasks by day, earliest day first. Within a day the order is the saved order.
     public func laterGroups() -> [(day: String, items: [LaterItem])] {
-        let sorted = later.sorted { lhs, rhs in
-            if lhs.returnDay != rhs.returnDay { return lhs.returnDay < rhs.returnDay }
-            return lhs.snoozedAt < rhs.snoozedAt
-        }
         var order: [String] = []
         var grouped: [String: [LaterItem]] = [:]
-        for item in sorted {
+        for item in later {
             if grouped[item.returnDay] == nil {
                 order.append(item.returnDay)
-                grouped[item.returnDay] = []
             }
             grouped[item.returnDay, default: []].append(item)
         }
-        return order.map { ($0, grouped[$0] ?? []) }
+        return order.sorted().map { ($0, grouped[$0] ?? []) }
+    }
+
+    /// Sorts LATER once by snooze time, so the order that was shown before becomes the saved order.
+    public mutating func migrateLaterOrderIfNeeded() {
+        guard !didMigrateLaterOrder else { return }
+        didMigrateLaterOrder = true
+        later = later.enumerated().sorted { lhs, rhs in
+            if lhs.element.snoozedAt != rhs.element.snoozedAt { return lhs.element.snoozedAt < rhs.element.snoozedAt }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    /// Where a task of `day` goes in the `later` array so it is number `position` of that day. Nil is the end of the day.
+    private func laterArrayIndex(day: String, position: Int?) -> Int {
+        let indexes = later.indices.filter { later[$0].returnDay == day }
+        guard let last = indexes.last else { return later.count }
+        guard let position else { return last + 1 }
+        if position <= 0 { return indexes[0] }
+        if position >= indexes.count { return last + 1 }
+        return indexes[position]
     }
 
     public mutating func deleteLater(id: UUID) {
@@ -881,26 +939,53 @@ public struct Session: Equatable, Codable {
     }
 
     public mutating func retargetLater(id: UUID, returnDay: String, now: Date) {
-        guard let index = later.firstIndex(where: { $0.id == id }), later[index].returnDay != returnDay else { return }
-        later[index].returnDay = returnDay
-        later[index].snoozedAt = now
+        moveLater(id: id, toDay: returnDay, position: nil, now: now)
     }
 
-    /// Puts one snoozed task back now, in the same spot a scheduled return would use.
-    public mutating func returnLater(id: UUID) {
+    /// Reorders within a day, or moves to another day. `position` counts that day's tasks without this one; nil is the end.
+    public mutating func moveLater(id: UUID, toDay returnDay: String, position: Int?, now: Date? = nil) {
         guard let index = later.firstIndex(where: { $0.id == id }) else { return }
-        let item = later.remove(at: index)
-        insertReturned([item])
+        var item = later.remove(at: index)
+        if item.returnDay != returnDay, let now {
+            item.snoozedAt = now
+        }
+        item.returnDay = returnDay
+        later.insert(item, at: laterArrayIndex(day: returnDay, position: position))
+    }
+
+    public mutating func updateLaterDescription(id: UUID, description: String) {
+        guard let index = later.firstIndex(where: { $0.id == id }) else { return }
+        later[index].description = description
+    }
+
+    public mutating func updateLaterIntensity(id: UUID, intensity: Intensity) {
+        guard let index = later.firstIndex(where: { $0.id == id }) else { return }
+        later[index].intensity = intensity
+    }
+
+    /// A LATER task is never running, so its count may be 0...5.
+    public mutating func setLaterCount(id: UUID, count: Int) {
+        guard let index = later.firstIndex(where: { $0.id == id }) else { return }
+        later[index].count = min(max(0, count), Self.maxPomodoros)
+    }
+
+    /// Puts one snoozed task back now. `index` is its place in the queue, kept below a running task. Nil uses the
+    /// spot a scheduled return would use.
+    public mutating func returnLater(id: UUID, to index: Int? = nil) {
+        guard let from = later.firstIndex(where: { $0.id == id }) else { return }
+        let item = later.remove(at: from)
+        insertReturned([item], at: index)
     }
 
     /// Moves every later item whose day is today or earlier back into the queue. Does not wait for an idle timer.
+    /// Earlier days go first, each day in its saved order.
     @discardableResult
     public mutating func returnDueLater(now: Date, calendar: Calendar = .current) -> Bool {
         let today = CalendarDay.stamp(now, calendar: calendar)
-        let due = later.filter { $0.returnDay <= today }.sorted { lhs, rhs in
-            if lhs.returnDay != rhs.returnDay { return lhs.returnDay < rhs.returnDay }
-            return lhs.snoozedAt < rhs.snoozedAt
-        }
+        let due = later.enumerated().filter { $0.element.returnDay <= today }.sorted { lhs, rhs in
+            if lhs.element.returnDay != rhs.element.returnDay { return lhs.element.returnDay < rhs.element.returnDay }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
         guard !due.isEmpty else { return false }
         let ids = Set(due.map(\.id))
         later.removeAll { ids.contains($0.id) }
@@ -908,8 +993,28 @@ public struct Session: Equatable, Codable {
         return true
     }
 
-    private mutating func insertReturned(_ items: [LaterItem]) {
-        let index = (activeWorkIndex() ?? -1) + 1
+    /// Queue slots a task may take, counted in the queue without that task. Nothing goes above a running task.
+    public func queueSlots(excluding id: UUID?) -> ClosedRange<Int> {
+        let rest = queue.filter { $0.id != id }
+        var lower = 0
+        if phase == .work, let active = activeItemID, active != id,
+           let pinned = rest.firstIndex(where: { $0.id == active }) {
+            lower = pinned + 1
+        }
+        return min(lower, rest.count)...rest.count
+    }
+
+    /// Queue rows can be dragged unless the timer is working on them. LATER rows always can.
+    public func canDrag(id: UUID) -> Bool {
+        if let item = queue.first(where: { $0.id == id }) {
+            return !(phase == .work && activeItemID == item.id)
+        }
+        return later.contains { $0.id == id }
+    }
+
+    private mutating func insertReturned(_ items: [LaterItem], at requested: Int? = nil) {
+        let lowest = (activeWorkIndex() ?? -1) + 1
+        let index = max(lowest, requested ?? lowest)
         let rows = items.map {
             QueueItem(id: $0.id, intensity: $0.intensity, description: $0.description, count: $0.count)
         }
@@ -1235,6 +1340,7 @@ public struct Session: Equatable, Codable {
         ]
         session.didMigrateHistory = true
         session.didMigrateWorkedSeconds = true
+        session.didMigrateLaterOrder = true
         return session
     }
 }

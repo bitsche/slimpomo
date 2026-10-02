@@ -60,7 +60,8 @@ enum LabelStyle {
     static let gap: CGFloat = 6
 }
 
-/// A click target over a task name. It shows the I-beam and opens the editor; the label under it keeps drawing.
+/// A click target over a task name. A click without movement opens the editor; the label under it keeps drawing.
+/// The cursor stays the arrow until the editor is open, and a press that moves 4 pt drags the row instead.
 struct NameClickArea: NSViewRepresentable {
     var fullText: String
     var semibold: Bool
@@ -69,6 +70,7 @@ struct NameClickArea: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NameClickAreaView {
         let view = NameClickAreaView()
+        view.kind = .arrow
         view.setAccessibilityElement(false)
         apply(to: view)
         return view
@@ -145,10 +147,16 @@ final class NameTipView: NSView {
     }
 }
 
-final class NameClickAreaView: NSView {
+final class NameClickAreaView: PointingHandAnchorView {
     var onActivate: ((CGFloat?) -> Void)?
     var fullText = ""
     var semibold = false
+    private var pressedAt: NSPoint?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
+        return self
+    }
 
     func updateTip() {
         let cut = NameTruncation.isTruncated(fullText, semibold: semibold, width: bounds.width)
@@ -166,21 +174,23 @@ final class NameClickAreaView: NSView {
         NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
     }
 
-    override func resetCursorRects() {
-        discardCursorRects()
-        guard !AppRuntime.model.isTouring else { return }
-        addCursorRect(bounds, cursor: .iBeam)
-    }
-
     override func layout() {
         super.layout()
         updateTip()
-        window?.invalidateCursorRects(for: self)
     }
 
     override func mouseDown(with event: NSEvent) {
+        pressedAt = event.locationInWindow
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressedAt = nil }
+        guard let pressedAt else { return }
+        let moved = hypot(event.locationInWindow.x - pressedAt.x, event.locationInWindow.y - pressedAt.y)
+        guard moved < RowDrag.threshold else { return }
         let point = convert(event.locationInWindow, from: nil)
-        onActivate?(point.x)
+        guard bounds.contains(point) else { return }
+        onActivate?(convert(pressedAt, from: nil).x)
     }
 
     override func keyDown(with event: NSEvent) {

@@ -7,7 +7,7 @@ enum TourTarget: Hashable {
     case addChip
     case taskCount
     case timerCard
-    case reorderGrip
+    case reorderRow
     case rowMenu
     case laterSection
     case doneSection
@@ -40,7 +40,7 @@ enum TourStep: Hashable {
         case .depth: .addChip
         case .count: .taskCount
         case .timer: .timerCard
-        case .reorder: .reorderGrip
+        case .reorder: .reorderRow
         case .markFinished: .rowMenu
         case .later: .laterSection
         case .done: .doneSection
@@ -83,11 +83,11 @@ enum TourStep: Hashable {
         case .depth:
             Self.depthText
         case .count:
-            "Click the circle to add a pomodoro (up to 5), right-click to remove one. Hover a task to see when it will be done. The header shows when everything is done."
+            "Hover a task and use − and + to set how many pomodoros it gets (up to 5). Hover also shows when it will be done. The header shows when everything is done."
         case .timer:
             "Start begins the first task that has pomodoros left, and the tank fills as the session runs. Pause freezes it. Reset drops a running session without counting it. While paused, Finish counts it as done and records the time you actually worked. A break always follows, and Skip ends it early."
         case .reorder:
-            "Hover a task and drag the grip on its left to move it. A task that is running stays at the top and can't be moved."
+            "Drag a task anywhere to reorder it. Drag it into Later to plan it for tomorrow or Monday, or back up to work on it now. A task that is running stays at the top."
         case .markFinished:
             "Open ••• and choose Mark as finished. It counts one pomodoro done without running the timer, and records a full session. The running task still uses FINISH on the card."
         case .later:
