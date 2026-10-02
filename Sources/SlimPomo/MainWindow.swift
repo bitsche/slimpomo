@@ -218,9 +218,20 @@ struct MainWindow: View {
             .padding(.top, 12)
             .tourTarget(.timerCard)
 
+            if let current = shown.nowItem {
+                nowSection(current)
+                    .transition(nowTransition)
+            }
+
             todoHeader
                 .padding(.horizontal, PageInset.horizontal)
-                .padding(.top, 14)
+                .padding(.top, shown.nowItem == nil ? 14 : 12)
+                .background(alignment: .top) {
+                    QueueListAnchor { anchor in
+                        model.attachTodoTop(anchor)
+                    }
+                    .frame(height: 0)
+                }
 
             VStack(spacing: 0) {
                 addRow
@@ -231,6 +242,7 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(nowAnimation, value: shown.nowItem?.id)
         .background(Theme.bgBase.ignoresSafeArea())
         .accessibilityHidden(model.isTouring)
         .overlayPreferenceValue(TourAnchorKey.self) { anchors in
@@ -260,6 +272,78 @@ struct MainWindow: View {
             try? await Task.sleep(for: .milliseconds(600))
             if !Task.isCancelled { model.doneFlashOn = false }
         }
+    }
+
+    /// Each list decides its own tag column. A tagged row anywhere in the list gives every row of it the column;
+    /// a list without tags has none. A held row counts for the list it is over, not the one it came from.
+    private func tagColumn(of names: [String]) -> CGFloat {
+        TagStyle.columnWidth(for: names)
+    }
+
+    private var heldName: String? {
+        guard let drag = model.queueDrag else { return nil }
+        return (shown.queue.first { $0.id == drag.itemID }?.description)
+            ?? (shown.later.first { $0.id == drag.itemID }?.description)
+    }
+
+    private var holdIsOverQueue: Bool { model.queueDrag?.slot.region == .queue }
+
+    private var queueTagColumn: CGFloat {
+        var names = shown.todoQueue.filter { $0.id != model.queueDrag?.itemID }.map(\.description)
+        if holdIsOverQueue, let held = heldName { names.append(held) }
+        return tagColumn(of: names)
+    }
+
+    private var laterTagColumn: CGFloat {
+        var names = shown.later.filter { $0.id != model.queueDrag?.itemID }.map(\.description)
+        if model.queueDrag != nil, !holdIsOverQueue, let held = heldName { names.append(held) }
+        return tagColumn(of: names)
+    }
+
+    private var doneTagColumn: CGFloat {
+        let items = shown.mergedDone()
+        return tagColumn(of: (model.doneListExpanded ? items : Array(items.prefix(3))).map(\.description))
+    }
+
+    /// 150 ms, and none with Reduce Motion: the names slide when a column appears, disappears, or changes width.
+    private var columnAnimation: Animation? {
+        model.reduceMotion || model.tour != nil ? nil : .easeOut(duration: 0.15)
+    }
+
+    /// The task being worked on, apart from the movable list: a header, the row, and a divider before TODO.
+    private func nowSection(_ item: QueueItem) -> some View {
+        VStack(spacing: 0) {
+            SectionHeader(label: "NOW", stats: "") {
+                EmptyView()
+            }
+            .padding(.horizontal, PageInset.horizontal)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+            QueueLine(
+                item: item,
+                isCurrent: true,
+                finish: shown.finishDates(at: model.now)[item.id],
+                model: model,
+                isNow: true
+            )
+            .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description]))
+            .id(item.id)
+            Rectangle()
+                .fill(Theme.lineSubtle)
+                .frame(height: 1)
+                .padding(.horizontal, PageInset.horizontal)
+                .padding(.top, 12 - RowGrid.gap)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// 200 ms for the task moving into NOW and back to TODO. None with Reduce Motion.
+    private var nowAnimation: Animation? {
+        model.reduceMotion || model.tour != nil ? nil : .easeOut(duration: 0.2)
+    }
+
+    private var nowTransition: AnyTransition {
+        model.reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 
     /// Finished pomodoros today. A rise while Done is collapsed flashes the header stats.
@@ -423,6 +507,8 @@ struct MainWindow: View {
                 }
             }
         }
+        .environment(\.tagColumn, queueTagColumn)
+        .animation(columnAnimation, value: queueTagColumn)
         .animation(
             model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
             value: queueDisplay.map(\.id)
@@ -539,6 +625,8 @@ struct MainWindow: View {
                     }
                 }
                 .padding(.top, DragMetrics.laterTopPadding)
+                .environment(\.tagColumn, laterTagColumn)
+                .animation(columnAnimation, value: laterTagColumn)
                 .animation(
                     model.suppressQueueAnimation || model.tour != nil ? nil : QueueMotion.slide(model.reduceMotion),
                     value: laterDays.flatMap { day in laterDisplay(day.day).map(\.id) }
@@ -570,7 +658,7 @@ struct MainWindow: View {
 
     /// The queue's rows in the order they are drawn. A held task shows as the gap, wherever it is going.
     private var queueDisplay: [DisplayRow] {
-        let queue = shown.queue
+        let queue = shown.todoQueue
         guard let drag = model.queueDrag else { return queue.map { DisplayRow.queue($0) } }
         var rows = queue.filter { $0.id != drag.itemID }.map { DisplayRow.queue($0) }
         if drag.slot.region == .queue {
@@ -632,6 +720,8 @@ struct MainWindow: View {
             .animation(model.reduceMotion ? nil : .easeOut(duration: 0.2), value: model.doneFlashOn)
             if open {
                 DoneRows(items: visible, model: model)
+                    .environment(\.tagColumn, doneTagColumn)
+                    .animation(columnAnimation, value: doneTagColumn)
                     .padding(.top, 6)
                 if hidden > 0 {
                     MoreDoneLink(hidden: hidden, expanded: model.doneListExpanded) {
@@ -681,6 +771,7 @@ struct MainWindow: View {
                     LaterLine(item: item, model: model, floating: true)
                 }
             }
+            .environment(\.tagColumn, holdIsOverQueue ? queueTagColumn : laterTagColumn)
             .frame(width: max(drag.rowWidth, 1))
             .scaleEffect(drag.lifted && !model.reduceMotion ? 1.02 : 1)
             .shadow(
@@ -691,6 +782,7 @@ struct MainWindow: View {
             .offset(x: drag.visualX, y: drag.visualY)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            .transition(.identity)
         }
     }
 
@@ -1168,6 +1260,13 @@ enum RowGrid {
     static let edgeExtra: CGFloat = edge - trailing
     /// Hover controls at the right of a queue or LATER row: ••• then the stepper slot.
     static let controlsWidth: CGFloat = edge + countSlot + menuGap + IconMetrics.column.width
+    /// Where − + and ••• sit, measured from the card's right edge. A press there never starts a drag.
+    /// The count between − and +, the finish time, and the gaps are part of the row.
+    static let controlZones: [ClosedRange<CGFloat>] = [
+        edge...(edge + 24),
+        (edge + 48)...(edge + countSlot),
+        (edge + countSlot + menuGap)...controlsWidth,
+    ]
     static let stepperHeight: CGFloat = 26
     /// Worked time in Done and History.
     static let workedWidth: CGFloat = 48
@@ -1333,6 +1432,8 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
+/// The card behind a queue or LATER row. The running task, and the next one at 40%, get a 3 pt bar at the left edge,
+/// clipped by the card's rounded corners.
 private struct RowCard: ViewModifier {
     var fill: Color
     var bar: Color? = nil
@@ -1356,11 +1457,14 @@ private struct RowCard: ViewModifier {
     }
 }
 
-struct ListRow<Gauge: View, Name: View, Rest: View>: View {
+struct ListRow<Gauge: View, TagContent: View, Name: View, Rest: View>: View {
     /// Nil lets the row grow with its content. Only a queue row that is being edited does.
     var height: CGFloat? = RowGrid.height
     var alignment: VerticalAlignment = .center
+    /// Width of the tag column between the gauge and the name. Zero leaves no column.
+    var tagWidth: CGFloat = 0
     @ViewBuilder var gauge: () -> Gauge
+    @ViewBuilder var tag: () -> TagContent
     @ViewBuilder var name: () -> Name
     @ViewBuilder var rest: () -> Rest
 
@@ -1368,6 +1472,12 @@ struct ListRow<Gauge: View, Name: View, Rest: View>: View {
         HStack(alignment: alignment, spacing: 0) {
             gauge()
                 .frame(width: RowGrid.gauge, alignment: .leading)
+            ZStack(alignment: .leading) {
+                Color.clear.frame(width: tagWidth, height: 1)
+                tag()
+            }
+            .frame(width: tagWidth, alignment: .leading)
+            .clipped()
             name()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
@@ -1662,6 +1772,31 @@ private struct QueueLine: View {
     var finish: Date?
     var model: AppModel
     var floating = false
+    /// The task under NOW: a step larger, and grey while work is paused.
+    var isNow = false
+
+    @Environment(\.tagColumn) private var tagColumn
+
+    /// Work is paused on this row's task.
+    private var paused: Bool { isNow && !model.windowSession.isRunning }
+
+    private var crossfade: Animation? {
+        model.reduceMotion ? nil : .easeInOut(duration: 0.4)
+    }
+
+    private var rowTag: String? { TaskName.tag(of: item.description) }
+
+    /// A tagged row gives up its column while the name is edited: the field shows the whole raw name.
+    /// An untagged row keeps it, so its name stays where the others start.
+    private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
+
+    /// The task START, or the end of a break, begins next.
+    private var isNext: Bool { model.windowSession.nextStartID == item.id }
+
+    private var barColor: Color? {
+        if showsWorkBar { return paused ? Theme.pausedSurface : Theme.surface(item.intensity) }
+        return isNext ? Theme.surface(item.intensity).opacity(0.4) : nil
+    }
 
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
@@ -1680,11 +1815,12 @@ private struct QueueLine: View {
     }
 
     private var pointerHover: Bool {
-        !floating && model.tour == nil && model.queueDrag == nil && model.hoveredQueueID == item.id
+        !floating && model.tour == nil && model.queueDrag == nil
+            && (model.hoveredQueueID == item.id || (model.landedHover && model.landedID == item.id))
     }
 
     private var revealed: Bool {
-        floating || pointerHover || model.tourQueueRevealID == item.id
+        floating || pointerHover || model.landedID == item.id || model.tourQueueRevealID == item.id
     }
 
     /// The row under a dragged task shows only the card hover.
@@ -1692,12 +1828,18 @@ private struct QueueLine: View {
         !floating && model.queueDrag?.highlightedID == item.id
     }
 
+    /// The current task's row lightens a step on hover.
+    private var workHovered: Bool {
+        showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id)
+    }
+
     private var cardHovered: Bool {
         !showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id || passedOver)
     }
 
     private var fill: Color {
-        showsWorkBar ? Theme.bgCardActive : (cardHovered ? Theme.bgCardHover : Theme.bgCard)
+        if showsWorkBar { return workHovered ? Theme.bgCardActiveHover : Theme.bgCardActive }
+        return cardHovered ? Theme.bgCardHover : Theme.bgCard
     }
 
     /// The gauge's wave drifts only while this task is running.
@@ -1716,24 +1858,30 @@ private struct QueueLine: View {
             }
     }
 
-    private var nameInk: Color { showsWorkBar ? Theme.textStrong : Theme.textPrimary }
+    /// The current task's name looks like any other row's. Only the card, the marker, the gauge and the grey say it is current.
+    private var nameInk: Color { paused ? Theme.pausedText : Theme.textPrimary }
 
     private var growthAnimation: Animation? {
         model.reduceMotion ? nil : .easeOut(duration: 0.15)
     }
 
     private var card: some View {
-ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center, tagWidth: tagWidth) {
             IntensitySwitch(
                 intensity: item.intensity,
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
                 reduceMotion: model.reduceMotion,
                 showsMark: false,
-                drifting: drifts
+                drifting: drifts,
+                paused: paused
             ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
             .frame(height: RowGrid.height)
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model, strength: paused ? 0.6 : 1, column: tagColumn)
+            }
         } name: {
             if isEditing {
                 RowNameEditor(
@@ -1741,15 +1889,15 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                     id: item.id,
                     saved: item.description,
                     intensity: item.intensity,
-                    semibold: showsWorkBar,
-                    ink: (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB).nsColor,
+                    semibold: false,
+                    ink: (paused ? Theme.pausedTextRGB : Theme.textPrimaryRGB).nsColor,
                     onFinish: { finishEditing(save: $0) }
                 )
             } else {
                 TaskNameLabel(
                     text: nameShown,
                     color: nameInk,
-                    semibold: showsWorkBar,
+                    semibold: false,
                     placeholder: "Short description",
                     onEdit: editHandler
                 )
@@ -1765,12 +1913,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: fill, bar: showsWorkBar ? Theme.surface(item.intensity) : nil))
+        .modifier(RowCard(fill: fill, bar: barColor))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
                 reduceMotion: model.reduceMotion,
-                fill: showsWorkBar ? Theme.bgCardActive : Theme.bgCardHover,
+                fill: showsWorkBar ? Theme.bgCardActiveHover : Theme.bgCardHover,
                 trailingInset: 0
             ) {
                 HStack(spacing: 0) {
@@ -1784,6 +1932,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
         .animation(.easeOut(duration: 0.15), value: cardHovered)
         .animation(.easeOut(duration: 0.15), value: showsWorkBar)
+        .animation(crossfade, value: paused)
         .background {
             if !floating {
                 RowMenuClick(entries: menuEntries)
@@ -1793,8 +1942,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    leadingControls: RowGrid.leading + RowGrid.gauge,
-                    trailingControls: RowGrid.controlsWidth,
+                    controlZones: RowGrid.controlZones,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -1842,7 +1990,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     private func beginEditing(at x: CGFloat?) {
         guard !floating, model.tour == nil else { return }
         model.editorContent = 0
-        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar) }
+        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: false) }
         withAnimation(growthAnimation) {
             model.beginNameEdit(id: item.id)
         }
@@ -1912,6 +2060,12 @@ private struct LaterLine: View {
     var model: AppModel
     var floating = false
 
+    @Environment(\.tagColumn) private var tagColumn
+
+    private var rowTag: String? { TaskName.tag(of: item.description) }
+
+    private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
+
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
@@ -1921,11 +2075,12 @@ private struct LaterLine: View {
     }
 
     private var pointerHover: Bool {
-        !floating && model.tour == nil && model.queueDrag == nil && model.hoveredLaterID == item.id
+        !floating && model.tour == nil && model.queueDrag == nil
+            && (model.hoveredLaterID == item.id || (model.landedHover && model.landedID == item.id))
     }
 
     private var revealed: Bool {
-        floating || pointerHover || model.tourLaterRevealID == item.id
+        floating || pointerHover || model.landedID == item.id || model.tourLaterRevealID == item.id
     }
 
     private var passedOver: Bool {
@@ -1952,7 +2107,7 @@ private struct LaterLine: View {
     }
 
     private var card: some View {
-ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center) {
+ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center, tagWidth: tagWidth) {
             IntensitySwitch(
                 intensity: item.intensity,
                 reduceMotion: model.reduceMotion,
@@ -1961,6 +2116,10 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 model.updateLaterIntensity(id: item.id, intensity: item.intensity.next)
             }
             .frame(height: RowGrid.height)
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model, column: tagColumn)
+            }
         } name: {
             if isEditing {
                 RowNameEditor(
@@ -2015,8 +2174,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    leadingControls: RowGrid.leading + RowGrid.gauge,
-                    trailingControls: RowGrid.controlsWidth,
+                    controlZones: RowGrid.controlZones,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -2452,6 +2610,10 @@ private struct DoneLine: View {
     var item: QueueItem
     var model: AppModel
 
+    @Environment(\.tagColumn) private var tagColumn
+
+    private var rowTag: String? { TaskName.tag(of: item.description) }
+
     private var taskName: String {
         item.description.isEmpty ? "Untitled" : item.description
     }
@@ -2470,7 +2632,7 @@ private struct DoneLine: View {
     }
 
     private var row: some View {
-        let stack = ListRow(height: RowGrid.doneHeight) {
+        let stack = ListRow(height: RowGrid.doneHeight, tagWidth: tagColumn) {
             DepthGauge(
                 intensity: item.intensity,
                 reduceMotion: model.reduceMotion,
@@ -2478,6 +2640,10 @@ private struct DoneLine: View {
                 captionHelp: WorkedGaugeCopy.help(intensity: item.intensity, count: item.count, seconds: item.workedSeconds),
                 colorOpacity: 0.6
             )
+        } tag: {
+            if let rowTag {
+                TagLabel(tag: rowTag, model: model, strength: TagStyle.doneStrength, column: tagColumn)
+            }
         } name: {
             TruncatingName(text: taskName, color: Theme.textSecondary)
         } rest: {
@@ -2625,6 +2791,8 @@ struct DepthGauge: View {
     var markSize: CGFloat = 12
     /// The running task's wave drifts. Every other gauge is still.
     var drifting = false
+    /// The NOW row's gauge goes grey while work is paused.
+    var paused = false
 
     static let diameter: CGFloat = 20
     static let hitHeight: CGFloat = 28
@@ -2661,7 +2829,7 @@ struct DepthGauge: View {
     }
 
     private var bowlMark: some View {
-        TankGauge(intensity: intensity, drifting: drifting, reduceMotion: reduceMotion)
+        TankGauge(intensity: intensity, drifting: drifting, paused: paused, reduceMotion: reduceMotion)
             .frame(width: Self.diameter, height: Self.diameter)
             .opacity(colorOpacity)
             .accessibilityHidden(true)
@@ -2687,31 +2855,113 @@ private struct IntensitySwitch: View {
     var reduceMotion = false
     var showsMark = true
     var drifting = false
+    var paused = false
     var action: () -> Void
 
     private static let lockedHelp = "Intensity can't be changed while the timer is running"
 
     var body: some View {
-        Button(action: action) {
-            DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting)
-                .opacity(locked ? 0.4 : 1)
-                .frame(height: DepthGauge.hitHeight)
-                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay {
-                    if locked {
-                        DeniedCursor()
-                    } else {
-                        HoverPlate(cornerRadius: 6, color: Theme.hoverWashNS)
-                    }
+        DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting, paused: paused)
+            .opacity(locked ? 0.5 : 1)
+            .frame(height: DepthGauge.hitHeight)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                if locked {
+                    DeniedCursor()
+                } else {
+                    HoverPlate(cornerRadius: 6, color: Theme.hoverWashNS)
                 }
+            }
+            .overlay {
+                if !locked {
+                    ReleaseClick(tip: intensity.summary, onClick: action)
+                }
+            }
+            .fixedSize()
+            .modifier(SectionTitleHelp(text: locked ? Self.lockedHelp : nil))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(intensity.spoken)
+            .accessibilityHint(locked ? Self.lockedHelp : "Click to change")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) {
+                if !locked { action() }
+            }
+    }
+}
+
+/// A click that fires on mouse up, and only when the pointer stayed within the drag threshold. A press that moves
+/// further belongs to the row drag, so the gauge starts a drag like any other part of the row and never also changes the mode.
+private struct ReleaseClick: NSViewRepresentable {
+    var tip: String
+    var onClick: () -> Void
+
+    func makeNSView(context: Context) -> ReleaseClickView {
+        let view = ReleaseClickView()
+        view.setAccessibilityElement(false)
+        apply(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: ReleaseClickView, context: Context) {
+        apply(to: nsView)
+    }
+
+    private func apply(to view: ReleaseClickView) {
+        view.onClick = onClick
+        if view.toolTip != tip { view.toolTip = tip }
+    }
+}
+
+private final class ReleaseClickView: PointingHandAnchorView {
+    var onClick: (() -> Void)?
+    private var pressedAt: NSPoint?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
+        return self
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// A real cursor rect keeps AppKit's own cursor handling on the hand too. Without one, the rects of the views
+    /// around the gauge put the arrow back after a click, and the app-wide monitor then flips it again on the next move.
+    override func resetCursorRects() {
+        discardCursorRects()
+        guard !AppRuntime.model.isTouring else { return }
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func layout() {
+        super.layout()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressedAt = event.locationInWindow
+        if !AppRuntime.model.isTouring { NSCursor.pointingHand.set() }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressedAt = nil }
+        guard let pressedAt, !AppRuntime.model.isTouring else { return }
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        let moved = hypot(event.locationInWindow.x - pressedAt.x, event.locationInWindow.y - pressedAt.y)
+        guard moved < RowDrag.threshold, inside else { return }
+        NSCursor.pointingHand.set()
+        onClick?()
+        // The click changes the gauge and its tooltip, which makes AppKit rebuild tracking and cursor rects.
+        // Put the hand back once that has settled, while the pointer is still over the gauge.
+        Task { @MainActor [weak self] in
+            guard let self, let window = self.window, !AppRuntime.model.isTouring else { return }
+            window.invalidateCursorRects(for: self)
+            let pointer = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            if self.bounds.contains(pointer), AppRuntime.model.queueDrag == nil { NSCursor.pointingHand.set() }
         }
-        .buttonStyle(PointingHandButtonStyle(enabled: !locked))
-        .disabled(locked)
-        .fixedSize()
-        .help(locked ? Self.lockedHelp : intensity.summary)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(intensity.spoken)
-        .accessibilityHint(locked ? Self.lockedHelp : "Click to change")
     }
 }
 
@@ -2930,7 +3180,7 @@ struct TruncatingName: View {
     }
 }
 
-/// A task name on one line: the project label in muted small caps, then the rest of the name.
+/// A task name on one line, without its project label: the label is a tag in its own column.
 /// A name that does not fit shows its full text as a tooltip. With `onEdit`, a click on the name opens the editor.
 struct TaskNameLabel: View {
     var text: String
@@ -2974,22 +3224,12 @@ struct TaskNameLabel: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         } else {
-            HStack(spacing: 0) {
-                if let prefix = parts.prefix {
-                    Text(prefix)
-                        .font(.system(size: 11).monospacedDigit().smallCaps())
-                        .foregroundStyle(Theme.textMuted)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(.trailing, LabelStyle.gap)
-                }
-                Text(parts.rest)
-                    .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            }
+            Text(parts.rest)
+                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
     }
 }

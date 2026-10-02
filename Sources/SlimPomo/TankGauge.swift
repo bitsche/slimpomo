@@ -79,17 +79,19 @@ struct TankGauge: NSViewRepresentable {
     var intensity: Intensity
     /// The running task's wave drifts one wavelength every 3 s.
     var drifting = false
+    /// Grey ring, crest, and water, for the NOW row while work is paused.
+    var paused = false
     var reduceMotion = false
 
     func makeNSView(context: Context) -> TankGaugeView {
         let view = TankGaugeView()
         view.setAccessibilityElement(false)
-        view.configure(intensity: intensity, drifting: drifting, reduceMotion: reduceMotion)
+        view.configure(intensity: intensity, drifting: drifting, paused: paused, reduceMotion: reduceMotion)
         return view
     }
 
     func updateNSView(_ view: TankGaugeView, context: Context) {
-        view.configure(intensity: intensity, drifting: drifting, reduceMotion: reduceMotion)
+        view.configure(intensity: intensity, drifting: drifting, paused: paused, reduceMotion: reduceMotion)
     }
 }
 
@@ -105,6 +107,7 @@ final class TankGaugeView: NSView {
 
     private var intensity = Intensity.regular
     private var wantsDrift = false
+    private var paused = false
     private var reduceMotion = false
     private var builtSide: CGFloat = 0
     private var laidOut = false
@@ -146,12 +149,14 @@ final class TankGaugeView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    func configure(intensity: Intensity, drifting: Bool, reduceMotion: Bool) {
+    func configure(intensity: Intensity, drifting: Bool, paused: Bool, reduceMotion: Bool) {
         let modeChanged = intensity != self.intensity
+        let pauseChanged = paused != self.paused
         self.intensity = intensity
+        self.paused = paused
         wantsDrift = drifting
         self.reduceMotion = reduceMotion
-        applyLook(animated: modeChanged && laidOut && !reduceMotion)
+        applyLook(animated: (modeChanged || pauseChanged) && laidOut && !reduceMotion, duration: pauseChanged ? 0.4 : TankGaugeArt.levelDuration)
         applyDrift()
     }
 
@@ -165,7 +170,7 @@ final class TankGaugeView: NSView {
         }
         if !laidOut {
             laidOut = true
-            applyLook(animated: false)
+            applyLook(animated: false, duration: 0)
         }
         applyDrift()
     }
@@ -228,21 +233,23 @@ final class TankGaugeView: NSView {
         CATransaction.commit()
     }
 
-    private func applyLook(animated: Bool) {
+    private func applyLook(animated: Bool, duration: CFTimeInterval) {
         let side = max(builtSide, min(bounds.width, bounds.height))
         let scale = side / CGFloat(GaugeGeometry.viewBox)
         let mean = GaugeGeometry.meanY(level: TankGaugeArt.level(of: intensity))
         CATransaction.begin()
         if animated {
-            CATransaction.setAnimationDuration(TankGaugeArt.levelDuration)
+            CATransaction.setAnimationDuration(duration)
             CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeInEaseOut))
         } else {
             CATransaction.setDisableActions(true)
         }
         inner.fillColor = Theme.gaugeInnerRGB.nsColor.cgColor
-        body.fillColor = Theme.waterRGB(intensity).nsColor.cgColor
-        crest.strokeColor = Theme.surfaceRGB(intensity).nsColor.cgColor
-        ring.strokeColor = Theme.surfaceRGB(intensity).nsColor.cgColor
+        let water = paused ? Theme.pausedWaterRGB : Theme.waterRGB(intensity)
+        let surface = paused ? Theme.pausedSurfaceRGB : Theme.surfaceRGB(intensity)
+        body.fillColor = water.nsColor.cgColor
+        crest.strokeColor = surface.nsColor.cgColor
+        ring.strokeColor = surface.nsColor.cgColor
         levelLayer.position = CGPoint(x: 0, y: side - CGFloat(mean) * scale)
         CATransaction.commit()
     }

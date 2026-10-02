@@ -85,13 +85,13 @@ enum TourStep: Hashable {
         case .count:
             "Hover a task and use − and + to set how many pomodoros it gets (up to 5). Hover also shows when it will be done. The header shows when everything is done."
         case .timer:
-            "Start begins the first task that has pomodoros left, and the tank fills as the session runs. Pause freezes it. Reset drops a running session without counting it. While paused, Finish counts it as done and records the time you actually worked. A break always follows, and Skip ends it early."
+            "Start begins the first task that has pomodoros left, and the tank fills as the session runs. Pause freezes it and turns the tank grey until you resume. Reset drops a running session without counting it. While paused, Finish counts it as done and records the time you actually worked. A break always follows, and Skip ends it early."
         case .reorder:
-            "Drag a task anywhere to reorder it. Drag it into Later to plan it for tomorrow or Monday, or back up to work on it now. A task that is running stays at the top."
+            "Drag a task anywhere to reorder it. Drag it into Later to plan it for tomorrow or Monday, or back up to work on it now. The task you're working on sits under NOW. Everything under TODO can be dragged."
         case .markFinished:
-            "Open ••• and choose Mark as finished. It counts one pomodoro done without running the timer, and records a full session. The running task still uses FINISH on the card."
+            "Open ••• and choose Mark as finished. It counts one pomodoro done without running the timer, and records a full session. The task under NOW still uses FINISH on the card."
         case .later:
-            "From •••, move a task to tomorrow or next Monday. It waits in LATER, then returns to the top of the queue on that day. Its own ••• can bring it back sooner, or change the day. Click the LATER header to collapse the list, and Deeeep remembers whether it was open."
+            "From •••, move a task to tomorrow or next Monday. It waits in LATER, then joins the end of the queue on that day. Its own ••• can bring it back sooner, to the end of the queue, or change the day. Click the LATER header to collapse the list, and Deeeep remembers whether it was open."
         case .menuBar:
             "Deeeep lives up there. An empty tank means idle, the water rises as you work, and during a break the sun rises over the sea. Pause bars mean paused. Click it for quick controls, right-click to open this window."
         case .done:

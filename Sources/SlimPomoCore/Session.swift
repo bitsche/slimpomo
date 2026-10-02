@@ -328,7 +328,7 @@ public enum Snooze {
         let monday = nextMonday(after: today, calendar: calendar)
         let mondayStamp = CalendarDay.stamp(monday, calendar: calendar)
         if tomorrowStamp == mondayStamp {
-            let weekday = shortWeekday(monday, calendar: calendar)
+            let weekday = DateLabel.weekday(monday, calendar: calendar)
             return [SnoozeOffer(title: "Move to tomorrow (\(weekday))", returnDay: tomorrowStamp)]
         }
         return [
@@ -347,14 +347,6 @@ public enum Snooze {
         let daysUntilMonday = (9 - weekday) % 7
         let offset = daysUntilMonday == 0 ? 7 : daysUntilMonday
         return calendar.date(byAdding: .day, value: offset, to: today) ?? today
-    }
-
-    private static func shortWeekday(_ date: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = calendar.locale ?? .autoupdatingCurrent
-        formatter.setLocalizedDateFormatFromTemplate("EEE")
-        return formatter.string(from: date)
     }
 }
 
@@ -378,18 +370,10 @@ extension Snooze {
     public static func heading(for day: String, tomorrow: String?, calendar: Calendar = .current) -> String {
         guard let date = CalendarDay.date(day, calendar: calendar) else { return day }
         if day == tomorrow {
-            let weekday = formatted(date, template: "EEE", calendar: calendar)
+            let weekday = DateLabel.weekday(date, calendar: calendar)
             return calendar.component(.weekday, from: date) == 2 ? "Tomorrow (\(weekday))" : "Tomorrow"
         }
-        return formatted(date, template: "EEE d MMM", calendar: calendar)
-    }
-
-    private static func formatted(_ date: Date, template: String, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = calendar.locale ?? .autoupdatingCurrent
-        formatter.setLocalizedDateFormatFromTemplate(template)
-        return formatter.string(from: date)
+        return DateLabel.dayMonth(date, calendar: calendar)
     }
 }
 
@@ -505,6 +489,35 @@ public struct Session: Equatable, Codable {
     public var activeItem: QueueItem? {
         guard let activeItemID else { return nil }
         return queue.first { $0.id == activeItemID }
+    }
+
+    /// The task under NOW: the one whose work is running or paused. Nil while idle and during a break.
+    public var nowItem: QueueItem? {
+        phase == .work ? activeItem : nil
+    }
+
+    /// The queue as the TODO list shows it: every task except the one under NOW, in queue order.
+    public var todoQueue: [QueueItem] {
+        guard let now = nowItem?.id else { return queue }
+        return queue.filter { $0.id != now }
+    }
+
+    /// Slots a task may take in the TODO list, counted in that list without the task: anywhere, the top included.
+    public func todoSlots(excluding id: UUID?) -> ClosedRange<Int> {
+        0...todoQueue.filter { $0.id != id }.count
+    }
+
+    /// Where TODO slot `slot` is in the queue, both counted without `id`. The task under NOW stays first in the
+    /// queue, so TODO's top slot is the queue's second place.
+    public func queueIndex(forTodoSlot slot: Int, excluding id: UUID?) -> Int {
+        let rest = queue.filter { $0.id != id }
+        let pinned = phase == .work && activeItemID.map { active in rest.contains { $0.id == active } } == true
+        return min(max(0, slot) + (pinned ? 1 : 0), rest.count)
+    }
+
+    /// The task's place in the TODO list, or nil when it is not in it.
+    public func todoIndex(of id: UUID) -> Int? {
+        todoQueue.firstIndex { $0.id == id }
     }
 
     public var hasWorkQueued: Bool {
@@ -648,6 +661,7 @@ public struct Session: Equatable, Codable {
         if phase == .work, let id = activeItemID, let index = queue.firstIndex(where: { $0.id == id }), queue[index].count < 1 {
             queue[index].count = 1
         }
+        pinActiveWorkFirst()
         for index in later.indices {
             later[index].count = min(Self.maxPomodoros, max(0, later[index].count))
         }
@@ -969,8 +983,8 @@ public struct Session: Equatable, Codable {
         later[index].count = min(max(0, count), Self.maxPomodoros)
     }
 
-    /// Puts one snoozed task back now. `index` is its place in the queue, kept below a running task. Nil uses the
-    /// spot a scheduled return would use.
+    /// Puts one snoozed task back now. `index` is its place in the queue, kept below a running task. Nil appends it
+    /// to the end of the queue, like a scheduled return.
     public mutating func returnLater(id: UUID, to index: Int? = nil) {
         guard let from = later.firstIndex(where: { $0.id == id }) else { return }
         let item = later.remove(at: from)
@@ -978,7 +992,7 @@ public struct Session: Equatable, Codable {
     }
 
     /// Moves every later item whose day is today or earlier back into the queue. Does not wait for an idle timer.
-    /// Earlier days go first, each day in its saved order.
+    /// They are appended to the end of the queue. Earlier days go first, each day in its saved order.
     @discardableResult
     public mutating func returnDueLater(now: Date, calendar: Calendar = .current) -> Bool {
         let today = CalendarDay.stamp(now, calendar: calendar)
@@ -993,7 +1007,8 @@ public struct Session: Equatable, Codable {
         return true
     }
 
-    /// Queue slots a task may take, counted in the queue without that task. Nothing goes above a running task.
+    /// Queue slots a task may take, counted in the queue without that task. Nothing goes above the task under NOW, which
+    /// the TODO list does not show; use `todoSlots` for what the list offers.
     public func queueSlots(excluding id: UUID?) -> ClosedRange<Int> {
         let rest = queue.filter { $0.id != id }
         var lower = 0
@@ -1014,7 +1029,7 @@ public struct Session: Equatable, Codable {
 
     private mutating func insertReturned(_ items: [LaterItem], at requested: Int? = nil) {
         let lowest = (activeWorkIndex() ?? -1) + 1
-        let index = max(lowest, requested ?? lowest)
+        let index = max(lowest, requested ?? queue.count)
         let rows = items.map {
             QueueItem(id: $0.id, intensity: $0.intensity, description: $0.description, count: $0.count)
         }
@@ -1191,6 +1206,14 @@ public struct Session: Equatable, Codable {
         reorder(id: id, to: index + 1)
     }
 
+    /// The task being worked on stays first in the queue, so the TODO list under NOW holds every other task and each
+    /// of its rows can go anywhere, the top included.
+    private mutating func pinActiveWorkFirst() {
+        guard phase == .work, let id = activeItemID,
+              let index = queue.firstIndex(where: { $0.id == id }), index != 0 else { return }
+        queue.insert(queue.remove(at: index), at: 0)
+    }
+
     private mutating func beginWork(on item: QueueItem, now: Date) {
         phase = .work
         isRunning = true
@@ -1200,6 +1223,7 @@ public struct Session: Equatable, Codable {
         activeItemID = item.id
         activeDescription = item.description
         lockedBreakDuration = item.intensity.breakDuration
+        pinActiveWorkFirst()
     }
 
     private mutating func beginBreak(duration: TimeInterval, itemID: UUID, now: Date) {

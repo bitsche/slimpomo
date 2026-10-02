@@ -11,6 +11,9 @@ public enum TaskName {
         /// Where `rest` starts in the raw name, in UTF-16 units. Zero when there is no label.
         public var restOffset: Int
 
+        /// The label as a tag: uppercase, so `Niqo`, `NIQO`, and `niqo` are one tag. Nil when the name has no label.
+        public var tag: String? { prefix?.uppercased() }
+
         public init(prefix: String?, rest: String, restOffset: Int) {
             self.prefix = prefix
             self.rest = rest
@@ -45,6 +48,11 @@ public enum TaskName {
             rest: String(raw[index...]),
             restOffset: raw.utf16.distance(from: raw.startIndex, to: index)
         )
+    }
+
+    /// The tag of a raw name: its label in uppercase. Nil when the name has no label.
+    public static func tag(of raw: String) -> String? {
+        split(raw).tag
     }
 
     /// Trimmed, with every run of whitespace collapsed to one space. Case is kept.

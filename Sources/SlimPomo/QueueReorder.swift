@@ -134,10 +134,9 @@ enum RowDrag {
 struct RowDragSource: NSViewRepresentable {
     /// False for the running task, and while the tour runs.
     var movable: Bool
-    /// Width of the gauge column, padding included. A press there is the gauge's.
-    var leadingControls: CGFloat
-    /// Width of the stepper and menu columns, padding included.
-    var trailingControls: CGFloat
+    /// Stretches measured from the row's right edge where a press belongs to a small hover control (−, +, •••).
+    /// Everything else on the row, the gauge and the tag included, starts a drag once the pointer has moved.
+    var controlZones: [ClosedRange<CGFloat>]
     var onBegin: (NSPoint) -> Void
 
     func makeNSView(context: Context) -> RowDragView {
@@ -153,19 +152,17 @@ struct RowDragSource: NSViewRepresentable {
 
     private func apply(to view: RowDragView) {
         view.movable = movable
-        view.leadingControls = leadingControls
-        view.trailingControls = trailingControls
+        view.controlZones = controlZones
         view.onBegin = onBegin
         view.kind = movable ? .openHand : .arrow
     }
 }
 
 /// Starts a drag once the pointer has moved `RowDrag.threshold` after a press on the row.
-/// A press on a control column, a text field, or a scroller never starts one.
+/// A press on a hover control, a text field, or a scroller never starts one.
 final class RowDragView: PointingHandAnchorView {
     var movable = false
-    var leadingControls: CGFloat = 0
-    var trailingControls: CGFloat = 0
+    var controlZones: [ClosedRange<CGFloat>] = []
     var onBegin: ((NSPoint) -> Void)?
     private var monitor: Any?
     /// Where the button went down, in window coordinates. Nil when this press cannot start a drag.
@@ -210,7 +207,8 @@ final class RowDragView: PointingHandAnchorView {
         guard !event.modifierFlags.contains(.control) else { return nil }
         let local = convert(event.locationInWindow, from: nil)
         guard bounds.contains(local), visibleRect.contains(local) else { return nil }
-        guard local.x >= leadingControls, local.x <= bounds.width - trailingControls else { return nil }
+        let fromRight = bounds.width - local.x
+        guard !controlZones.contains(where: { $0.contains(fromRight) }) else { return nil }
         var view = window.contentView?.hitTest(event.locationInWindow)
         while let current = view {
             if current is NSTextView || current is NSTextField || current is NSScroller { return nil }

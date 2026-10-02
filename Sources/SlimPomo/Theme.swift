@@ -28,6 +28,7 @@ enum Theme {
     static let bgCardRGB = ThemeRGB(hex: 0x13262E)
     static let bgCardHoverRGB = ThemeRGB(hex: 0x183640)
     static let bgCardActiveRGB = ThemeRGB(hex: 0x17343F)
+    static let bgCardActiveHoverRGB = ThemeRGB(hex: 0x1B3B46)
     static let bgFieldRGB = ThemeRGB(hex: 0x0B161C)
     static let lineFieldRGB = ThemeRGB(hex: 0x22404A)
     static let lineSubtleRGB = ThemeRGB(hex: 0x1A2D35)
@@ -51,6 +52,16 @@ enum Theme {
     static let deepSurfaceRGB = ThemeRGB(hex: 0x6F7CF2)
     static let deepWaterRGB = ThemeRGB(hex: 0x2E3F9A)
 
+    /// Tag colors. Warm on purpose, so a tag never reads as a mode color or the break sand.
+    static let tag1RGB = ThemeRGB(hex: 0xF0A08C)
+    static let tag2RGB = ThemeRGB(hex: 0xE6C46E)
+    static let tag3RGB = ThemeRGB(hex: 0xE79BC2)
+    static let tag4RGB = ThemeRGB(hex: 0xC4A8F2)
+    static let tag5RGB = ThemeRGB(hex: 0xF2B880)
+    static let tag6RGB = ThemeRGB(hex: 0xB7C4A8)
+    static let tagRGBs = [tag1RGB, tag2RGB, tag3RGB, tag4RGB, tag5RGB, tag6RGB]
+    static let tagNames = ["Coral", "Amber", "Rose", "Lilac", "Peach", "Sage grey"]
+
     static let breakCardRGB = ThemeRGB(hex: 0xF1DFB8)
     static let breakWaterRGB = ThemeRGB(hex: 0xDCBD82)
     static let breakSurfaceRGB = ThemeRGB(hex: 0xC9A868)
@@ -59,11 +70,25 @@ enum Theme {
     static let breakScaleRGB = ThemeRGB(hex: 0x7A6A45)
     static let breakPillRGB = ThemeRGB(hex: 0xE8CF9E)
 
+    /// Paused work: the tank and the NOW row turn grey. Water, wave, scale, and gauge keep one hue, and the pause button
+    /// stays in its mode color.
+    static let pausedAirRGB = ThemeRGB(hex: 0x16282F)
+    static let pausedWaterRGB = ThemeRGB(hex: 0x3E555C)
+    static let pausedSurfaceRGB = ThemeRGB(hex: 0x7D9298)
+    static let pausedTimeRGB = ThemeRGB(hex: 0x9DB5BA)
+    static let pausedTextRGB = ThemeRGB(hex: 0xB9CDD1)
+    /// Paused break: the sand turns to a dusty grey-brown.
+    static let pausedBreakAirRGB = ThemeRGB(hex: 0x2A2823)
+    static let pausedBreakWaterRGB = ThemeRGB(hex: 0x5C564A)
+    static let pausedBreakSurfaceRGB = ThemeRGB(hex: 0x9A9180)
+    static let pausedBreakTextRGB = ThemeRGB(hex: 0xD8CFBE)
+
     static let bgBase = bgBaseRGB.color
     static let bgBaseNS = bgBaseRGB.nsColor
     static let bgCard = bgCardRGB.color
     static let bgCardHover = bgCardHoverRGB.color
     static let bgCardActive = bgCardActiveRGB.color
+    static let bgCardActiveHover = bgCardActiveHoverRGB.color
     static let bgField = bgFieldRGB.color
     static let lineField = lineFieldRGB.color
     static let lineSubtle = lineSubtleRGB.color
@@ -89,7 +114,25 @@ enum Theme {
     static let breakScale = breakScaleRGB.color
     static let breakPill = breakPillRGB.color
 
+    static let pausedSurface = pausedSurfaceRGB.color
+    static let pausedTime = pausedTimeRGB.color
+    static let pausedText = pausedTextRGB.color
+    static let pausedBreakSurface = pausedBreakSurfaceRGB.color
+    static let pausedBreakText = pausedBreakTextRGB.color
+
     static let diveSurface = diveSurfaceRGB.color
+
+    static let tag1 = tag1RGB.color
+    static let tag2 = tag2RGB.color
+    static let tag3 = tag3RGB.color
+    static let tag4 = tag4RGB.color
+    static let tag5 = tag5RGB.color
+    static let tag6 = tag6RGB.color
+    static let tags = [tag1, tag2, tag3, tag4, tag5, tag6]
+
+    /// The tag color for a palette index. Out-of-range indexes wrap.
+    static func tag(_ index: Int) -> Color { tags[((index % tags.count) + tags.count) % tags.count] }
+    static func tagRGB(_ index: Int) -> ThemeRGB { tagRGBs[((index % tagRGBs.count) + tagRGBs.count) % tagRGBs.count] }
 
     /// Icon hover and press from the UI basics: white at 6% and 10%.
     static let hoverWashNS = NSColor(white: 1, alpha: 0.06)

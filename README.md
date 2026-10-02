@@ -6,30 +6,47 @@ If an older SlimPomo.app is still installed, delete it so two menu-bar icons don
 
 If Finder still shows the old icon, run `touch Deeeep.app` or `killall Finder`.
 
-No projects, tags, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker.
+No project lists, estimates, or due dates. A task can be snoozed to tomorrow or next Monday; there is no date picker. History shows worked time per day and per project prefix. No charts or long-term statistics.
 
 Done is today's finished work. Past days live in History (read-only, local, kept indefinitely). Click the DONE or LATER header to collapse it; Deeeep remembers each. Rows with the same name and mode merge into one with a summed count and time.
 
-A name like `Acme: write the report` shows `Acme` as a muted prefix. Click a queue or LATER name to edit it; long names wrap to up to four lines while editing. Return saves, Esc cancels.
+Click a queue or LATER name to edit it; long names wrap to up to four lines while editing. Return saves, Esc cancels.
+
+## Tags
+
+A name like `Acme: write the report` starts with a project prefix (1 to 12 characters, no spaces, then a colon and a space). Deeeep shows it as a tag. Tags are plain text, not controls, and the name is stored as typed, and nothing else is added to the task.
+
+- **Identity and look:** `Acme`, `ACME`, and `acme` are one tag, always shown in uppercase, 11 pt regular with slight letter spacing, in the tag's color (60% in Done and History). The menu-bar menu and the edit field show plain text.
+- **Colors:** six warm colors (Coral, Amber, Rose, Lilac, Peach, Sage grey), kept apart from the mode colors and the break sand. A tag seen for the first time gets the first color no known tag uses; with all six taken, the color assigned longest ago. A tag keeps its color across days and relaunches. Colors are automatic; there is no way to change one.
+- **Column:** each list decides on its own: the queue, LATER, Done, and the History window (one list across all days). If a list has at least one tagged row, every row in it, untagged ones included, gets a tag column between gauge and name, as wide as that list's widest tag plus 8 pt (28 to 60 pt; a longer tag ends in "…"), so its names line up. A list without tags has no column and no empty space. The column appears and disappears live, with a 150 ms slide (none with Reduce Motion). A row held in a drag uses the layout of the list it is over.
+- **History:** under each day header, worked time per tag, biggest first, untagged work as Other, at most four entries and then `+N more`.
 
 Each task has a pomodoro count of 0 to 5 (at least 1 while it runs). Hover a row to show − and + in a fixed slot at the right; at rest only `×2` and above is shown. Done and History show the count in the same place.
 
 ## Queue
 
-Unfinished tasks stay in the queue across days until they are finished, deleted, or snoozed. From a task's ••• menu, move it to tomorrow or next Monday. It leaves the queue and waits in LATER, then returns to the top of the queue at the start of that day.
+Unfinished tasks stay in the queue across days until they are finished, deleted, or snoozed. From a task's ••• menu, move it to tomorrow or next Monday. It leaves the queue and waits in LATER, then returns to the end of the queue at the start of that day.
+
+While work is running or paused, the current task sits in its own **NOW** section above TODO: a NOW header, the task as a row (name and tag in exactly the same font, size and weight as every other row; only the active card background, the full-strength bar at its left edge, the gauge at 50% with the drifting wave, and the grey while paused mark it), and a divider before the TODO header. It has the same hover controls as any row (finish time, •••, − and +, with the count from 1 to 5), a click on the name renames it, and right-click opens the row menu with the snooze items disabled. It can't be dragged and nothing can be dropped into NOW. On START the task moves up from TODO into NOW; when a break starts it returns to the top of TODO (if pomodoros remain) and NOW collapses, 200 ms (instant with Reduce Motion). The TODO list never contains the current task, yet it stays first in the queue, and the TODO header's totals and "done by" still count its remaining time.
+
+While the timer is idle or in a break there is no NOW section, and the task that START (or the end of the break) will begin next has the same thin bar at its left edge in its mode color at 40%. It moves at once when the order, counts, or snoozes change.
+
+**Paused is grey and still.** Pausing work or a break turns the tank and the NOW row grey in 400 ms (instant with Reduce Motion): air, water, back wave, crest, digits, pause glyph, text line and scale in one grey family (a dusty sand-grey for a paused break), and in the NOW row the bar, the gauge ring, crest and water, and the name; the tag keeps its color at 60%. The waves freeze and the water level stays put. The Resume pill keeps its mode color, and there is no chip, badge or "Paused" text.
+
+Dates are always English, whatever the system region: `Mon 5 Oct` in LATER and `TUE 22 SEP` in History (with the year when it is not this one).
 
 ## Planning in LATER
 
-Queue and LATER are one drag area. Press a row anywhere and move the pointer 4 pt to lift it, with no hold delay. The gauge, the − and + stepper, and ••• are controls and never start a drag; a click without movement keeps its normal action (a click on the name edits it). Drag it:
+Every row in TODO and LATER can be dragged anywhere, and TODO and LATER are one drag area. Press a row anywhere and move the pointer 4 pt to lift it, with no hold delay. The gauge, tag, name, and empty space all start a drag; only the − and + stepper and ••• never do. A click without movement keeps its normal action (a gauge click changes the mode on mouse up, a click on the name edits it). Drag it:
 
 - within the queue to reorder it,
 - into a day of LATER (Tomorrow or next Monday) to plan it there, at the spot where you drop it,
 - between days of LATER to change the day it returns, or within a day to set the order,
 - from LATER up into the queue to work on it now, at the spot where you drop it.
 
-While a row is held, LATER opens and shows both days, with a dashed drop zone for an empty day. Holding a row over a collapsed LATER header for 0.6 s opens it for good. The pointer's y alone picks the place: the upper half of a row means before it, the lower half after it, a day label or the LATER header the start of that day, an empty day's drop zone that day, and anything below the last row (Done included) the end of the last day. Esc, or releasing off to the side or outside the list area, puts the row back. A task that is running can't be dragged and nothing can be dropped above it. Done rows are not drop targets.
+While a row is held, LATER opens and shows both days, with a dashed drop zone for an empty day. Holding a row over a collapsed LATER header for 0.6 s opens it for good. The pointer's y alone picks the place: the upper half of a row means before it, the lower half after it, a day label or the LATER header the start of that day, an empty day's drop zone that day, and anything below the last row (Done included) the end of the last day. Esc, or releasing off to the side or outside the list area, puts the row back. The task under NOW can't be dragged and nothing can be dropped into NOW; every TODO row can go anywhere, the top included (it then runs after the current task), and a release between the divider and the list drops at the top of TODO. Done rows are not drop targets.
 
-At midnight of a day, that day's tasks return to the top of the queue (below a running task) in the order planned in LATER. A task moved with ••• goes to the end of its day. In LATER you can also edit names, click the gauge to change the mode, and set the count; rows rest at 60% and come to full strength on hover.
+At the start of a day (midnight, launch, or wake), that day's tasks are appended to the end of the queue in the order planned in LATER; several days catching up at once go earlier day first. "Back to queue" in the ••• menu also appends to the end, while a drag from LATER lands exactly where you drop it. A task moved with ••• goes to the end of its day. In LATER you can also edit names, click the gauge to change the mode, and set the count; rows rest at 60% and come to full strength on hover.
 
 ## Modes
 
