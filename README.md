@@ -27,7 +27,7 @@ Each task has a pomodoro count of 0 to 5 (at least 1 while it runs). Hover a row
 
 Unfinished tasks stay in the queue across days until they are finished, deleted, or snoozed. From a task's ••• menu, move it to tomorrow or next Monday. It leaves the queue and waits in LATER, then returns to the end of the queue at the start of that day.
 
-While the timer is idle or in a break, the task that START (or the end of the break) will begin next has a thin bar at its left edge in its mode color at 40%. It becomes the full running style when work starts, and moves at once when the order, counts, or snoozes change.
+While the timer is idle or in a break, the task that START (or the end of the break) will begin next has a thin crescent marker hugging its rounded left edge in its mode color at 40% (the running task shows the same crescent at full strength). It becomes the full running style when work starts, and moves at once when the order, counts, or snoozes change.
 
 Dates are always English, whatever the system region: `Mon 5 Oct` in LATER and `TUE 22 SEP` in History (with the year when it is not this one).
 

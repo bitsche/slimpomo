@@ -1383,24 +1383,29 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
-/// The card behind a queue or LATER row. The 3 pt bar of the running task, or of the next one at 40%, is a rectangle
-/// inside the card, full height and flush left, and the card's corners clip it to a thin curved strip.
+/// The card behind a queue or LATER row. The marker of the running task, or of the next one at 40%, is the crescent
+/// between the card shape and the same shape shifted 3 pt right: 3 pt wide along the straight edge, curved on the inside
+/// too, so it tapers to nothing into the top and bottom edges. The shifted card sticks out on the right and the clip cuts it.
 private struct RowCard: ViewModifier {
     var fill: Color
     var bar: Color? = nil
 
+    private static let shape = RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+    private static let markerWidth: CGFloat = 3
+
     func body(content: Content) -> some View {
         content
-            .background(fill)
-            .overlay(alignment: .leading) {
-                if let bar {
-                    Rectangle()
-                        .fill(bar)
-                        .frame(width: 3)
-                        .allowsHitTesting(false)
+            .background {
+                ZStack {
+                    if let bar {
+                        Self.shape.fill(fill)
+                        Self.shape.fill(bar)
+                    }
+                    Self.shape.fill(fill)
+                        .offset(x: bar == nil ? 0 : Self.markerWidth)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
+            .clipShape(Self.shape)
     }
 }
 
