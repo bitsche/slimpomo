@@ -62,7 +62,23 @@ struct TankPaint: VectorArithmetic, Equatable {
     var nsFront: NSColor { NSColor(srgbRed: frontR, green: frontG, blue: frontB, alpha: frontA) }
     var nsBack: NSColor { NSColor(srgbRed: backR, green: backG, blue: backB, alpha: backA) }
 
-    static func make(phase: Phase, mode: Intensity) -> TankPaint {
+    static func make(phase: Phase, mode: Intensity, paused: Bool = false) -> TankPaint {
+        if paused {
+            if phase == .breakTime {
+                return TankPaint(
+                    bg: Theme.pausedBreakAirRGB,
+                    front: Theme.pausedBreakWaterRGB,
+                    back: Theme.pausedBreakSurfaceRGB,
+                    backAlpha: 0.55
+                )
+            }
+            return TankPaint(
+                bg: Theme.pausedAirRGB,
+                front: Theme.pausedWaterRGB,
+                back: Theme.pausedSurfaceRGB,
+                backAlpha: 0.55
+            )
+        }
         if phase == .breakTime {
             return TankPaint(
                 bg: Theme.breakCardRGB,
@@ -129,7 +145,9 @@ struct WaterTank: View {
                 running: frozenLevel == nil && session.isRunning,
                 phase: phase,
                 mode: Self.mode(of: session),
-                reduceMotion: reduceMotion || frozenLevel != nil
+                paused: paused,
+                reduceMotion: reduceMotion || frozenLevel != nil,
+                fades: !reduceMotion
             )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             content
@@ -190,6 +208,7 @@ struct WaterTank: View {
 
             scale
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.4), value: paused)
     }
 
     private var taskLabel: some View {
@@ -265,16 +284,34 @@ struct WaterTank: View {
         return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
-    private var showsPause: Bool {
+    private var showsPause: Bool { paused }
+
+    /// Work or a break is stopped. The tank turns grey and the waves stand still.
+    private var paused: Bool {
         session.phase != .idle && !session.isRunning && frozenLevel == nil
     }
 
     private var onBreak: Bool { phase == .breakTime }
 
-    private var timeColor: Color { onBreak ? Theme.breakText : (session.phase == .idle ? Theme.textOnWater : Theme.textStrong) }
-    private var taskColor: Color { onBreak ? Theme.breakText : Theme.textStrong }
-    private var pauseColor: Color { onBreak ? Theme.breakText : Theme.link }
-    private var scaleColor: Color { onBreak ? Theme.breakScale : Theme.link }
+    private var timeColor: Color {
+        if paused { return onBreak ? Theme.pausedBreakText : Theme.pausedTime }
+        return onBreak ? Theme.breakText : (session.phase == .idle ? Theme.textOnWater : Theme.textStrong)
+    }
+
+    private var taskColor: Color {
+        if paused { return onBreak ? Theme.pausedBreakText : Theme.pausedText }
+        return onBreak ? Theme.breakText : Theme.textStrong
+    }
+
+    private var pauseColor: Color {
+        if paused { return onBreak ? Theme.pausedBreakText : Theme.pausedTime }
+        return onBreak ? Theme.breakText : Theme.link
+    }
+
+    private var scaleColor: Color {
+        if paused { return onBreak ? Theme.pausedBreakSurface : Theme.pausedSurface }
+        return onBreak ? Theme.breakScale : Theme.link
+    }
 
     private var scaleMinutes: Double {
         if frozenLevel != nil {
@@ -325,16 +362,19 @@ private struct TankWaveHost: NSViewRepresentable {
     var running: Bool
     var phase: Phase
     var mode: Intensity
+    var paused: Bool
     var reduceMotion: Bool
+    /// Pause and resume crossfade the colors over 400 ms. Off with Reduce Motion.
+    var fades: Bool
 
     func makeNSView(context: Context) -> TankWaveView {
         let view = TankWaveView()
-        view.update(level: level, running: running, phase: phase, mode: mode, reduceMotion: reduceMotion)
+        view.update(level: level, running: running, phase: phase, mode: mode, paused: paused, reduceMotion: reduceMotion, fades: fades)
         return view
     }
 
     func updateNSView(_ view: TankWaveView, context: Context) {
-        view.update(level: level, running: running, phase: phase, mode: mode, reduceMotion: reduceMotion)
+        view.update(level: level, running: running, phase: phase, mode: mode, paused: paused, reduceMotion: reduceMotion, fades: fades)
     }
 }
 
@@ -348,6 +388,7 @@ final class TankWaveView: NSView {
     private var levelTarget: CGFloat = 0.05
     private var running = false
     private var phase: Phase = .idle
+    private var paused = false
     private var reduceMotion = false
     private var paint = TankPaint()
     private var builtWidth: CGFloat = 0
@@ -378,9 +419,11 @@ final class TankWaveView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func update(level: CGFloat, running: Bool, phase: Phase, mode: Intensity, reduceMotion: Bool) {
-        paint = TankPaint.make(phase: phase, mode: mode)
-        applyColors()
+    func update(level: CGFloat, running: Bool, phase: Phase, mode: Intensity, paused: Bool, reduceMotion: Bool, fades: Bool) {
+        let crossfade = fades && placed && paused != self.paused
+        self.paused = paused
+        paint = TankPaint.make(phase: phase, mode: mode, paused: paused)
+        applyColors(fade: crossfade)
         levelTarget = level
         self.running = running
         self.phase = phase
@@ -435,20 +478,41 @@ final class TankWaveView: NSView {
         }
     }
 
-    private func applyColors() {
+    private static let fadeDuration: CFTimeInterval = 0.4
+
+    /// Sets the colors at once. With `fade`, each layer eases from the color on screen to the new one.
+    private func applyColors(fade: Bool) {
+        let background = paint.nsBackground.cgColor
+        let frontFill = paint.nsFront.cgColor
+        let backFill = paint.nsBack.cgColor
+        let crestStroke = NSColor(srgbRed: paint.backR, green: paint.backG, blue: paint.backB, alpha: 0.55).cgColor
+        let fromBackground = layer?.presentation()?.backgroundColor ?? layer?.backgroundColor
+        let fromFront = front.presentation()?.fillColor ?? front.fillColor
+        let fromBack = back.presentation()?.fillColor ?? back.fillColor
+        let fromCrest = crest.presentation()?.strokeColor ?? crest.strokeColor
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer?.backgroundColor = paint.nsBackground.cgColor
-        front.fillColor = paint.nsFront.cgColor
-        back.fillColor = paint.nsBack.cgColor
-        crest.strokeColor = NSColor(
-            srgbRed: paint.backR,
-            green: paint.backG,
-            blue: paint.backB,
-            alpha: 0.55
-        ).cgColor
+        layer?.backgroundColor = background
+        front.fillColor = frontFill
+        back.fillColor = backFill
+        crest.strokeColor = crestStroke
         crest.fillColor = nil
         CATransaction.commit()
+        guard fade else { return }
+        if let layer { Self.ease(layer, key: "backgroundColor", from: fromBackground, to: background) }
+        Self.ease(front, key: "fillColor", from: fromFront, to: frontFill)
+        Self.ease(back, key: "fillColor", from: fromBack, to: backFill)
+        Self.ease(crest, key: "strokeColor", from: fromCrest, to: crestStroke)
+    }
+
+    private static func ease(_ layer: CALayer, key: String, from: CGColor?, to: CGColor) {
+        guard let from else { return }
+        let animation = CABasicAnimation(keyPath: key)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = fadeDuration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(animation, forKey: "fade.\(key)")
     }
 
     /// Wavelength is half the tank, so two full waves sit across it. The layer is two tanks wide.

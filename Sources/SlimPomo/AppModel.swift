@@ -82,6 +82,8 @@ final class AppModel {
     @ObservationIgnored private var tourScrollStep: TourStep?
     @ObservationIgnored private var tourScrollTask: Task<Void, Never>?
     @ObservationIgnored var queueListAnchor: QueueListAnchorView?
+    /// Marks the top of the TODO header. With a NOW section, a release between the divider and the list drops at the top of TODO.
+    @ObservationIgnored weak var todoTopAnchor: QueueListAnchorView?
     @ObservationIgnored private var lastBreakMessage: String?
 
     @ObservationIgnored private let store: Store
@@ -343,7 +345,7 @@ final class AppModel {
     func queueRowIsOffscreen(_ id: UUID) -> Bool {
         guard let anchor = queueListAnchor,
               let clip = anchor.enclosingScrollView?.contentView,
-              let index = session.queue.firstIndex(where: { $0.id == id })
+              let index = session.todoIndex(of: id)
         else { return true }
         let rowHeight = DragMetrics.stride
         let first = DragMetrics.queueTopPadding
@@ -544,6 +546,10 @@ final class AppModel {
         }
     }
 
+    func attachTodoTop(_ anchor: QueueListAnchorView) {
+        todoTopAnchor = anchor
+    }
+
     func attachQueueList(_ anchor: QueueListAnchorView) {
         queueListAnchor = anchor
         queueScrollView = anchor.enclosingScrollView
@@ -558,13 +564,13 @@ final class AppModel {
 
     /// The queue and every LATER day as the drag logic sees them. `held` is left out of its region's count.
     private func dragRegions(layout: DragLayout, excluding held: UUID?) -> [DragRegionSpec] {
-        let queue = session.queue.filter { $0.id != held }.count
+        let queue = session.todoQueue.filter { $0.id != held }.count
         let open = layout == .planning || isExpanded(.later)
         var specs = [
             DragRegionSpec(
                 id: .queue,
                 items: queue,
-                slots: held == nil ? 0...queue : session.queueSlots(excluding: held),
+                slots: session.todoSlots(excluding: held),
                 showsZoneWhenEmpty: false
             )
         ]
@@ -604,7 +610,7 @@ final class AppModel {
         var ids: [UUID?]
         switch region {
         case .queue:
-            ids = session.queue.map(\.id).filter { $0 != drag.itemID }
+            ids = session.todoQueue.map(\.id).filter { $0 != drag.itemID }
         case .day(let day):
             ids = session.later.filter { $0.returnDay == day && $0.id != drag.itemID }.map(\.id)
         }
@@ -647,7 +653,7 @@ final class AppModel {
         let source: QueueDragController.Source
         let region: DragRegionID
         let index: Int
-        if let position = session.queue.firstIndex(where: { $0.id == id }) {
+        if let position = session.todoIndex(of: id) {
             source = .queue
             region = .queue
             index = position
@@ -1445,11 +1451,11 @@ final class AppModel {
             apply { session in
                 switch (source, slot.region) {
                 case (.queue, .queue):
-                    session.reorder(id: id, to: slot.index)
+                    session.reorder(id: id, to: session.queueIndex(forTodoSlot: slot.index, excluding: id))
                 case (.queue, .day(let day)):
                     session.snooze(id: id, returnDay: day, now: now, position: slot.index)
                 case (.later, .queue):
-                    session.returnLater(id: id, to: slot.index)
+                    session.returnLater(id: id, to: session.queueIndex(forTodoSlot: slot.index, excluding: nil))
                 case (.later, .day(let day)):
                     session.moveLater(id: id, toDay: day, position: slot.index, now: now)
                 }
@@ -1562,6 +1568,9 @@ final class AppModel {
         let yFromTop = clip.isFlipped
             ? inClip.y - clip.bounds.minY
             : clip.bounds.maxY - inClip.y
+        if yFromTop < 0, windowSession.nowItem != nil, let top = todoTopAnchor {
+            return top.convert(inWindow, from: nil).y >= 0
+        }
         return QueueDrop.pointerIsInScrollArea(yFromTop: yFromTop)
             && yFromTop <= clip.bounds.height + DragMetrics.releaseSlack
     }

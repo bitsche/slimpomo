@@ -522,7 +522,7 @@ struct SessionTests {
         #expect(solo.queue.map(\.description) == ["Solo"])
     }
 
-    @Test func runningAndPausedTasksCannotMoveOrBePassed() {
+    @Test func runningAndPausedTasksStayFirstAndCannotMove() {
         var session = Session()
         session.addItem(description: "Zero", intensity: .regular, count: 1)
         session.addItem(description: "Write", intensity: .regular, count: 1)
@@ -530,39 +530,98 @@ struct SessionTests {
         session.addItem(description: "Ship", intensity: .intense, count: 1)
         session.setCount(id: session.queue[0].id, count: 0)
         _ = session.start(now: start)
-        #expect(session.activeWorkIndex() == 1)
-        let zero = session.queue[0].id
-        let write = session.queue[1].id
+        #expect(session.queue.map(\.description) == ["Write", "Zero", "Review", "Ship"])
+        #expect(session.activeWorkIndex() == 0)
+        let write = session.queue[0].id
+        let zero = session.queue[1].id
         let review = session.queue[2].id
         let ship = session.queue[3].id
 
         #expect(session.canReorder(id: write) == false)
-        #expect(session.canMoveUp(id: write) == false)
         #expect(session.canMoveDown(id: write) == false)
-        session.moveUp(id: write)
         session.moveDown(id: write)
-        session.reorder(id: write, to: 0)
-        #expect(session.queue.map(\.description) == ["Zero", "Write", "Review", "Ship"])
-
-        #expect(session.canMoveUp(id: review) == false)
-        #expect(session.canMoveDown(id: review) == true)
-        #expect(session.canMoveUp(id: ship) == true)
-        #expect(session.canMoveDown(id: ship) == false)
-        session.reorder(id: review, to: 0)
-        #expect(session.queue.map(\.description) == ["Zero", "Write", "Review", "Ship"])
-        session.reorder(id: ship, to: 2)
-        #expect(session.queue.map(\.description) == ["Zero", "Write", "Ship", "Review"])
+        session.reorder(id: write, to: 2)
+        #expect(session.queue.map(\.description) == ["Write", "Zero", "Review", "Ship"])
 
         #expect(session.canMoveUp(id: zero) == false)
         #expect(session.canMoveDown(id: zero) == true)
+        #expect(session.canMoveUp(id: ship) == true)
+        #expect(session.canMoveDown(id: ship) == false)
+        session.reorder(id: review, to: 0)
+        #expect(session.queue.map(\.description) == ["Write", "Zero", "Review", "Ship"])
+        session.reorder(id: ship, to: 1)
+        #expect(session.queue.map(\.description) == ["Write", "Ship", "Zero", "Review"])
         #expect(session.reorderDestinations(for: zero) == 1...3)
-        session.moveDown(id: zero)
-        #expect(session.queue.map(\.description) == ["Write", "Zero", "Ship", "Review"])
 
         _ = session.pause(now: start)
         #expect(session.isRunning == false)
         #expect(session.canReorder(id: write) == false)
-        #expect(session.canMoveUp(id: session.queue[1].id) == false)
+        #expect(session.activeWorkIndex() == 0)
+    }
+
+    @Test func theTodoListSkipsTheTaskUnderNowAndEveryRowCanGoAnywhere() {
+        var session = Session()
+        for name in ["A", "B", "C", "D"] {
+            session.addItem(description: name, intensity: .regular, count: 1)
+        }
+        #expect(session.nowItem == nil)
+        #expect(session.todoQueue.map(\.description) == ["A", "B", "C", "D"])
+        #expect(session.todoSlots(excluding: nil) == 0...4)
+
+        _ = session.start(now: start)
+        #expect(session.nowItem?.description == "A")
+        #expect(session.todoQueue.map(\.description) == ["B", "C", "D"])
+        #expect(session.todoIndex(of: session.queue[0].id) == nil)
+        #expect(session.todoSlots(excluding: nil) == 0...3)
+        let d = session.queue[3].id
+        #expect(session.todoSlots(excluding: d) == 0...2)
+
+        let top = session.queueIndex(forTodoSlot: 0, excluding: d)
+        #expect(top == 1)
+        session.reorder(id: d, to: top)
+        #expect(session.queue.map(\.description) == ["A", "D", "B", "C"])
+        #expect(session.todoQueue.map(\.description) == ["D", "B", "C"])
+
+        let bottom = session.queueIndex(forTodoSlot: 2, excluding: d)
+        session.reorder(id: d, to: bottom)
+        #expect(session.queue.map(\.description) == ["A", "B", "C", "D"])
+
+        _ = session.pause(now: start)
+        #expect(session.nowItem?.description == "A")
+        #expect(session.todoQueue.map(\.description) == ["B", "C", "D"])
+    }
+
+    @Test func idleAndBreakHaveNoNowTask() {
+        var session = Session()
+        session.addItem(description: "A", intensity: .regular, count: 2)
+        session.addItem(description: "B", intensity: .regular, count: 1)
+        _ = session.start(now: start)
+        _ = session.markDone(now: start)
+        #expect(session.phase == .breakTime)
+        #expect(session.nowItem == nil)
+        #expect(session.todoQueue.map(\.description) == ["A", "B"])
+        #expect(session.queueIndex(forTodoSlot: 0, excluding: nil) == 0)
+        #expect(session.nextStartID == session.queue[0].id)
+        _ = session.skipBreak(now: start)
+        #expect(session.nowItem?.description == "A")
+        #expect(session.todoQueue.map(\.description) == ["B"])
+    }
+
+    @Test func aTaskDraggedToTheTopOfTodoRunsAfterTheCurrentOneFinishesItsPomodoros() {
+        var session = Session()
+        session.addItem(description: "A", intensity: .regular, count: 2)
+        session.addItem(description: "B", intensity: .regular, count: 1)
+        session.addItem(description: "C", intensity: .regular, count: 1)
+        _ = session.start(now: start)
+        let c = session.queue[2].id
+        session.reorder(id: c, to: session.queueIndex(forTodoSlot: 0, excluding: c))
+        #expect(session.todoQueue.map(\.description) == ["C", "B"])
+        _ = session.markDone(now: start)
+        _ = session.skipBreak(now: start)
+        #expect(session.nowItem?.description == "A")
+        _ = session.markDone(now: start)
+        _ = session.skipBreak(now: start)
+        #expect(session.nowItem?.description == "C")
     }
 
     @Test func breakLetsEveryQueueRowMoveAndSkipFollowsTheNewOrder() {

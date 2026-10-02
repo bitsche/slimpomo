@@ -218,9 +218,20 @@ struct MainWindow: View {
             .padding(.top, 12)
             .tourTarget(.timerCard)
 
+            if let current = shown.nowItem {
+                nowSection(current)
+                    .transition(nowTransition)
+            }
+
             todoHeader
                 .padding(.horizontal, PageInset.horizontal)
-                .padding(.top, 14)
+                .padding(.top, shown.nowItem == nil ? 14 : 12)
+                .background(alignment: .top) {
+                    QueueListAnchor { anchor in
+                        model.attachTodoTop(anchor)
+                    }
+                    .frame(height: 0)
+                }
 
             VStack(spacing: 0) {
                 addRow
@@ -231,6 +242,7 @@ struct MainWindow: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(nowAnimation, value: shown.nowItem?.id)
         .background(Theme.bgBase.ignoresSafeArea())
         .accessibilityHidden(model.isTouring)
         .overlayPreferenceValue(TourAnchorKey.self) { anchors in
@@ -277,7 +289,7 @@ struct MainWindow: View {
     private var holdIsOverQueue: Bool { model.queueDrag?.slot.region == .queue }
 
     private var queueTagColumn: CGFloat {
-        var names = shown.queue.filter { $0.id != model.queueDrag?.itemID }.map(\.description)
+        var names = shown.todoQueue.filter { $0.id != model.queueDrag?.itemID }.map(\.description)
         if holdIsOverQueue, let held = heldName { names.append(held) }
         return tagColumn(of: names)
     }
@@ -296,6 +308,42 @@ struct MainWindow: View {
     /// 150 ms, and none with Reduce Motion: the names slide when a column appears, disappears, or changes width.
     private var columnAnimation: Animation? {
         model.reduceMotion || model.tour != nil ? nil : .easeOut(duration: 0.15)
+    }
+
+    /// The task being worked on, apart from the movable list: a header, the row, and a divider before TODO.
+    private func nowSection(_ item: QueueItem) -> some View {
+        VStack(spacing: 0) {
+            SectionHeader(label: "NOW", stats: "") {
+                EmptyView()
+            }
+            .padding(.horizontal, PageInset.horizontal)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+            QueueLine(
+                item: item,
+                isCurrent: true,
+                finish: shown.finishDates(at: model.now)[item.id],
+                model: model,
+                isNow: true
+            )
+            .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description], size: TagStyle.nowFontSize))
+            .id(item.id)
+            Rectangle()
+                .fill(Theme.lineSubtle)
+                .frame(height: 1)
+                .padding(.horizontal, PageInset.horizontal)
+                .padding(.top, 12 - RowGrid.gap)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// 200 ms for the task moving into NOW and back to TODO. None with Reduce Motion.
+    private var nowAnimation: Animation? {
+        model.reduceMotion || model.tour != nil ? nil : .easeOut(duration: 0.2)
+    }
+
+    private var nowTransition: AnyTransition {
+        model.reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
     }
 
     /// Finished pomodoros today. A rise while Done is collapsed flashes the header stats.
@@ -610,7 +658,7 @@ struct MainWindow: View {
 
     /// The queue's rows in the order they are drawn. A held task shows as the gap, wherever it is going.
     private var queueDisplay: [DisplayRow] {
-        let queue = shown.queue
+        let queue = shown.todoQueue
         guard let drag = model.queueDrag else { return queue.map { DisplayRow.queue($0) } }
         var rows = queue.filter { $0.id != drag.itemID }.map { DisplayRow.queue($0) }
         if drag.slot.region == .queue {
@@ -1669,6 +1717,7 @@ private struct RowNameEditor: View {
     var saved: String
     var intensity: Intensity
     var semibold: Bool
+    var size = NameFieldMetrics.size
     var ink: NSColor
     var onFinish: (Bool) -> Void
 
@@ -1684,10 +1733,11 @@ private struct RowNameEditor: View {
     }
 
     var body: some View {
-        let font = NameFieldMetrics.font(semibold: semibold)
+        let font = NameFieldMetrics.font(semibold: semibold, size: size)
         return NameEditor(
             text: text,
             semibold: semibold,
+            size: size,
             color: ink,
             autoFocus: true,
             caret: model.editCaret,
@@ -1723,8 +1773,20 @@ private struct QueueLine: View {
     var finish: Date?
     var model: AppModel
     var floating = false
+    /// The task under NOW: a step larger, and grey while work is paused.
+    var isNow = false
 
     @Environment(\.tagColumn) private var tagColumn
+
+    private var nameSize: CGFloat { isNow ? NameFieldMetrics.nowSize : NameFieldMetrics.size }
+    private var tagSize: CGFloat { isNow ? TagStyle.nowFontSize : TagStyle.fontSize }
+
+    /// Work is paused on this row's task.
+    private var paused: Bool { isNow && !model.windowSession.isRunning }
+
+    private var crossfade: Animation? {
+        model.reduceMotion ? nil : .easeInOut(duration: 0.4)
+    }
 
     private var rowTag: String? { TaskName.tag(of: item.description) }
 
@@ -1736,7 +1798,7 @@ private struct QueueLine: View {
     private var isNext: Bool { model.windowSession.nextStartID == item.id }
 
     private var barColor: Color? {
-        if showsWorkBar { return Theme.surface(item.intensity) }
+        if showsWorkBar { return paused ? Theme.pausedSurface : Theme.surface(item.intensity) }
         return isNext ? Theme.surface(item.intensity).opacity(0.4) : nil
     }
 
@@ -1793,7 +1855,10 @@ private struct QueueLine: View {
             }
     }
 
-    private var nameInk: Color { showsWorkBar ? Theme.textStrong : Theme.textPrimary }
+    private var nameInk: Color {
+        if paused { return Theme.pausedText }
+        return showsWorkBar ? Theme.textStrong : Theme.textPrimary
+    }
 
     private var growthAnimation: Animation? {
         model.reduceMotion ? nil : .easeOut(duration: 0.15)
@@ -1806,14 +1871,15 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 locked: model.session.phase != .idle && item.id == model.session.activeItemID,
                 reduceMotion: model.reduceMotion,
                 showsMark: false,
-                drifting: drifts
+                drifting: drifts,
+                paused: paused
             ) {
                 model.updateIntensity(id: item.id, intensity: item.intensity.next)
             }
             .frame(height: RowGrid.height)
         } tag: {
             if let rowTag {
-                TagLabel(tag: rowTag, model: model, column: tagColumn)
+                TagLabel(tag: rowTag, model: model, strength: paused ? 0.6 : 1, column: tagColumn, size: tagSize)
             }
         } name: {
             if isEditing {
@@ -1823,7 +1889,8 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                     saved: item.description,
                     intensity: item.intensity,
                     semibold: showsWorkBar,
-                    ink: (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB).nsColor,
+                    size: nameSize,
+                    ink: (paused ? Theme.pausedTextRGB : (showsWorkBar ? Theme.textStrongRGB : Theme.textPrimaryRGB)).nsColor,
                     onFinish: { finishEditing(save: $0) }
                 )
             } else {
@@ -1831,6 +1898,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                     text: nameShown,
                     color: nameInk,
                     semibold: showsWorkBar,
+                    size: nameSize,
                     placeholder: "Short description",
                     onEdit: editHandler
                 )
@@ -1865,6 +1933,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
         .animation(.easeOut(duration: 0.15), value: cardHovered)
         .animation(.easeOut(duration: 0.15), value: showsWorkBar)
+        .animation(crossfade, value: paused)
         .background {
             if !floating {
                 RowMenuClick(entries: menuEntries)
@@ -1922,7 +1991,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     private func beginEditing(at x: CGFloat?) {
         guard !floating, model.tour == nil else { return }
         model.editorContent = 0
-        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar) }
+        model.editCaret = x.map { NameCaret.offset(in: item.description, x: $0, semibold: showsWorkBar, size: nameSize) }
         withAnimation(growthAnimation) {
             model.beginNameEdit(id: item.id)
         }
@@ -2722,6 +2791,8 @@ struct DepthGauge: View {
     var markSize: CGFloat = 12
     /// The running task's wave drifts. Every other gauge is still.
     var drifting = false
+    /// The NOW row's gauge goes grey while work is paused.
+    var paused = false
 
     static let diameter: CGFloat = 20
     static let hitHeight: CGFloat = 28
@@ -2758,7 +2829,7 @@ struct DepthGauge: View {
     }
 
     private var bowlMark: some View {
-        TankGauge(intensity: intensity, drifting: drifting, reduceMotion: reduceMotion)
+        TankGauge(intensity: intensity, drifting: drifting, paused: paused, reduceMotion: reduceMotion)
             .frame(width: Self.diameter, height: Self.diameter)
             .opacity(colorOpacity)
             .accessibilityHidden(true)
@@ -2784,13 +2855,14 @@ private struct IntensitySwitch: View {
     var reduceMotion = false
     var showsMark = true
     var drifting = false
+    var paused = false
     var action: () -> Void
 
     private static let lockedHelp = "Intensity can't be changed while the timer is running"
 
     var body: some View {
-        DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting)
-            .opacity(locked ? 0.4 : 1)
+        DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting, paused: paused)
+            .opacity(locked ? 0.5 : 1)
             .frame(height: DepthGauge.hitHeight)
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay {
@@ -3114,6 +3186,7 @@ struct TaskNameLabel: View {
     var text: String
     var color: Color
     var semibold = false
+    var size = NameFieldMetrics.size
     /// Drawn in place of an empty name.
     var placeholder: String? = nil
     /// Called with the click's x in the name, or nil from the keyboard or VoiceOver.
@@ -3127,9 +3200,9 @@ struct TaskNameLabel: View {
             .layoutPriority(-1)
             .overlay {
                 if let onEdit {
-                    NameClickArea(fullText: text, semibold: semibold, onActivate: onEdit)
+                    NameClickArea(fullText: text, semibold: semibold, size: size, onActivate: onEdit)
                 } else {
-                    NameTipArea(fullText: text, semibold: semibold)
+                    NameTipArea(fullText: text, semibold: semibold, size: size)
                 }
             }
             .accessibilityElement(children: .ignore)
@@ -3147,13 +3220,13 @@ struct TaskNameLabel: View {
     private var content: some View {
         if text.isEmpty, let placeholder {
             Text(placeholder)
-                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .font(.system(size: size, weight: semibold ? .semibold : .regular).monospacedDigit())
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
         } else {
             Text(parts.rest)
-                .font(.system(size: 13, weight: semibold ? .semibold : .regular).monospacedDigit())
+                .font(.system(size: size, weight: semibold ? .semibold : .regular).monospacedDigit())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .truncationMode(.tail)

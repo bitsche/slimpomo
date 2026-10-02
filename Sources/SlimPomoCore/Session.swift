@@ -491,6 +491,35 @@ public struct Session: Equatable, Codable {
         return queue.first { $0.id == activeItemID }
     }
 
+    /// The task under NOW: the one whose work is running or paused. Nil while idle and during a break.
+    public var nowItem: QueueItem? {
+        phase == .work ? activeItem : nil
+    }
+
+    /// The queue as the TODO list shows it: every task except the one under NOW, in queue order.
+    public var todoQueue: [QueueItem] {
+        guard let now = nowItem?.id else { return queue }
+        return queue.filter { $0.id != now }
+    }
+
+    /// Slots a task may take in the TODO list, counted in that list without the task: anywhere, the top included.
+    public func todoSlots(excluding id: UUID?) -> ClosedRange<Int> {
+        0...todoQueue.filter { $0.id != id }.count
+    }
+
+    /// Where TODO slot `slot` is in the queue, both counted without `id`. The task under NOW stays first in the
+    /// queue, so TODO's top slot is the queue's second place.
+    public func queueIndex(forTodoSlot slot: Int, excluding id: UUID?) -> Int {
+        let rest = queue.filter { $0.id != id }
+        let pinned = phase == .work && activeItemID.map { active in rest.contains { $0.id == active } } == true
+        return min(max(0, slot) + (pinned ? 1 : 0), rest.count)
+    }
+
+    /// The task's place in the TODO list, or nil when it is not in it.
+    public func todoIndex(of id: UUID) -> Int? {
+        todoQueue.firstIndex { $0.id == id }
+    }
+
     public var hasWorkQueued: Bool {
         queue.contains { $0.count > 0 }
     }
@@ -632,6 +661,7 @@ public struct Session: Equatable, Codable {
         if phase == .work, let id = activeItemID, let index = queue.firstIndex(where: { $0.id == id }), queue[index].count < 1 {
             queue[index].count = 1
         }
+        pinActiveWorkFirst()
         for index in later.indices {
             later[index].count = min(Self.maxPomodoros, max(0, later[index].count))
         }
@@ -977,7 +1007,8 @@ public struct Session: Equatable, Codable {
         return true
     }
 
-    /// Queue slots a task may take, counted in the queue without that task. Nothing goes above a running task.
+    /// Queue slots a task may take, counted in the queue without that task. Nothing goes above the task under NOW, which
+    /// the TODO list does not show; use `todoSlots` for what the list offers.
     public func queueSlots(excluding id: UUID?) -> ClosedRange<Int> {
         let rest = queue.filter { $0.id != id }
         var lower = 0
@@ -1175,6 +1206,14 @@ public struct Session: Equatable, Codable {
         reorder(id: id, to: index + 1)
     }
 
+    /// The task being worked on stays first in the queue, so the TODO list under NOW holds every other task and each
+    /// of its rows can go anywhere, the top included.
+    private mutating func pinActiveWorkFirst() {
+        guard phase == .work, let id = activeItemID,
+              let index = queue.firstIndex(where: { $0.id == id }), index != 0 else { return }
+        queue.insert(queue.remove(at: index), at: 0)
+    }
+
     private mutating func beginWork(on item: QueueItem, now: Date) {
         phase = .work
         isRunning = true
@@ -1184,6 +1223,7 @@ public struct Session: Equatable, Codable {
         activeItemID = item.id
         activeDescription = item.description
         lockedBreakDuration = item.intensity.breakDuration
+        pinActiveWorkFirst()
     }
 
     private mutating func beginBreak(duration: TimeInterval, itemID: UUID, now: Date) {
