@@ -782,6 +782,7 @@ struct MainWindow: View {
             .offset(x: drag.visualX, y: drag.visualY)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            .transition(.identity)
         }
     }
 

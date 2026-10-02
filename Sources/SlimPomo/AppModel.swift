@@ -876,7 +876,7 @@ final class AppModel {
         guard tour == nil else { return }
         now = Date()
         session.refreshDoneDay(now: now)
-        bringBackDueLater(animated: true)
+        bringBackDueLater(animated: !suppressQueueAnimation)
         let effect = change(&session)
         bell.play(effect)
         syncTagColors()
@@ -1446,24 +1446,34 @@ final class AppModel {
         // The floating row is already on the gap, and the list already has its final layout.
         // Commit that order with no animation, in the same update that removes the floating copy.
         suppressQueueAnimation = true
-        queueDrag = nil
-        if drop {
-            apply { session in
-                switch (source, slot.region) {
-                case (.queue, .queue):
-                    session.reorder(id: id, to: session.queueIndex(forTodoSlot: slot.index, excluding: id))
-                case (.queue, .day(let day)):
-                    session.snooze(id: id, returnDay: day, now: now, position: slot.index)
-                case (.later, .queue):
-                    session.returnLater(id: id, to: session.queueIndex(forTodoSlot: slot.index, excluding: nil))
-                case (.later, .day(let day)):
-                    session.moveLater(id: id, toDay: day, position: slot.index, now: now)
-                }
-                return .none
+        var commit = Transaction()
+        commit.disablesAnimations = true
+        withTransaction(commit) {
+            queueDrag = nil
+            if drop {
+                commitDrop(id: id, source: source, slot: slot)
             }
         }
+        // Keep the flag up past this render, so no animated pass can slip in behind the commit.
         Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
             self.suppressQueueAnimation = false
+        }
+    }
+
+    private func commitDrop(id: UUID, source: QueueDragController.Source, slot: DragSlot) {
+        apply { session in
+            switch (source, slot.region) {
+            case (.queue, .queue):
+                session.reorder(id: id, to: session.queueIndex(forTodoSlot: slot.index, excluding: id))
+            case (.queue, .day(let day)):
+                session.snooze(id: id, returnDay: day, now: now, position: slot.index)
+            case (.later, .queue):
+                session.returnLater(id: id, to: session.queueIndex(forTodoSlot: slot.index, excluding: nil))
+            case (.later, .day(let day)):
+                session.moveLater(id: id, toDay: day, position: slot.index, now: now)
+            }
+            return .none
         }
     }
 
