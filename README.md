@@ -14,12 +14,11 @@ Click a queue or LATER name to edit it; long names wrap to up to four lines whil
 
 ## Tags
 
-A name like `Acme: write the report` starts with a project prefix (1 to 12 characters, no spaces, then a colon and a space). Deeeep shows it as a tag. This is display only: the name is stored as typed, and nothing else is added to the task.
+A name like `Acme: write the report` starts with a project prefix (1 to 12 characters, no spaces, then a colon and a space). Deeeep shows it as a tag. Tags are plain text, not controls, and the name is stored as typed, and nothing else is added to the task.
 
-- **Identity and look:** `Acme`, `ACME`, and `acme` are one tag, always shown in uppercase, small and semibold, in the tag's color (60% in Done and History). The menu-bar menu and the edit field show plain text.
-- **Colors:** six warm colors (Coral, Amber, Rose, Lilac, Peach, Sage grey), kept apart from the mode colors and the break sand. A tag seen for the first time gets the first color no known tag uses; with all six taken, the color assigned longest ago. A tag keeps its color across days and relaunches. Right-click a tag, anywhere it is shown, to pick another color for it everywhere.
+- **Identity and look:** `Acme`, `ACME`, and `acme` are one tag, always shown in uppercase, 11 pt regular with slight letter spacing, in the tag's color (60% in Done and History). The menu-bar menu and the edit field show plain text.
+- **Colors:** six warm colors (Coral, Amber, Rose, Lilac, Peach, Sage grey), kept apart from the mode colors and the break sand. A tag seen for the first time gets the first color no known tag uses; with all six taken, the color assigned longest ago. A tag keeps its color across days and relaunches. Colors are automatic; there is no way to change one.
 - **Column:** when any visible row in the queue, LATER, or Done has a tag, every row gets a tag column between gauge and name, as wide as the widest tag plus 8 pt, so names line up across the window. Without tags there is no column. History has its own.
-- **Focus:** click a tag in the main window to dim every row with another tag or none to 35%, in the queue, LATER, and Done. The TODO header shows a chip with the tag and the work still planned for it. Click the tag again, the chip's ×, or press Esc to end it. Focus is visual only and is not saved; START, order, drag and drop, and editing work as before, and a dimmed row returns to full strength on hover.
 - **History:** under each day header, worked time per tag, biggest first, untagged work as Other, at most four entries and then `+N more`.
 
 Each task has a pomodoro count of 0 to 5 (at least 1 while it runs). Hover a row to show − and + in a fixed slot at the right; at rest only `×2` and above is shown. Done and History show the count in the same place.
@@ -34,7 +33,7 @@ Dates are always English, whatever the system region: `Mon 5 Oct` in LATER and `
 
 ## Planning in LATER
 
-Queue and LATER are one drag area. Press a row anywhere and move the pointer 4 pt to lift it, with no hold delay. The gauge, the − and + stepper, and ••• are controls and never start a drag; a click without movement keeps its normal action (a click on the name edits it). Drag it:
+Queue and LATER are one drag area. Press a row anywhere and move the pointer 4 pt to lift it, with no hold delay. The gauge, tag, name, and empty space all start a drag; only the − and + stepper and ••• never do. A click without movement keeps its normal action (a gauge click changes the mode on mouse up, a click on the name edits it). Drag it:
 
 - within the queue to reorder it,
 - into a day of LATER (Tomorrow or next Monday) to plan it there, at the spot where you drop it,

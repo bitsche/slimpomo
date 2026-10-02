@@ -305,14 +305,8 @@ struct MainWindow: View {
         SectionHeader(
             label: "TODO",
             stats: todoStats,
-            help: todoStats.isEmpty ? nil : "Work still in the queue, and when the last task would finish",
-            accessoryTrailing: IconMetrics.column.width * 2 + 8
+            help: todoStats.isEmpty ? nil : "Work still in the queue, and when the last task would finish"
         ) {
-            if let focus = model.tagFocus, !model.isTouring {
-                TagFocusChip(tag: focus, remaining: shown.plannedWork(tag: focus), model: model)
-                    .transition(.opacity)
-            }
-        } buttons: {
             SquareIconButton(systemName: "questionmark.circle", size: 15, slot: IconMetrics.column, help: "Tour") {
                 model.replayTour()
             }
@@ -322,7 +316,6 @@ struct MainWindow: View {
             }
             .tourTarget(.historyButton)
         }
-        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: model.tagFocus)
     }
 
     private var listScroller: some View {
@@ -1189,6 +1182,13 @@ enum RowGrid {
     static let edgeExtra: CGFloat = edge - trailing
     /// Hover controls at the right of a queue or LATER row: ••• then the stepper slot.
     static let controlsWidth: CGFloat = edge + countSlot + menuGap + IconMetrics.column.width
+    /// Where − + and ••• sit, measured from the card's right edge. A press there never starts a drag.
+    /// The count between − and +, the finish time, and the gaps are part of the row.
+    static let controlZones: [ClosedRange<CGFloat>] = [
+        edge...(edge + 24),
+        (edge + 48)...(edge + countSlot),
+        (edge + countSlot + menuGap)...controlsWidth,
+    ]
     static let stepperHeight: CGFloat = 26
     /// Worked time in Done and History.
     static let workedWidth: CGFloat = 48
@@ -1252,38 +1252,17 @@ struct SectionTitle: View {
     }
 }
 
-struct SectionHeader<Accessory: View, Buttons: View>: View {
+struct SectionHeader<Buttons: View>: View {
     var label: String
     var stats: String
     var help: String? = nil
-    /// Room kept free at the right of the accessory for the buttons.
-    var accessoryTrailing: CGFloat = 0
-    @ViewBuilder var accessory: () -> Accessory
     @ViewBuilder var buttons: () -> Buttons
-
-    init(
-        label: String,
-        stats: String,
-        help: String? = nil,
-        accessoryTrailing: CGFloat = 0,
-        @ViewBuilder accessory: @escaping () -> Accessory,
-        @ViewBuilder buttons: @escaping () -> Buttons
-    ) {
-        self.label = label
-        self.stats = stats
-        self.help = help
-        self.accessoryTrailing = accessoryTrailing
-        self.accessory = accessory
-        self.buttons = buttons
-    }
 
     var body: some View {
         HStack(spacing: RowGrid.spacing) {
             SectionTitle(label: label, stats: stats)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(SectionTitleHelp(text: help))
-            accessory()
-                .padding(.trailing, accessoryTrailing)
         }
         .frame(height: 24)
         .overlay(alignment: .trailing) {
@@ -1291,12 +1270,6 @@ struct SectionHeader<Accessory: View, Buttons: View>: View {
                 buttons()
             }
         }
-    }
-}
-
-extension SectionHeader where Accessory == EmptyView {
-    init(label: String, stats: String, help: String? = nil, @ViewBuilder buttons: @escaping () -> Buttons) {
-        self.init(label: label, stats: stats, help: help, accessory: { EmptyView() }, buttons: buttons)
     }
 }
 
@@ -1381,26 +1354,24 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
+/// The card behind a queue or LATER row. The 3 pt bar of the running task, or of the next one at 40%, is a rectangle
+/// inside the card, full height and flush left, and the card's corners clip it to a thin curved strip.
 private struct RowCard: ViewModifier {
     var fill: Color
     var bar: Color? = nil
 
     func body(content: Content) -> some View {
         content
-            .background {
-                RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
-                    .fill(fill)
-            }
-            .overlay {
+            .background(fill)
+            .overlay(alignment: .leading) {
                 if let bar {
-                    HStack(spacing: 0) {
-                        bar.frame(width: 3)
-                        Spacer(minLength: 0)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
-                    .allowsHitTesting(false)
+                    Rectangle()
+                        .fill(bar)
+                        .frame(width: 3)
+                        .allowsHitTesting(false)
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
     }
 }
 
@@ -1777,11 +1748,6 @@ private struct QueueLine: View {
 
     var body: some View {
         card
-            .modifier(TagDim(
-                dimmed: !floating && model.dimmedByTagFocus(item.description),
-                hovered: revealed,
-                reduceMotion: model.reduceMotion
-            ))
             .tourTarget(!floating && item.id == TourSample.emails ? .reorderRow : nil)
             .padding(.horizontal, PageInset.horizontal)
             .padding(.bottom, floating ? 0 : RowGrid.gap)
@@ -1872,8 +1838,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    leadingControls: RowGrid.leading + RowGrid.gauge + (rowTag == nil ? 0 : tagWidth),
-                    trailingControls: RowGrid.controlsWidth,
+                    controlZones: RowGrid.controlZones,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -2022,12 +1987,6 @@ private struct LaterLine: View {
     /// LATER rows rest at 60%. Hover, editing, and dragging bring them to full strength.
     private var full: Bool { revealed || isEditing || floating }
 
-    /// A tag focus on another tag takes a row down to 35% until it is hovered.
-    private var rowOpacity: Double {
-        if !full, !floating, model.dimmedByTagFocus(item.description) { return 0.35 }
-        return full ? 1 : 0.6
-    }
-
     private var growthAnimation: Animation? {
         model.reduceMotion ? nil : .easeOut(duration: 0.15)
     }
@@ -2098,8 +2057,8 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
-        .opacity(rowOpacity)
-        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: rowOpacity)
+        .opacity(full ? 1 : 0.6)
+        .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: full)
         .animation(.easeOut(duration: 0.15), value: cardHovered)
         .background {
             if !floating {
@@ -2110,8 +2069,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    leadingControls: RowGrid.leading + RowGrid.gauge + (rowTag == nil ? 0 : tagWidth),
-                    trailingControls: RowGrid.controlsWidth,
+                    controlZones: RowGrid.controlZones,
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -2383,7 +2341,7 @@ private final class RowMenuClickView: NSView {
         guard let hit = window?.contentView?.hitTest(event.locationInWindow) else { return false }
         var view: NSView? = hit
         while let current = view {
-            if current is NSTextView || current is TagPlateView {
+            if current is NSTextView {
                 return true
             }
             view = current.superview
@@ -2624,11 +2582,6 @@ private struct DoneLine: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { model.setDoneHover(item.id, hovering: $0) }
         .accessibilityAction(named: "Copy to the end of the queue") { model.requeue(id: item.id) }
-        .modifier(TagDim(
-            dimmed: model.dimmedByTagFocus(item.description),
-            hovered: revealed,
-            reduceMotion: model.reduceMotion
-        ))
         .padding(.horizontal, PageInset.horizontal)
         .padding(.bottom, RowGrid.doneGap)
         return Group {
@@ -2800,26 +2753,78 @@ private struct IntensitySwitch: View {
     private static let lockedHelp = "Intensity can't be changed while the timer is running"
 
     var body: some View {
-        Button(action: action) {
-            DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting)
-                .opacity(locked ? 0.4 : 1)
-                .frame(height: DepthGauge.hitHeight)
-                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay {
-                    if locked {
-                        DeniedCursor()
-                    } else {
-                        HoverPlate(cornerRadius: 6, color: Theme.hoverWashNS)
-                    }
+        DepthGauge(intensity: intensity, reduceMotion: reduceMotion, showsTooltip: false, showsMark: showsMark, drifting: drifting)
+            .opacity(locked ? 0.4 : 1)
+            .frame(height: DepthGauge.hitHeight)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                if locked {
+                    DeniedCursor()
+                } else {
+                    HoverPlate(cornerRadius: 6, color: Theme.hoverWashNS)
                 }
-        }
-        .buttonStyle(PointingHandButtonStyle(enabled: !locked))
-        .disabled(locked)
-        .fixedSize()
-        .help(locked ? Self.lockedHelp : intensity.summary)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(intensity.spoken)
-        .accessibilityHint(locked ? Self.lockedHelp : "Click to change")
+            }
+            .overlay {
+                if !locked {
+                    ReleaseClick(tip: intensity.summary, onClick: action)
+                }
+            }
+            .fixedSize()
+            .modifier(SectionTitleHelp(text: locked ? Self.lockedHelp : nil))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(intensity.spoken)
+            .accessibilityHint(locked ? Self.lockedHelp : "Click to change")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) {
+                if !locked { action() }
+            }
+    }
+}
+
+/// A click that fires on mouse up, and only when the pointer stayed within the drag threshold. A press that moves
+/// further belongs to the row drag, so the gauge starts a drag like any other part of the row and never also changes the mode.
+private struct ReleaseClick: NSViewRepresentable {
+    var tip: String
+    var onClick: () -> Void
+
+    func makeNSView(context: Context) -> ReleaseClickView {
+        let view = ReleaseClickView()
+        view.setAccessibilityElement(false)
+        apply(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: ReleaseClickView, context: Context) {
+        apply(to: nsView)
+    }
+
+    private func apply(to view: ReleaseClickView) {
+        view.onClick = onClick
+        if view.toolTip != tip { view.toolTip = tip }
+    }
+}
+
+private final class ReleaseClickView: PointingHandAnchorView {
+    var onClick: (() -> Void)?
+    private var pressedAt: NSPoint?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
+        return self
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        pressedAt = event.locationInWindow
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressedAt = nil }
+        guard let pressedAt, !AppRuntime.model.isTouring else { return }
+        let moved = hypot(event.locationInWindow.x - pressedAt.x, event.locationInWindow.y - pressedAt.y)
+        guard moved < RowDrag.threshold, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onClick?()
     }
 }
 

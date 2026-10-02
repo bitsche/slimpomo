@@ -180,15 +180,13 @@ struct WaterTank: View {
                 }
                 .padding(.leading, 16)
                 .padding(.top, 14)
+                taskLabel
+                    .padding(.leading, 16)
+                    .padding(.trailing, 64)
+                    .padding(.top, 8)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-
-            taskLabel
-                .padding(.leading, 18)
-                .padding(.trailing, 64)
-                .padding(.bottom, 28)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
 
             scale
         }
@@ -201,7 +199,7 @@ struct WaterTank: View {
         return HStack(spacing: 0) {
             if let lead = taskLine.lead {
                 Text(lead)
-                    .font(.system(size: 13, weight: .medium).monospacedDigit())
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
                     .foregroundStyle(taskColor)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -212,11 +210,12 @@ struct WaterTank: View {
                     .padding(.trailing, LabelStyle.gap)
             }
             Text(parts.rest)
-                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .font(.system(size: 13, weight: .semibold).monospacedDigit())
                 .foregroundStyle(taskColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
+        .shadow(color: onBreak ? .clear : .black.opacity(0.35), radius: 2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(taskLine.spoken)
     }
