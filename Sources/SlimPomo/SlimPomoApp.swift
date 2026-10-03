@@ -36,6 +36,9 @@ final class SlimPomoDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             TourMenu.claimShortcut()
             AppRuntime.model.showWindow()
+            #if SLIMPOMO_DEV
+            DevMeasure.startIfRequested()
+            #endif
         }
     }
 

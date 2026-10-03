@@ -994,6 +994,12 @@ public struct Session: Equatable, Codable {
     /// Moves every later item whose day is today or earlier back into the queue. Does not wait for an idle timer.
     /// They are appended to the end of the queue. Earlier days go first, each day in its saved order.
     @discardableResult
+    /// Whether `returnDueLater` would move anything. Read-only, so callers can skip a state write (and the view update it triggers) when nothing is due.
+    public func hasDueLater(now: Date, calendar: Calendar = .current) -> Bool {
+        let today = CalendarDay.stamp(now, calendar: calendar)
+        return later.contains { $0.returnDay <= today }
+    }
+
     public mutating func returnDueLater(now: Date, calendar: Calendar = .current) -> Bool {
         let today = CalendarDay.stamp(now, calendar: calendar)
         let due = later.enumerated().filter { $0.element.returnDay <= today }.sorted { lhs, rhs in

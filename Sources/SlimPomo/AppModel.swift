@@ -884,7 +884,7 @@ final class AppModel {
     private func apply(_ change: (inout Session) -> SessionEffect) {
         guard tour == nil else { return }
         now = Date()
-        session.refreshDoneDay(now: now)
+        editSession { $0.refreshDoneDay(now: now) }
         bringBackDueLater(animated: !suppressQueueAnimation)
         let effect = change(&session)
         bell.play(effect)
@@ -894,6 +894,16 @@ final class AppModel {
         ensureTicker()
         reconcileQueueDrag()
         dropStaleNameEdit()
+    }
+
+    /// Edits `session` and writes it back only if something changed. An `@Observable` write always notifies, and every row
+    /// reads `session`, so a no-op write (the 0.5 s tick) would re-render the whole list for nothing.
+    @discardableResult
+    private func editSession<T>(_ edit: (inout Session) -> T) -> T {
+        var copy = session
+        let result = edit(&copy)
+        if copy != session { session = copy }
+        return result
     }
 
     /// A row that left the queue (finished, deleted, snoozed) takes its open edit with it.
@@ -908,9 +918,9 @@ final class AppModel {
 
     private func tick() {
         now = Date()
-        session.refreshDoneDay(now: now)
+        editSession { $0.refreshDoneDay(now: now) }
         bringBackDueLater(animated: true)
-        let effect = session.reconcile(now: now)
+        let effect = editSession { $0.reconcile(now: now) }
         bell.play(effect)
         syncBreakMessage()
         store.save(session.snapshot(at: now))
@@ -922,7 +932,7 @@ final class AppModel {
         now = Date()
         let previousDay = session.doneDay
         let previousDone = session.done
-        session.refreshDoneDay(now: now)
+        editSession { $0.refreshDoneDay(now: now) }
         bringBackDueLater(animated: true)
         guard session.doneDay != previousDay || session.done != previousDone else { return }
         store.save(session.snapshot(at: now))
@@ -1000,6 +1010,8 @@ final class AppModel {
     }
 
     private func bringBackDueLater(animated: Bool) {
+        // No write when nothing is due: a `session` write inside `withAnimation` renders every row synchronously.
+        guard session.hasDueLater(now: now) else { return }
         let returned: Bool
         if animated {
             returned = withAnimation(QueueMotion.slide(reduceMotion)) {

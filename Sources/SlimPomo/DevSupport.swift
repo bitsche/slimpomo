@@ -388,6 +388,95 @@ enum DevTitleBadge {
     }
 }
 
+/// `-measureNow <file> [-storeDir <dir>] [-measureTasks <n>]` starts and resets a session a few times and writes
+/// the frame cadence around each change. A frame that arrives late is a visible hitch. Exits when it is done.
+@MainActor
+enum DevMeasure {
+    static func startIfRequested() {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-measureNow"), index + 1 < args.count else { return }
+        let path = args[index + 1]
+        var tasks = 12
+        if let at = args.firstIndex(of: "-measureTasks"), at + 1 < args.count, let value = Int(args[at + 1]) {
+            tasks = value
+        }
+        Task { @MainActor in
+            await run(path: path, tasks: tasks)
+        }
+    }
+
+    private static func run(path: String, tasks: Int) async {
+        let model = AppRuntime.model
+        try? await Task.sleep(for: .milliseconds(1800))
+        if model.isTouring { model.endTour() }
+        let modes = Intensity.allCases
+        let names = ["Write the release notes", "NIQO: Review the plan", "Email Anna", "NIQO: Fix the build", "Read the paper"]
+        for index in 0..<tasks {
+            model.addItem(description: names[index % names.count] + " \(index + 1)", intensity: modes[index % modes.count], count: 1 + index % 3)
+        }
+        try? await Task.sleep(for: .milliseconds(1200))
+        guard let view = NSApp.windows.first(where: { $0.contentView != nil })?.contentView else {
+            try? "no window\n".write(toFile: path, atomically: true, encoding: .utf8)
+            exit(1)
+        }
+        var report = "reduceMotion=\(model.reduceMotion) tasks=\(tasks)\n"
+        for round in 1...3 {
+            report += await measure("round \(round) START", on: view) { model.start() }
+            report += await measure("round \(round) RESET", on: view) { model.stop() }
+        }
+        try? report.write(toFile: path, atomically: true, encoding: .utf8)
+        exit(0)
+    }
+
+    private static func measure(_ label: String, on view: NSView, change: () -> Void) async -> String {
+        let recorder = FrameRecorder()
+        recorder.begin(on: view)
+        try? await Task.sleep(for: .milliseconds(250))
+        let before = CACurrentMediaTime()
+        change()
+        let calls = CACurrentMediaTime() - before
+        try? await Task.sleep(for: .milliseconds(1100))
+        recorder.end()
+        let stamps = recorder.stamps
+        guard stamps.count > 8 else { return "\(label): too few frames (\(stamps.count))\n" }
+        var steady: [Double] = []
+        var after: [Double] = []
+        for (a, b) in zip(stamps, stamps.dropFirst()) {
+            let gap = (b - a) * 1000
+            if b < before { steady.append(gap) } else if b - before < 0.8 { after.append(gap) }
+        }
+        let nominal = steady.sorted()[steady.count / 2]
+        let late = after.filter { $0 > nominal * 1.5 }
+        let longest = after.max() ?? 0
+        let list = after.map { String(format: "%.0f", $0) }.joined(separator: " ")
+        return String(
+            format: "%@: change call %.1f ms, frame %.1f ms, %d frames in 800 ms, %d late, longest %.0f ms\n   gaps: %@\n",
+            label, calls * 1000, nominal, after.count, late.count, longest, list
+        )
+    }
+
+    @MainActor
+    private final class FrameRecorder: NSObject {
+        private var link: CADisplayLink?
+        private(set) var stamps: [CFTimeInterval] = []
+
+        func begin(on view: NSView) {
+            let link = view.displayLink(target: self, selector: #selector(tick(_:)))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+
+        func end() {
+            link?.invalidate()
+            link = nil
+        }
+
+        @objc private func tick(_ link: CADisplayLink) {
+            stamps.append(CACurrentMediaTime())
+        }
+    }
+}
+
 /// `-debugDropZones` draws the bands the pointer maps through while a row is held, so gaps and overlaps show.
 enum DevDropZones {
     static let enabled = ProcessInfo.processInfo.arguments.contains("-debugDropZones")

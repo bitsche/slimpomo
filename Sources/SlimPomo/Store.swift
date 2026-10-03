@@ -22,6 +22,14 @@ final class Store: @unchecked Sendable {
             #else
             let folder = "SlimPomo"
             #endif
+            #if SLIMPOMO_DEV
+            // `-storeDir <path>` keeps a measuring run away from the dev app's own queue and history.
+            let args = ProcessInfo.processInfo.arguments
+            if let index = args.firstIndex(of: "-storeDir"), index + 1 < args.count {
+                self.fileURL = URL(fileURLWithPath: args[index + 1], isDirectory: true).appendingPathComponent("session.json")
+                return
+            }
+            #endif
             self.fileURL = base.appendingPathComponent("\(folder)/session.json")
         }
     }

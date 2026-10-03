@@ -196,6 +196,14 @@ private enum DisplayRow: Identifiable {
     }
 }
 
+private extension Date {
+    /// Rows show a finish time to the minute. Handing them the exact instant would change every row's input on each
+    /// start, stop, and tick, and every row would render again for a label that reads the same.
+    var flooredToMinute: Date {
+        Date(timeIntervalSinceReferenceDate: (timeIntervalSinceReferenceDate / 60).rounded(.down) * 60)
+    }
+}
+
 struct MainWindow: View {
     @Bindable var model: AppModel
     @FocusState private var clearDoneFocused: Bool
@@ -322,9 +330,12 @@ struct MainWindow: View {
             QueueLine(
                 item: item,
                 isCurrent: true,
-                finish: shown.finishDates(at: model.now)[item.id],
+                finish: shown.finishDates(at: model.now)[item.id]?.flooredToMinute,
                 model: model,
-                isNow: true
+                isNow: true,
+                isRunning: shown.isRunning,
+                inWork: shown.phase == .work,
+                startsNext: shown.nextStartID == item.id
             )
             .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description]))
             .id(item.id)
@@ -337,13 +348,23 @@ struct MainWindow: View {
         }
     }
 
-    /// 200 ms for the task moving into NOW and back to TODO. None with Reduce Motion.
+    /// 200 ms for the list making room when a task moves into NOW and back to TODO. None with Reduce Motion.
     private var nowAnimation: Animation? {
         model.reduceMotion || model.tour != nil ? nil : .easeOut(duration: 0.2)
     }
 
+    /// The NOW section appears where it will stay. It does not travel over the timer. It fades in a beat after the list
+    /// starts to open the gap, so the two never overlap as text on text, and it fades out first on the way back.
+    /// With Reduce Motion the list jumps and only the fade remains.
     private var nowTransition: AnyTransition {
-        model.reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity)
+        if model.tour != nil { return .identity }
+        if model.reduceMotion {
+            return .opacity.animation(.easeOut(duration: 0.15))
+        }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: -8)).animation(.easeOut(duration: 0.16).delay(0.06)),
+            removal: .opacity.animation(.easeOut(duration: 0.1))
+        )
     }
 
     /// Finished pomodoros today. A rise while Done is collapsed flashes the header stats.
@@ -489,15 +510,21 @@ struct MainWindow: View {
     }
 
     private var queueRows: some View {
-        VStack(spacing: 0) {
+        let finishes = shown.finishDates(at: model.now).mapValues(\.flooredToMinute)
+        let nextStartID = shown.nextStartID
+        return VStack(spacing: 0) {
             ForEach(queueDisplay) { row in
                 switch row {
                 case .queue(let item):
+                    let current = item.id == shown.activeItemID && shown.phase != .idle
                     QueueLine(
                         item: item,
-                        isCurrent: item.id == shown.activeItemID && shown.phase != .idle,
-                        finish: shown.finishDates(at: model.now)[item.id],
-                        model: model
+                        isCurrent: current,
+                        finish: finishes[item.id],
+                        model: model,
+                        isRunning: current && shown.isRunning,
+                        inWork: current && shown.phase == .work,
+                        startsNext: nextStartID == item.id
                     )
                     .id(item.id)
                 case .gap:
@@ -760,12 +787,16 @@ struct MainWindow: View {
         if let drag = model.queueDrag {
             Group {
                 if drag.source == .queue, let item = model.session.queue.first(where: { $0.id == drag.itemID }) {
+                    let current = item.id == model.session.activeItemID && model.session.phase != .idle
                     QueueLine(
                         item: item,
-                        isCurrent: item.id == model.session.activeItemID && model.session.phase != .idle,
+                        isCurrent: current,
                         finish: model.session.finishDates(at: model.now)[item.id],
                         model: model,
-                        floating: true
+                        floating: true,
+                        isRunning: current && model.session.isRunning,
+                        inWork: current && model.session.phase == .work,
+                        startsNext: model.session.nextStartID == item.id
                     )
                 } else if let item = model.session.later.first(where: { $0.id == drag.itemID }) {
                     LaterLine(item: item, model: model, floating: true)
@@ -1406,7 +1437,7 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
             .accessibilityLabel("\(spoken), \(expanded ? "expanded" : "collapsed")")
             .accessibilityHint(expanded ? "Hides the list" : "Shows the list")
             .accessibilityAddTraits(.isButton)
-            .rowActions(menu)
+            .rowActions { menu }
 
             HStack(spacing: 2) {
                 accessory()
@@ -1774,11 +1805,19 @@ private struct QueueLine: View {
     var floating = false
     /// The task under NOW: a step larger, and grey while work is paused.
     var isNow = false
+    /// What the row needs from the session, handed in by the list. A row that read `model.session` itself would render
+    /// again on every session write, all rows at once; as plain inputs only the rows whose values changed do.
+    /// The timer is running on this row's task (false for every other row).
+    var isRunning = false
+    /// Work (not a break) is on this row's task.
+    var inWork = false
+    /// This task starts next.
+    var startsNext = false
 
     @Environment(\.tagColumn) private var tagColumn
 
     /// Work is paused on this row's task.
-    private var paused: Bool { isNow && !model.windowSession.isRunning }
+    private var paused: Bool { isNow && !isRunning }
 
     private var crossfade: Animation? {
         model.reduceMotion ? nil : .easeInOut(duration: 0.4)
@@ -1791,7 +1830,7 @@ private struct QueueLine: View {
     private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
 
     /// The task START, or the end of a break, begins next.
-    private var isNext: Bool { model.windowSession.nextStartID == item.id }
+    private var isNext: Bool { startsNext }
 
     private var barColor: Color? {
         if showsWorkBar { return paused ? Theme.pausedSurface : Theme.surface(item.intensity) }
@@ -1811,7 +1850,7 @@ private struct QueueLine: View {
     }
 
     private var showsWorkBar: Bool {
-        isCurrent && model.windowSession.phase == .work
+        isCurrent && inWork
     }
 
     private var pointerHover: Bool {
@@ -1844,7 +1883,7 @@ private struct QueueLine: View {
 
     /// The gauge's wave drifts only while this task is running.
     private var drifts: Bool {
-        showsWorkBar && model.windowSession.isRunning
+        showsWorkBar && isRunning
     }
 
     var body: some View {
@@ -1869,7 +1908,7 @@ private struct QueueLine: View {
 ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : .center, tagWidth: tagWidth) {
             IntensitySwitch(
                 intensity: item.intensity,
-                locked: model.session.phase != .idle && item.id == model.session.activeItemID,
+                locked: isCurrent,
                 reduceMotion: model.reduceMotion,
                 showsMark: false,
                 drifting: drifts,
@@ -1947,7 +1986,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 )
             }
         }
-        .rowActions(menuEntries())
+        .rowActions(menuEntries)
         .accessibilityAction(named: "Add pomodoro") { addPomodoro() }
         .accessibilityAction(named: "Remove pomodoro") { removePomodoro() }
     }
@@ -2179,7 +2218,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 )
             }
         }
-        .rowActions(menuEntries())
+        .rowActions(menuEntries)
         .accessibilityAction(named: "Add pomodoro") { step(1) }
         .accessibilityAction(named: "Remove pomodoro") { step(-1) }
     }
@@ -2378,17 +2417,19 @@ struct RestFade: ViewModifier {
 }
 
 private extension View {
-    func rowActions(_ entries: [MenuEntry]) -> some View {
+    /// `entries` runs only when VoiceOver asks. Built in the row's body it would make every row read the session and the
+    /// clock, and render again on each tick.
+    func rowActions(_ entries: @escaping () -> [MenuEntry]) -> some View {
         modifier(RowActions(entries: entries))
     }
 }
 
 private struct RowActions: ViewModifier {
-    var entries: [MenuEntry]
+    var entries: () -> [MenuEntry]
 
     func body(content: Content) -> some View {
         content.accessibilityActions {
-            let named = entries.filter { !$0.separator }
+            let named = entries().filter { !$0.separator }
             ForEach(Array(named.enumerated()), id: \.offset) { _, entry in
                 Button(entry.title) { // cursor-exempt: VoiceOver action, not a visible control
                     guard entry.enabled else { return }
