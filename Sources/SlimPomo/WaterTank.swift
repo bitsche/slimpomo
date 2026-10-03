@@ -152,12 +152,24 @@ struct WaterTank: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             content
         }
-        .frame(height: Self.height)
+        .frame(height: height)
+        .animation(resizeAnimation, value: isCompact)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 
-    static let height: CGFloat = 150
+    /// Work and breaks use the full tank with its scale. Idle is a short tank with the time and the next task.
+    static let fullHeight: CGFloat = 150
+    static let idleHeight: CGFloat = 96
+
+    private var isCompact: Bool { phase == .idle }
+
+    private var height: CGFloat { isCompact ? Self.idleHeight : Self.fullHeight }
+
+    /// 300 ms ease-in-out when the tank grows or shrinks. None with Reduce Motion.
+    private var resizeAnimation: Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 0.3)
+    }
 
     /// Dev builds can pin the tank to one level and phase to check the scale against the water.
     private var frozenLevel: CGFloat? {
@@ -200,13 +212,14 @@ struct WaterTank: View {
                 .padding(.top, 14)
                 taskLabel
                     .padding(.leading, 16)
-                    .padding(.trailing, 64)
-                    .padding(.top, 8)
+                    .padding(.trailing, isCompact ? 16 : 64)
+                    .padding(.top, isCompact ? 6 : 8)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             scale
+                .opacity(isCompact ? 0 : 1)
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.4), value: paused)
     }
@@ -218,7 +231,7 @@ struct WaterTank: View {
         return HStack(spacing: 0) {
             if let lead = taskLine.lead {
                 Text(lead)
-                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 13, weight: lineWeight).monospacedDigit())
                     .foregroundStyle(taskColor)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -229,7 +242,7 @@ struct WaterTank: View {
                     .padding(.trailing, LabelStyle.gap)
             }
             Text(parts.rest)
-                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                .font(.system(size: 13, weight: lineWeight).monospacedDigit())
                 .foregroundStyle(taskColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -255,7 +268,7 @@ struct WaterTank: View {
     /// A 6 × 1 pt tick centered on the level's height, with its label to the left, centered on the tick.
     private func tick(level: Double, label: String?) -> some View {
         let row: CGFloat = 14
-        let y = CGFloat(TankAxis.y(level: level, height: Double(Self.height)))
+        let y = CGFloat(TankAxis.y(level: level, height: Double(Self.fullHeight)))
         return HStack(spacing: 4) {
             if let label {
                 Text(label)
@@ -298,7 +311,11 @@ struct WaterTank: View {
         return onBreak ? Theme.breakText : (session.phase == .idle ? Theme.textOnWater : Theme.textStrong)
     }
 
+    /// While idle the line names the next task quietly; during work and breaks it is the headline.
+    private var lineWeight: Font.Weight { isCompact ? .regular : .semibold }
+
     private var taskColor: Color {
+        if isCompact { return Theme.textOnWater }
         if paused { return onBreak ? Theme.pausedBreakText : Theme.pausedText }
         return onBreak ? Theme.breakText : Theme.textStrong
     }
@@ -392,6 +409,7 @@ final class TankWaveView: NSView {
     private var reduceMotion = false
     private var paint = TankPaint()
     private var builtWidth: CGFloat = 0
+    private var placedHeight: CGFloat = 0
     private var placed = false
     private var playing = false
     /// The waves stand still on a static offset. Their slide animation is removed, never slowed to speed 0:
@@ -447,6 +465,11 @@ final class TankWaveView: NSView {
         if !placed, bounds.height > 1 {
             placeWater(animated: false)
             placed = true
+            placedHeight = bounds.height
+        } else if placed, abs(bounds.height - placedHeight) > 0.5 {
+            // The tank grows or shrinks. The water line follows the axis; the waves and their phase are not touched.
+            placedHeight = bounds.height
+            placeWater(animated: !reduceMotion)
         }
         applyMotion()
     }
