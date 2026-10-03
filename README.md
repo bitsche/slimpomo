@@ -29,7 +29,9 @@ Unfinished tasks stay in the queue across days until they are finished, deleted,
 
 While work is running or paused, the current task sits in its own **NOW** section above TODO: a NOW header, the task as a row (name and tag in exactly the same font, size and weight as every other row; only the active card background, the full-strength bar at its left edge, the gauge at 50% with the drifting wave, and the grey while paused mark it), and a divider before the TODO header. It has the same hover controls as any row (finish time, •••, − and +, with the count from 1 to 5), a click on the name renames it, and right-click opens the row menu with the snooze items disabled. It can't be dragged and nothing can be dropped into NOW. On START the task moves up from TODO into NOW; when a break starts it returns to the top of TODO (if pomodoros remain) and NOW collapses, 200 ms (instant with Reduce Motion). The TODO list never contains the current task, yet it stays first in the queue, and the TODO header's totals and "done by" still count its remaining time.
 
-While the timer is idle or in a break there is no NOW section, and the task that START (or the end of the break) will begin next has the same thin bar at its left edge in its mode color at 40%. It moves at once when the order, counts, or snoozes change.
+While the timer is idle or in a break there is no NOW section. The next task is named once, in the tank's Next line (`Next: <tag> <task>`, or `Nothing queued`), and the list has no marker for it.
+
+**Calm rows.** Queue and LATER rows are flat: no box at rest, 2 pt apart, with a rounded hover background and the hover controls. The NOW row is the only card. A row you lift gets a card background and a shadow. When idle the tank is a compact 96 pt with just the time and the next task; it grows to 150 pt with the depth scale when work or a break starts (300 ms, instant with Reduce Motion). Reset, Finish, and Skip show only when they can act. Times that land after midnight read `done by 4:44 (+1)`.
 
 **Paused is grey and still.** Pausing work or a break turns the tank and the NOW row grey in 400 ms (instant with Reduce Motion): air, water, back wave, crest, digits, pause glyph, text line and scale in one grey family (a dusty sand-grey for a paused break), and in the NOW row the bar, the gauge ring, crest and water, and the name; the tag keeps its color at 60%. The waves freeze and the water level stays put. The Resume pill keeps its mode color, and there is no chip, badge or "Paused" text.
 
@@ -56,7 +58,7 @@ A small round gauge shows the depth as a tank: a ring, a dark inside, and a wave
 
 The icon is a monochrome template so macOS tints it for light and dark menu bars. Idle is an empty tank with a still wave. While you work, the water rises with the time elapsed, and the minutes left sit beside it. Paused work keeps that water at 40% and adds two pause bars. During a break there is no tank: the sun rises out of the sea, from a small cap at the start to a full disc just above the horizon at the end. A paused break keeps the sun where it is, dimmed to 40%, with the sea line and the pause bars. The icon does not animate, and its width stays the same in every state.
 
-Left-click the icon to open the menu: the current status, Show Window, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.
+Left-click the icon to open the menu: the current status, Show Window, Show Tour, Start, Pause, or Resume, and Quit. Right-click, or Control-click, opens the window.
 
 ## Sound
 

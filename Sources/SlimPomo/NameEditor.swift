@@ -359,6 +359,11 @@ final class NameEditorView: NSView {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticLinkDetectionEnabled = false
+        textView.contentType = nil
+        if #available(macOS 15.0, *) {
+            textView.writingToolsBehavior = .none
+            textView.isAutomaticTextCompletionEnabled = false
+        }
         apply(font: font, color: color)
 
         scrollView.drawsBackground = false

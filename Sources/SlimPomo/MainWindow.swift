@@ -331,6 +331,7 @@ struct MainWindow: View {
                 item: item,
                 isCurrent: true,
                 finish: shown.finishDates(at: model.now)[item.id]?.flooredToMinute,
+                finishDays: finishDays(shown.finishDates(at: model.now)[item.id]),
                 model: model,
                 isNow: true,
                 isRunning: shown.isRunning,
@@ -387,6 +388,10 @@ struct MainWindow: View {
                 help: secondaryHelp,
                 action: secondaryAction
             )
+            .opacity(secondaryEnabled ? 1 : 0)
+            .allowsHitTesting(secondaryEnabled)
+            .accessibilityHidden(!secondaryEnabled)
+            .animation(model.reduceMotion ? nil : .easeInOut(duration: 0.15), value: secondaryEnabled)
             Spacer(minLength: 0)
         }
     }
@@ -397,10 +402,6 @@ struct MainWindow: View {
             stats: todoStats,
             help: todoStats.isEmpty ? nil : "Work still in the queue, and when the last task would finish"
         ) {
-            SquareIconButton(systemName: "questionmark.circle", size: 15, slot: IconMetrics.column, help: "Tour") {
-                model.replayTour()
-            }
-            .tourTarget(.tourButton)
             SquareIconButton(systemName: "clock.arrow.circlepath", size: 15, slot: IconMetrics.column, help: "History") {
                 model.showHistory()
             }
@@ -519,6 +520,7 @@ struct MainWindow: View {
                         item: item,
                         isCurrent: current,
                         finish: finishes[item.id],
+                        finishDays: finishDays(finishes[item.id]),
                         model: model,
                         isRunning: current && shown.isRunning,
                         inWork: current && shown.phase == .work
@@ -776,7 +778,14 @@ struct MainWindow: View {
         guard todoWork > 0, let last = shown.queue.last(where: { $0.count > 0 }) else { return "" }
         let finishes = shown.finishDates(at: model.now)
         guard let doneBy = finishes[last.id] else { return TimeFormat.span(todoWork) }
-        return "\(TimeFormat.span(todoWork)) · done by \(ClockFormat.time(doneBy))"
+        return "\(TimeFormat.span(todoWork)) · done by \(ClockFormat.time(doneBy, days: finishDays(doneBy)))"
+    }
+
+    /// Calendar days between now and a finish time. Read from the list, which renders with the clock,
+    /// so a "(+1)" drops away on its own after midnight.
+    private func finishDays(_ date: Date?) -> Int {
+        guard let date else { return 0 }
+        return DayOffset.days(of: date, from: model.now)
     }
 
     @ViewBuilder
@@ -789,6 +798,7 @@ struct MainWindow: View {
                         item: item,
                         isCurrent: current,
                         finish: model.session.finishDates(at: model.now)[item.id],
+                        finishDays: finishDays(model.session.finishDates(at: model.now)[item.id]),
                         model: model,
                         floating: true,
                         isRunning: current && model.session.isRunning,
@@ -1798,6 +1808,8 @@ private struct QueueLine: View {
     var item: QueueItem
     var isCurrent: Bool
     var finish: Date?
+    /// Calendar days from today to the finish time, handed in so a row notices when midnight passes.
+    var finishDays = 0
     var model: AppModel
     var floating = false
     /// The task under NOW: a step larger, and grey while work is paused.
@@ -2077,12 +2089,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     }
 
     private var finishText: String {
-        ClockFormat.time(finish)
+        ClockFormat.time(finish, days: finishDays)
     }
 
     private var finishHelp: String {
         guard let finish else { return "No finish time yet" }
-        return "Work ends at \(ClockFormat.time(finish)), when the break starts"
+        return "Work ends at \(ClockFormat.time(finish, days: finishDays)), when the break starts"
     }
 
     private var nameShown: String { model.descriptionDraft(for: item) }
@@ -3176,9 +3188,10 @@ private struct ModeChoiceButton: View {
 }
 
 enum ClockFormat {
-    static func time(_ date: Date?) -> String {
+    static func time(_ date: Date?, days: Int = 0) -> String {
         guard let date else { return "—" }
-        return date.formatted(date: .omitted, time: .shortened)
+        let clock = date.formatted(date: .omitted, time: .shortened)
+        return days > 0 ? "\(clock)\u{2009}(+\(days))" : clock
     }
 }
 
