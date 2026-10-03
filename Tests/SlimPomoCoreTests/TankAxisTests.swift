@@ -31,4 +31,13 @@ struct TankAxisTests {
     @Test func tickLevelsAreTopMiddleAndBottom() {
         #expect(TankAxis.tickLevels == [1.0, 0.5, 0.0])
     }
+
+    @Test func compactIdleTankKeepsItsWaterBelowTheNextLine() {
+        // Time line: 14 pt top padding + about 48 pt of digits + 6 pt gap + 16 pt Next line = 84 pt.
+        let nextLineBottom = 84.0
+        let waveAmplitude = 3.0
+        let surface = TankAxis.y(level: 0, height: 96)
+        #expect(surface - waveAmplitude > nextLineBottom)
+        #expect(surface == 96 - TankAxis.compactEmptyInset)
+    }
 }

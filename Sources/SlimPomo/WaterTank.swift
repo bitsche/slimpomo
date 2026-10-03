@@ -347,7 +347,8 @@ struct WaterTank: View {
     static func fraction(of session: Session, at date: Date) -> CGFloat {
         switch session.phase {
         case .idle:
-            return 0.05
+            // The compact idle tank rests at its lowest line, under the Next text.
+            return 0
         case .work:
             guard session.phaseDuration > 0 else { return 0 }
             let elapsed = 1 - session.displayedRemaining(at: date) / session.phaseDuration
