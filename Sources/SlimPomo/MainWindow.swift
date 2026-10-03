@@ -334,8 +334,7 @@ struct MainWindow: View {
                 model: model,
                 isNow: true,
                 isRunning: shown.isRunning,
-                inWork: shown.phase == .work,
-                startsNext: shown.nextStartID == item.id
+                inWork: shown.phase == .work
             )
             .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description]))
             .id(item.id)
@@ -511,7 +510,6 @@ struct MainWindow: View {
 
     private var queueRows: some View {
         let finishes = shown.finishDates(at: model.now).mapValues(\.flooredToMinute)
-        let nextStartID = shown.nextStartID
         return VStack(spacing: 0) {
             ForEach(queueDisplay) { row in
                 switch row {
@@ -523,8 +521,7 @@ struct MainWindow: View {
                         finish: finishes[item.id],
                         model: model,
                         isRunning: current && shown.isRunning,
-                        inWork: current && shown.phase == .work,
-                        startsNext: nextStartID == item.id
+                        inWork: current && shown.phase == .work
                     )
                     .id(item.id)
                 case .gap:
@@ -795,8 +792,7 @@ struct MainWindow: View {
                         model: model,
                         floating: true,
                         isRunning: current && model.session.isRunning,
-                        inWork: current && model.session.phase == .work,
-                        startsNext: model.session.nextStartID == item.id
+                        inWork: current && model.session.phase == .work
                     )
                 } else if let item = model.session.later.first(where: { $0.id == drag.itemID }) {
                     LaterLine(item: item, model: model, floating: true)
@@ -1275,8 +1271,8 @@ enum RowGrid {
     static let height: CGFloat = 36
     static let doneHeight: CGFloat = 30
     static let radius: CGFloat = 10
-    /// Space between queue and LATER cards. Included in every queue row so a drag stride stays even.
-    static let gap: CGFloat = 5
+    /// Space between queue and LATER rows. Included in every queue row so a drag stride stays even.
+    static let gap: CGFloat = 2
     static let doneGap: CGFloat = 2
     /// Card padding. The window inset is separate, so every edge lines up at 20 pt.
     static let leading: CGFloat = 8
@@ -1463,8 +1459,8 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
-/// The card behind a queue or LATER row. The running task, and the next one at 40%, get a 3 pt bar at the left edge,
-/// clipped by the card's rounded corners.
+/// The card behind a queue or LATER row. At rest only the current task has one, with a 3 pt bar at the left edge
+/// clipped by the card's rounded corners; other rows are flat and show the hover card on hover or while lifted.
 private struct RowCard: ViewModifier {
     var fill: Color
     var bar: Color? = nil
@@ -1485,6 +1481,7 @@ private struct RowCard: ViewModifier {
                     .allowsHitTesting(false)
                 }
             }
+            .contentShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
     }
 }
 
@@ -1811,8 +1808,6 @@ private struct QueueLine: View {
     var isRunning = false
     /// Work (not a break) is on this row's task.
     var inWork = false
-    /// This task starts next.
-    var startsNext = false
 
     @Environment(\.tagColumn) private var tagColumn
 
@@ -1829,12 +1824,10 @@ private struct QueueLine: View {
     /// An untagged row keeps it, so its name stays where the others start.
     private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
 
-    /// The task START, or the end of a break, begins next.
-    private var isNext: Bool { startsNext }
-
+    /// Only the current task wears the marker.
     private var barColor: Color? {
-        if showsWorkBar { return paused ? Theme.pausedSurface : Theme.surface(item.intensity) }
-        return isNext ? Theme.surface(item.intensity).opacity(0.4) : nil
+        guard showsWorkBar else { return nil }
+        return paused ? Theme.pausedSurface : Theme.surface(item.intensity)
     }
 
     private var taskName: String {
@@ -1876,9 +1869,10 @@ private struct QueueLine: View {
         !showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id || passedOver)
     }
 
+    /// Rows are flat at rest. The current task is the one card; hover and a lifted row get the hover card.
     private var fill: Color {
         if showsWorkBar { return workHovered ? Theme.bgCardActiveHover : Theme.bgCardActive }
-        return cardHovered ? Theme.bgCardHover : Theme.bgCard
+        return floating || cardHovered || overlayShown ? Theme.bgCardHover : Color.clear
     }
 
     /// The gauge's wave drifts only while this task is running.
@@ -2189,7 +2183,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: cardHovered ? Theme.bgCardHover : Theme.bgCard))
+        .modifier(RowCard(fill: floating || cardHovered || overlayShown ? Theme.bgCardHover : Color.clear))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
