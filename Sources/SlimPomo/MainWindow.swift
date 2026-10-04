@@ -1471,15 +1471,27 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
 
 /// The card behind a queue or LATER row. At rest only the current task has one, with a 3 pt bar at the left edge
 /// clipped by the card's rounded corners; other rows are flat and show the hover card on hover or while lifted.
+/// A row's box. `fill` is the resting background (clear for a flat row). The hover background is always a fully
+/// opaque color whose opacity fades, never a clear color blended into a tint, and it fades on the same curve as the
+/// hover cluster, so the box and the controls arrive together.
 private struct RowCard: ViewModifier {
     var fill: Color
+    var hoverFill: Color
+    var hoverShown: Bool
+    var reduceMotion: Bool
     var bar: Color? = nil
 
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
-                    .fill(fill)
+                ZStack {
+                    RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+                        .fill(fill)
+                    RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+                        .fill(hoverFill)
+                        .opacity(hoverShown ? 1 : 0)
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hoverShown)
             }
             .overlay {
                 if let bar {
@@ -1883,8 +1895,15 @@ private struct QueueLine: View {
 
     /// Rows are flat at rest. The current task is the one card; hover and a lifted row get the hover card.
     private var fill: Color {
-        if showsWorkBar { return workHovered ? Theme.bgCardActiveHover : Theme.bgCardActive }
-        return floating || cardHovered || overlayShown ? Theme.bgCardHover : Color.clear
+        showsWorkBar ? Theme.bgCardActive : Color.clear
+    }
+
+    private var hoverFill: Color {
+        showsWorkBar ? Theme.bgCardActiveHover : Theme.bgCardHover
+    }
+
+    private var hoverShown: Bool {
+        showsWorkBar ? (workHovered || overlayShown) : (floating || cardHovered || overlayShown)
     }
 
     /// The gauge's wave drifts only while this task is running.
@@ -1958,7 +1977,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: fill, bar: barColor))
+        .modifier(RowCard(fill: fill, hoverFill: hoverFill, hoverShown: hoverShown, reduceMotion: model.reduceMotion, bar: barColor))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
@@ -1975,7 +1994,6 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
-        .animation(.easeOut(duration: 0.15), value: cardHovered)
         .animation(.easeOut(duration: 0.15), value: showsWorkBar)
         .animation(crossfade, value: paused)
         .background {
@@ -2195,7 +2213,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: floating || cardHovered || overlayShown ? Theme.bgCardHover : Color.clear))
+        .modifier(RowCard(
+            fill: Color.clear,
+            hoverFill: Theme.bgCardHover,
+            hoverShown: floating || cardHovered || overlayShown,
+            reduceMotion: model.reduceMotion
+        ))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
@@ -2209,7 +2232,6 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
         .opacity(full ? 1 : 0.6)
         .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: full)
-        .animation(.easeOut(duration: 0.15), value: cardHovered)
         .background {
             if !floating {
                 RowMenuClick(entries: menuEntries)
