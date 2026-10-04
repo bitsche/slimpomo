@@ -20,11 +20,11 @@ private func regions(queue: Int, slots: ClosedRange<Int>? = nil, first: Int, sec
         #expect(blocks.map(\.rows) == [3, 1, 3])
         let tops = DragGeometry.tops(blocks)
         #expect(tops[0] == 8)
-        let firstDayTop: CGFloat = 8 + 123 + 9 + 24 + 6 + 18
-        let secondDayTop: CGFloat = tops[1] + 41 + 10 + 18
+        let firstDayTop: CGFloat = 8 + 114 + 12 + 24 + 6 + 18
+        let secondDayTop: CGFloat = tops[1] + 38 + 10 + 18
         #expect(tops[1] == firstDayTop)
         #expect(tops[2] == secondDayTop)
-        #expect(DragGeometry.bottom(blocks) == tops[2] + 123)
+        #expect(DragGeometry.bottom(blocks) == tops[2] + 114)
     }
 
     @Test func anEmptyQueueTakesNoSpaceAndLaterUsesTheLongerGap() {
@@ -56,18 +56,18 @@ private func regions(queue: Int, slots: ClosedRange<Int>? = nil, first: Int, sec
         let blocks = DragGeometry.blocks(regions(queue: 2, first: 0, second: 0), held: nil)
         let top = DragGeometry.tops(blocks)[0]
         #expect(DragGeometry.row(at: top + 10, in: blocks)?.row == 0)
-        #expect(DragGeometry.row(at: top + 38, in: blocks) == nil)
-        #expect(DragGeometry.row(at: top + 41 + 5, in: blocks)?.row == 1)
+        #expect(DragGeometry.row(at: top + 37, in: blocks) == nil)
+        #expect(DragGeometry.row(at: top + 38 + 5, in: blocks)?.row == 1)
         #expect(DragGeometry.row(at: top - 4, in: blocks) == nil)
     }
 
     @Test func rowCellsTouchAndCoverTheGaps() {
         let blocks = DragGeometry.blocks(regions(queue: 2, first: 0, second: 0), held: nil)
         let top = DragGeometry.tops(blocks)[0]
-        #expect(DragGeometry.rowCell(at: top + 38, in: blocks)?.row == 0)
-        #expect(DragGeometry.rowCell(at: top + 39, in: blocks)?.row == 1)
-        #expect(DragGeometry.rowCell(at: top - 2, in: blocks)?.row == 0)
-        #expect(DragGeometry.rowCell(at: top - 4, in: blocks) == nil)
+        #expect(DragGeometry.rowCell(at: top + 36.5, in: blocks)?.row == 0)
+        #expect(DragGeometry.rowCell(at: top + 37.5, in: blocks)?.row == 1)
+        #expect(DragGeometry.rowCell(at: top - 1, in: blocks)?.row == 0)
+        #expect(DragGeometry.rowCell(at: top - 2, in: blocks) == nil)
     }
 }
 

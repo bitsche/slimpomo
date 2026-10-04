@@ -12,7 +12,6 @@ enum TourTarget: Hashable {
     case laterSection
     case doneSection
     case historyButton
-    case tourButton
 }
 
 enum TourStep: Hashable {
@@ -35,7 +34,7 @@ enum TourStep: Hashable {
 
     var anchor: TourTarget? {
         switch self {
-        case .welcome, .menuBar: nil
+        case .welcome, .menuBar, .again: nil
         case .addTask: .addField
         case .depth: .addChip
         case .count: .taskCount
@@ -45,7 +44,6 @@ enum TourStep: Hashable {
         case .later: .laterSection
         case .done: .doneSection
         case .history: .historyButton
-        case .again: .tourButton
         }
     }
 
@@ -70,7 +68,7 @@ enum TourStep: Hashable {
         case .menuBar: "Glance at the menu bar"
         case .done: "Done today"
         case .history: "History"
-        case .again: "See this again"
+        case .again: "See this again any time"
         }
     }
 
@@ -99,7 +97,7 @@ enum TourStep: Hashable {
         case .history:
             "Every past day, with its pomodoros and work time. Open it here or with ⌘Y."
         case .again:
-            "Click here or press ⌘? whenever you need a refresher."
+            "Show Tour in the menu-bar menu, or ⌘?"
         }
     }
 

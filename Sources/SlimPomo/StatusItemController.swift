@@ -91,6 +91,11 @@ final class StatusItemController: NSObject, NSMenuDelegate, @unchecked Sendable 
     }
 
     @MainActor
+    @objc private func showTourFromMenu(_ sender: Any?) {
+        AppRuntime.model.replayTour()
+    }
+
+    @MainActor
     @objc private func performPrimaryFromMenu(_ sender: Any?) {
         AppRuntime.model.performMenuAction()
     }
@@ -147,6 +152,10 @@ final class StatusItemController: NSObject, NSMenuDelegate, @unchecked Sendable 
         show.target = self
         menu.addItem(show)
 
+        let tour = NSMenuItem(title: "Show Tour", action: #selector(showTourFromMenu(_:)), keyEquivalent: "")
+        tour.target = self
+        menu.addItem(tour)
+
         let action = NSMenuItem(
             title: content.actionTitle,
             action: #selector(performPrimaryFromMenu(_:)),
@@ -182,6 +191,7 @@ private enum StatusMenuMetrics {
         let show = NSMenuItem(title: "Show Window", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "o")
         show.keyEquivalentModifierMask = .command
         menu.addItem(show)
+        menu.addItem(NSMenuItem(title: "Show Tour", action: nil, keyEquivalent: ""))
         let action = NSMenuItem(title: "Resume", action: nil, keyEquivalent: "")
         menu.addItem(action)
         menu.addItem(.separator())

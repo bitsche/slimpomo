@@ -42,13 +42,13 @@ public struct DragRegionSpec: Equatable, Sendable {
 /// Fixed list metrics. The views use the same numbers, so the layout can be computed without measuring
 /// anything while rows are sliding.
 public enum DragMetrics {
-    /// A row (36 pt) plus the 5 pt gap that belongs to it.
-    public static let stride: CGFloat = 41
+    /// A row (36 pt) plus the 2 pt gap that belongs to it.
+    public static let stride: CGFloat = 38
     public static let rowHeight: CGFloat = 36
     /// Space above the first queue row.
     public static let queueTopPadding: CGFloat = 8
     /// Space between the last queue row and the LATER header, after that row's own gap.
-    public static let laterGapAfterQueue: CGFloat = 9
+    public static let laterGapAfterQueue: CGFloat = 12
     public static let laterGapWithoutQueue: CGFloat = 14
     public static let laterHeaderHeight: CGFloat = 24
     /// Space between the LATER header and the first day heading.

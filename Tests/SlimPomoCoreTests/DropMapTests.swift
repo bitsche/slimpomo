@@ -61,10 +61,10 @@ private func settle(pointerY y: CGFloat, regions: [DragRegionSpec], from slot: D
         let top = DragGeometry.tops(blocks)[0]
         #expect(target(at: top + 5, regions: specs, from: held) == DragSlot(region: .queue, index: 0))
         #expect(target(at: top + 30, regions: specs, from: held) == DragSlot(region: .queue, index: 1))
-        #expect(target(at: top + 41 + 5, regions: specs, from: held) == DragSlot(region: .queue, index: 1))
-        #expect(target(at: top + 41 + 30, regions: specs, from: held) == DragSlot(region: .queue, index: 2))
+        #expect(target(at: top + 38 + 5, regions: specs, from: held) == DragSlot(region: .queue, index: 1))
+        #expect(target(at: top + 38 + 30, regions: specs, from: held) == DragSlot(region: .queue, index: 2))
         #expect(target(at: top + 38.2, regions: specs, from: held) == DragSlot(region: .queue, index: 1))
-        #expect(target(at: top + 41 - 2.4, regions: specs, from: held) == DragSlot(region: .queue, index: 1))
+        #expect(target(at: top + 38 - 2.4, regions: specs, from: held) == DragSlot(region: .queue, index: 1))
     }
 
     @Test func aboveTheListAndBelowTheRunningTaskMeansTheTop() {
@@ -80,7 +80,7 @@ private func settle(pointerY y: CGFloat, regions: [DragRegionSpec], from slot: D
         let held = DragSlot(region: .queue, index: 2)
         let blocks = DragGeometry.blocks(specs, held: .queue)
         let top = DragGeometry.tops(blocks)[0]
-        let end = top + 3 * 41
+        let end = top + 3 * 38
         #expect(target(at: end, regions: specs, from: held) == DragSlot(region: .queue, index: 2))
         #expect(target(at: end + 8, regions: specs, from: held) == DragSlot(region: .queue, index: 2))
     }
@@ -167,7 +167,7 @@ private func settle(pointerY y: CGFloat, regions: [DragRegionSpec], from slot: D
         let start = DragSlot(region: monday, index: 0)
         let queueTop = DragGeometry.tops(DragGeometry.blocks(specs, held: monday))[0]
         for row in 0..<3 {
-            let y = queueTop + CGFloat(row) * 41 + 18
+            let y = queueTop + CGFloat(row) * 38 + 18
             let result = settle(pointerY: y, regions: specs, from: start)
             #expect(result.slot.region == .queue)
         }

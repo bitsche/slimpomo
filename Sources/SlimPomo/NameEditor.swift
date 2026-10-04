@@ -359,11 +359,16 @@ final class NameEditorView: NSView {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticLinkDetectionEnabled = false
+        textView.contentType = nil
+        if #available(macOS 15.0, *) {
+            textView.writingToolsBehavior = .none
+            textView.isAutomaticTextCompletionEnabled = false
+        }
         apply(font: font, color: color)
 
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
@@ -426,10 +431,28 @@ final class NameEditorView: NSView {
         guard let layout = textView.layoutManager, let container = textView.textContainer else { return }
         layout.ensureLayout(for: container)
         let height = max(NameFieldMetrics.lineHeight(font), ceil(layout.usedRect(for: container).height))
+        syncScroller(contentHeight: height)
         guard abs(height - reportedHeight) > 0.5 else { return }
         reportedHeight = height
         Task { @MainActor [weak self] in
             self?.onHeight?(height)
+        }
+    }
+
+    /// The scroller exists only for text taller than the capped field. A sub-point rounding difference between the
+    /// field and its text, or a stale scroll offset after a relayout, must never show a scroller on a short text.
+    private func syncScroller(contentHeight: CGFloat) {
+        let cap = NameFieldMetrics.lineHeight(font) * CGFloat(NameFieldMetrics.maxLines)
+        let overflows = contentHeight > cap + 1
+        if scrollView.hasVerticalScroller != overflows {
+            scrollView.hasVerticalScroller = overflows
+        }
+        if !overflows {
+            let clip = scrollView.contentView
+            if clip.bounds.origin.y != 0 {
+                clip.scroll(to: .zero)
+                scrollView.reflectScrolledClipView(clip)
+            }
         }
     }
 

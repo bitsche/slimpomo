@@ -331,11 +331,11 @@ struct MainWindow: View {
                 item: item,
                 isCurrent: true,
                 finish: shown.finishDates(at: model.now)[item.id]?.flooredToMinute,
+                finishDays: finishDays(shown.finishDates(at: model.now)[item.id]),
                 model: model,
                 isNow: true,
                 isRunning: shown.isRunning,
-                inWork: shown.phase == .work,
-                startsNext: shown.nextStartID == item.id
+                inWork: shown.phase == .work
             )
             .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description]))
             .id(item.id)
@@ -388,6 +388,10 @@ struct MainWindow: View {
                 help: secondaryHelp,
                 action: secondaryAction
             )
+            .opacity(secondaryEnabled ? 1 : 0)
+            .allowsHitTesting(secondaryEnabled)
+            .accessibilityHidden(!secondaryEnabled)
+            .animation(model.reduceMotion ? nil : .easeInOut(duration: 0.15), value: secondaryEnabled)
             Spacer(minLength: 0)
         }
     }
@@ -398,10 +402,6 @@ struct MainWindow: View {
             stats: todoStats,
             help: todoStats.isEmpty ? nil : "Work still in the queue, and when the last task would finish"
         ) {
-            SquareIconButton(systemName: "questionmark.circle", size: 15, slot: IconMetrics.column, help: "Tour") {
-                model.replayTour()
-            }
-            .tourTarget(.tourButton)
             SquareIconButton(systemName: "clock.arrow.circlepath", size: 15, slot: IconMetrics.column, help: "History") {
                 model.showHistory()
             }
@@ -511,7 +511,6 @@ struct MainWindow: View {
 
     private var queueRows: some View {
         let finishes = shown.finishDates(at: model.now).mapValues(\.flooredToMinute)
-        let nextStartID = shown.nextStartID
         return VStack(spacing: 0) {
             ForEach(queueDisplay) { row in
                 switch row {
@@ -521,10 +520,10 @@ struct MainWindow: View {
                         item: item,
                         isCurrent: current,
                         finish: finishes[item.id],
+                        finishDays: finishDays(finishes[item.id]),
                         model: model,
                         isRunning: current && shown.isRunning,
-                        inWork: current && shown.phase == .work,
-                        startsNext: nextStartID == item.id
+                        inWork: current && shown.phase == .work
                     )
                     .id(item.id)
                 case .gap:
@@ -779,7 +778,14 @@ struct MainWindow: View {
         guard todoWork > 0, let last = shown.queue.last(where: { $0.count > 0 }) else { return "" }
         let finishes = shown.finishDates(at: model.now)
         guard let doneBy = finishes[last.id] else { return TimeFormat.span(todoWork) }
-        return "\(TimeFormat.span(todoWork)) · done by \(ClockFormat.time(doneBy))"
+        return "\(TimeFormat.span(todoWork)) · done by \(ClockFormat.time(doneBy, days: finishDays(doneBy)))"
+    }
+
+    /// Calendar days between now and a finish time. Read from the list, which renders with the clock,
+    /// so a "(+1)" drops away on its own after midnight.
+    private func finishDays(_ date: Date?) -> Int {
+        guard let date else { return 0 }
+        return DayOffset.days(of: date, from: model.now)
     }
 
     @ViewBuilder
@@ -792,11 +798,11 @@ struct MainWindow: View {
                         item: item,
                         isCurrent: current,
                         finish: model.session.finishDates(at: model.now)[item.id],
+                        finishDays: finishDays(model.session.finishDates(at: model.now)[item.id]),
                         model: model,
                         floating: true,
                         isRunning: current && model.session.isRunning,
-                        inWork: current && model.session.phase == .work,
-                        startsNext: model.session.nextStartID == item.id
+                        inWork: current && model.session.phase == .work
                     )
                 } else if let item = model.session.later.first(where: { $0.id == drag.itemID }) {
                     LaterLine(item: item, model: model, floating: true)
@@ -1275,8 +1281,8 @@ enum RowGrid {
     static let height: CGFloat = 36
     static let doneHeight: CGFloat = 30
     static let radius: CGFloat = 10
-    /// Space between queue and LATER cards. Included in every queue row so a drag stride stays even.
-    static let gap: CGFloat = 5
+    /// Space between queue and LATER rows. Included in every queue row so a drag stride stays even.
+    static let gap: CGFloat = 2
     static let doneGap: CGFloat = 2
     /// Card padding. The window inset is separate, so every edge lines up at 20 pt.
     static let leading: CGFloat = 8
@@ -1463,17 +1469,29 @@ private struct CollapsibleSectionHeader<Accessory: View>: View {
     }
 }
 
-/// The card behind a queue or LATER row. The running task, and the next one at 40%, get a 3 pt bar at the left edge,
-/// clipped by the card's rounded corners.
+/// The card behind a queue or LATER row. At rest only the current task has one, with a 3 pt bar at the left edge
+/// clipped by the card's rounded corners; other rows are flat and show the hover card on hover or while lifted.
+/// A row's box. `fill` is the resting background (clear for a flat row). The hover background is always a fully
+/// opaque color whose opacity fades, never a clear color blended into a tint, and it fades on the same curve as the
+/// hover cluster, so the box and the controls arrive together.
 private struct RowCard: ViewModifier {
     var fill: Color
+    var hoverFill: Color
+    var hoverShown: Bool
+    var reduceMotion: Bool
     var bar: Color? = nil
 
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
-                    .fill(fill)
+                ZStack {
+                    RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+                        .fill(fill)
+                    RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous)
+                        .fill(hoverFill)
+                        .opacity(hoverShown ? 1 : 0)
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hoverShown)
             }
             .overlay {
                 if let bar {
@@ -1485,6 +1503,7 @@ private struct RowCard: ViewModifier {
                     .allowsHitTesting(false)
                 }
             }
+            .contentShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
     }
 }
 
@@ -1801,6 +1820,8 @@ private struct QueueLine: View {
     var item: QueueItem
     var isCurrent: Bool
     var finish: Date?
+    /// Calendar days from today to the finish time, handed in so a row notices when midnight passes.
+    var finishDays = 0
     var model: AppModel
     var floating = false
     /// The task under NOW: a step larger, and grey while work is paused.
@@ -1811,8 +1832,6 @@ private struct QueueLine: View {
     var isRunning = false
     /// Work (not a break) is on this row's task.
     var inWork = false
-    /// This task starts next.
-    var startsNext = false
 
     @Environment(\.tagColumn) private var tagColumn
 
@@ -1829,12 +1848,10 @@ private struct QueueLine: View {
     /// An untagged row keeps it, so its name stays where the others start.
     private var tagWidth: CGFloat { isEditing && rowTag != nil ? 0 : tagColumn }
 
-    /// The task START, or the end of a break, begins next.
-    private var isNext: Bool { startsNext }
-
+    /// Only the current task wears the marker.
     private var barColor: Color? {
-        if showsWorkBar { return paused ? Theme.pausedSurface : Theme.surface(item.intensity) }
-        return isNext ? Theme.surface(item.intensity).opacity(0.4) : nil
+        guard showsWorkBar else { return nil }
+        return paused ? Theme.pausedSurface : Theme.surface(item.intensity)
     }
 
     private var taskName: String {
@@ -1876,9 +1893,17 @@ private struct QueueLine: View {
         !showsWorkBar && (pointerHover || model.tourQueueRevealID == item.id || passedOver)
     }
 
+    /// Rows are flat at rest. The current task is the one card; hover and a lifted row get the hover card.
     private var fill: Color {
-        if showsWorkBar { return workHovered ? Theme.bgCardActiveHover : Theme.bgCardActive }
-        return cardHovered ? Theme.bgCardHover : Theme.bgCard
+        showsWorkBar ? Theme.bgCardActive : Color.clear
+    }
+
+    private var hoverFill: Color {
+        showsWorkBar ? Theme.bgCardActiveHover : Theme.bgCardHover
+    }
+
+    private var hoverShown: Bool {
+        showsWorkBar ? (workHovered || overlayShown) : (floating || cardHovered || overlayShown)
     }
 
     /// The gauge's wave drifts only while this task is running.
@@ -1952,7 +1977,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: fill, bar: barColor))
+        .modifier(RowCard(fill: fill, hoverFill: hoverFill, hoverShown: hoverShown, reduceMotion: model.reduceMotion, bar: barColor))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
@@ -1969,7 +1994,6 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
-        .animation(.easeOut(duration: 0.15), value: cardHovered)
         .animation(.easeOut(duration: 0.15), value: showsWorkBar)
         .animation(crossfade, value: paused)
         .background {
@@ -2083,12 +2107,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     }
 
     private var finishText: String {
-        ClockFormat.time(finish)
+        ClockFormat.time(finish, days: finishDays)
     }
 
     private var finishHelp: String {
         guard let finish else { return "No finish time yet" }
-        return "Work ends at \(ClockFormat.time(finish)), when the break starts"
+        return "Work ends at \(ClockFormat.time(finish, days: finishDays)), when the break starts"
     }
 
     private var nameShown: String { model.descriptionDraft(for: item) }
@@ -2189,7 +2213,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
-        .modifier(RowCard(fill: cardHovered ? Theme.bgCardHover : Theme.bgCard))
+        .modifier(RowCard(
+            fill: Color.clear,
+            hoverFill: Theme.bgCardHover,
+            hoverShown: floating || cardHovered || overlayShown,
+            reduceMotion: model.reduceMotion
+        ))
         .overlay(alignment: .trailing) {
             FadeOverlay(
                 shown: overlayShown,
@@ -2203,7 +2232,6 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
         .opacity(full ? 1 : 0.6)
         .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: full)
-        .animation(.easeOut(duration: 0.15), value: cardHovered)
         .background {
             if !floating {
                 RowMenuClick(entries: menuEntries)
@@ -3182,9 +3210,10 @@ private struct ModeChoiceButton: View {
 }
 
 enum ClockFormat {
-    static func time(_ date: Date?) -> String {
+    static func time(_ date: Date?, days: Int = 0) -> String {
         guard let date else { return "—" }
-        return date.formatted(date: .omitted, time: .shortened)
+        let clock = date.formatted(date: .omitted, time: .shortened)
+        return days > 0 ? "\(clock)\u{2009}(+\(days))" : clock
     }
 }
 
