@@ -148,4 +148,81 @@ struct NextStartTests {
         #expect(s.phase == .breakTime)
         #expect(s.nextStartID == s.queue.first { $0.description == "B" }?.id)
     }
+
+    // MARK: Tag picker
+
+    @Test func settingATagAddsOrReplacesThePrefixAndKeepsTheRest() {
+        #expect(TaskName.settingTag("NIQO", in: "write the report") == "NIQO: write the report")
+        #expect(TaskName.settingTag("ANTI", in: "NIQO: write the report") == "ANTI: write the report")
+        #expect(TaskName.settingTag("anti", in: "niqo:   write the report") == "ANTI: write the report")
+        #expect(TaskName.settingTag("NIQO", in: "NIQO: write") == "NIQO: write")
+    }
+
+    @Test func removingATagStripsOnlyThePrefix() {
+        #expect(TaskName.settingTag(nil, in: "NIQO: write the report") == "write the report")
+        #expect(TaskName.settingTag(nil, in: "write the report") == "write the report")
+        #expect(TaskName.settingTag(nil, in: "Look: into it: later") == "into it: later")
+    }
+
+    @Test func aNameThatIsOnlyALabelStaysWholeWhenTagged() {
+        #expect(TaskName.settingTag("NIQO", in: "ANTI:") == "NIQO: ANTI:")
+        #expect(TaskName.settingTag("", in: "write") == "write")
+        #expect(TaskName.settingTag("NIQO", in: "") == "")
+    }
+
+    @Test func aTagSetByThePickerIsReadBackAsTheSameTag() {
+        let named = TaskName.settingTag("Niqo", in: "write")
+        #expect(TaskName.tag(of: named) == "NIQO")
+        #expect(TaskName.split(named).rest == "write")
+    }
+
+    @Test func typedTagTextIsUppercaseWithoutSpacesOrColonsAndCappedAtTwelve() {
+        #expect(TaskName.sanitizedTag("niqo") == "NIQO")
+        #expect(TaskName.sanitizedTag("ni qo:x") == "NIQOX")
+        #expect(TaskName.sanitizedTag("abcdefghijklmnop") == "ABCDEFGHIJKL")
+        #expect(TaskName.sanitizedTag("  : ") == "")
+    }
+
+    @Test func pickerListsMatchesThenOffersCreate() {
+        let known = ["NIQO", "ANTI", "ACME"]
+        let all = TagChoices(known: known, query: "")
+        #expect(all.entries == [.existing("NIQO"), .existing("ANTI"), .existing("ACME")])
+        #expect(all.preselected == 0)
+
+        let some = TagChoices(known: known, query: "an")
+        #expect(some.entries == [.existing("ANTI"), .create("AN")])
+
+        let exact = TagChoices(known: known, query: "acme")
+        #expect(exact.entries == [.existing("ACME")])
+
+        let none = TagChoices(known: known, query: "zz")
+        #expect(none.entries == [.create("ZZ")])
+        #expect(none.preselected == 0)
+        #expect(TagChoices(known: [], query: "").preselected == nil)
+    }
+
+    @Test func pickerContainsMatchIsCaseInsensitiveAnywhereInTheName() {
+        let choices = TagChoices(known: ["NIQO", "ANTI"], query: "Q")
+        #expect(choices.entries == [.existing("NIQO"), .create("Q")])
+    }
+
+    @Test func pickerSelectionStopsAtTheEnds() {
+        let choices = TagChoices(known: ["A", "B"], query: "")
+        #expect(choices.moved(from: 0, by: -1) == 0)
+        #expect(choices.moved(from: 0, by: 1) == 1)
+        #expect(choices.moved(from: 1, by: 1) == 1)
+        #expect(choices.moved(from: nil, by: 1) == 0)
+        #expect(choices.moved(from: nil, by: -1) == 1)
+    }
+
+    @Test func aPickedTagBecomesTheMostRecentWithoutChangingItsColor() {
+        var palette = TagPalette()
+        for tag in ["A", "B", "C"] { palette.assign(tag) }
+        #expect(palette.tagsMostRecentFirst == ["C", "B", "A"])
+        palette.touch("A")
+        #expect(palette.tagsMostRecentFirst == ["A", "C", "B"])
+        #expect(palette.colorIndex(for: "A") == 0)
+        palette.touch("missing")
+        #expect(palette.tagsMostRecentFirst == ["A", "C", "B"])
+    }
 }

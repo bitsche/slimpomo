@@ -113,6 +113,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    nonisolated func windowDidResignKey(_ notification: Notification) {
+        Task { @MainActor in
+            AppRuntime.model.closeTagPicker()
+        }
+    }
+
     nonisolated func windowDidBecomeKey(_ notification: Notification) {
         Task { @MainActor in
             TourMenu.claimShortcut()
@@ -262,6 +268,16 @@ struct MainWindow: View {
                     .allowsHitTesting(model.isTouring)
             }
         }
+        .overlayPreferenceValue(TagAnchorKey.self) { anchors in
+            GeometryReader { proxy in
+                if let id = model.tagPickerID, let anchor = anchors[id] {
+                    TagPickerOverlay(model: model, rowID: id, anchor: proxy[anchor], size: proxy.size)
+                }
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(model.tagPickerID != nil)
+            .animation(model.reduceMotion ? nil : .easeOut(duration: 0.12), value: model.tagPickerID)
+        }
         .preferredColorScheme(.dark)
         .onAppear {
             model.refresh()
@@ -337,7 +353,8 @@ struct MainWindow: View {
                 isRunning: shown.isRunning,
                 inWork: shown.phase == .work
             )
-            .environment(\.tagColumn, TagStyle.columnWidth(for: [item.description]))
+            .environment(\.tagColumn, nowTagColumn)
+            .animation(columnAnimation, value: nowTagColumn)
             .id(item.id)
             Rectangle()
                 .fill(Theme.lineSubtle)
@@ -346,6 +363,10 @@ struct MainWindow: View {
                 .padding(.top, 12 - RowGrid.gap)
                 .accessibilityHidden(true)
         }
+    }
+
+    private var nowTagColumn: CGFloat {
+        shown.nowItem.map { TagStyle.columnWidth(for: [$0.description]) } ?? 0
     }
 
     /// 200 ms for the list making room when a task moves into NOW and back to TODO. None with Reduce Motion.
@@ -899,9 +920,6 @@ struct MainWindow: View {
         if shown.phase == .breakTime {
             return "Skip"
         }
-        if shown.phase == .work, !shown.isRunning {
-            return "Finish"
-        }
         return "Reset"
     }
 
@@ -911,7 +929,6 @@ struct MainWindow: View {
 
     private var secondaryHelp: String {
         switch secondaryTitle {
-        case "Finish": "Finish this pomodoro and start its break"
         case "Skip": "End the break and continue the queue"
         default: "Reset this pomodoro without finishing it"
         }
@@ -920,8 +937,6 @@ struct MainWindow: View {
     private func secondaryAction() {
         if model.session.phase == .breakTime {
             model.skipBreak()
-        } else if model.session.phase == .work, !model.session.isRunning {
-            model.markDone()
         } else {
             model.stop()
         }
@@ -1287,28 +1302,57 @@ enum RowGrid {
     /// Card padding. The window inset is separate, so every edge lines up at 20 pt.
     static let leading: CGFloat = 8
     static let trailing: CGFloat = 8
-    /// The count column. A stepper in Queue and LATER, a plain count in Done and History. The number sits at its center.
+    /// The stepper on hover: − ×n + in a fixed slot, the number at its center.
     static let countSlot: CGFloat = 72
-    /// Distance from the card's right edge to the rightmost element: the stepper, or the count in Done and History.
+    /// Distance from the card's right edge to the rightmost element at rest: the count, the hover action, or Done's right edge.
     static let edge: CGFloat = 10
-    /// Between ••• and the stepper slot.
+    /// Between the hover action (•••, ↩) and the count.
     static let menuGap: CGFloat = 4
-    /// What `ListRow` pads on the right beyond `trailing`, so the slot ends `edge` from the card.
+    /// What `ListRow` pads on the right beyond `trailing`, so the rightmost element ends `edge` from the card.
     static let edgeExtra: CGFloat = edge - trailing
-    /// Hover controls at the right of a queue or LATER row: ••• then the stepper slot.
-    static let controlsWidth: CGFloat = edge + countSlot + menuGap + IconMetrics.column.width
-    /// Where − + and ••• sit, measured from the card's right edge. A press there never starts a drag.
-    /// The count between − and +, the finish time, and the gaps are part of the row.
-    static let controlZones: [ClosedRange<CGFloat>] = [
-        edge...(edge + 24),
-        (edge + 48)...(edge + countSlot),
-        (edge + countSlot + menuGap)...controlsWidth,
-    ]
+    /// The hover action's slot: ••• in Queue, LATER, and NOW, ↩ in Done and History.
+    static let actionSlot: CGFloat = IconMetrics.column.width
+    /// How far the count (and in Done the worked time) slides left when the action appears: the slot and its gap.
+    static let slide: CGFloat = actionSlot + menuGap
+    /// Where − + and ••• sit, measured from the card's right edge, when the rightmost resting element is `inset` from it.
+    /// A press there never starts a drag. The count between − and +, the finish time, and the gaps are part of the row.
+    static func controlZones(inset: CGFloat = edge) -> [ClosedRange<CGFloat>] {
+        [
+            inset...(inset + actionSlot),
+            (inset + slide)...(inset + slide + 24),
+            (inset + slide + 48)...(inset + slide + countSlot),
+        ]
+    }
     static let stepperHeight: CGFloat = 26
     /// Worked time in Done and History.
     static let workedWidth: CGFloat = 48
-    /// What Done and History show at the right at rest, card padding included: worked time, count slot, edge.
-    static let doneRestWidth: CGFloat = trailing + edgeExtra + countSlot + workedWidth
+}
+
+/// Width of a count label, `×n` at 12 pt with monospaced digits. A count is at most one digit.
+enum CountMetrics {
+    @MainActor
+    static let labelWidth: CGFloat = {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        return ceil(("×0" as NSString).size(withAttributes: [.font: font]).width)
+    }()
+
+    /// What a queue, LATER, or NOW row reserves at rest for its count: the label and the 8 pt before it. Nothing at count 1.
+    @MainActor
+    static func restReserve(count: Int, shown: Bool) -> CGFloat {
+        count != 1 && shown ? labelWidth + RowGrid.spacing : 0
+    }
+
+    /// What Done and History reserve on the right at rest, beyond the card padding: the count column, a gap, and the worked time.
+    @MainActor
+    static var doneReserve: CGFloat {
+        RowGrid.edgeExtra + labelWidth + RowGrid.spacing + RowGrid.workedWidth
+    }
+
+    /// From the stepper's hover center to a count that rests flush right: how far the number slides right at rest.
+    @MainActor
+    static var stepperRestShift: CGFloat {
+        RowGrid.slide + RowGrid.countSlot / 2 - labelWidth / 2
+    }
 }
 
 /// Window inset shared by the tank, headers, the add field, and every row.
@@ -1527,7 +1571,8 @@ struct ListRow<Gauge: View, TagContent: View, Name: View, Rest: View>: View {
                 tag()
             }
             .frame(width: tagWidth, alignment: .leading)
-            .clipped()
+            // A tag's hover background reaches 4 pt past its text, so the clip is a little wider than the column.
+            .clipShape(Rectangle().inset(by: -TagStyle.plateOutset))
             name()
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(-1)
@@ -1539,16 +1584,74 @@ struct ListRow<Gauge: View, TagContent: View, Name: View, Rest: View>: View {
     }
 }
 
-/// Hover detail laid over the end of a name, left of the fixed columns. A 24 pt fade lets the name disappear under it.
-struct FadeOverlay<Content: View>: View {
-    var shown: Bool
+/// The right side of every list row, one component for Queue, LATER, NOW, Done, and History: info → count → actions.
+///
+/// Left to right after the name: information (the finish time, the worked time), the count, then the action, which is
+/// always rightmost (•••, ↩, and in NOW the Done pill after it). The count rests flush right at `inset` from the card's
+/// edge, or directly left of Done. On hover the action's 28 pt slot and its 4 pt gap appear at the right and the count
+/// slides left to make room: in Queue, LATER, and NOW to the stepper's slot, where − and + fade in around it; in Done
+/// and History by the width of the action, together with the worked time. Only the hover position is clickable.
+///
+/// It is an overlay on the row card. The name never re-lays out: the row reserves the resting width, and the hover wash
+/// (the card's fill with a 24 pt left fade) lets the end of the name disappear under the info.
+struct RowTrailing<Info: View, RestInfo: View, Count: View, Action: View, Fixed: View>: View {
+    enum Kind {
+        /// The count is a stepper placed at its hover position. Its number slides itself between the two positions.
+        case stepper
+        /// The count and the resting info are plain text that slides as a group.
+        case plain
+    }
+
+    var kind: Kind
+    /// The hover state: the info, the action, and the wash show; the count is at its hover position.
+    var hovered: Bool
     var reduceMotion: Bool
+    /// The row's hover fill, which the wash paints over the name.
     var fill: Color
-    /// Width of the fixed columns to the right of the overlay, padding included.
-    var trailingInset: CGFloat
-    @ViewBuilder var content: () -> Content
+    /// Distance from the card's right edge to the rightmost resting element: `edge`, or in NOW the Done pill plus its gap.
+    var inset: CGFloat = RowGrid.edge
+    /// Distance from the card's right edge to where the wash ends. In NOW the wash stops at the Done pill.
+    var washEnd: CGFloat = 0
+    /// The column the resting info takes (the worked time in Done and History).
+    var restInfoWidth: CGFloat = 0
+    /// The column the plain count takes.
+    var countColumn: CGFloat = 0
+    @ViewBuilder var info: () -> Info
+    @ViewBuilder var restInfo: () -> RestInfo
+    @ViewBuilder var count: () -> Count
+    @ViewBuilder var action: () -> Action
+    @ViewBuilder var fixed: () -> Fixed
+
+    private var slideAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.15) }
+    private var fadeAnimation: Animation? { reduceMotion ? nil : .easeOut(duration: 0.12) }
+
+    /// Distance from the card's right edge to the left edge of the leftmost hover element before the info.
+    private var span: CGFloat {
+        switch kind {
+        case .stepper:
+            inset + RowGrid.slide + RowGrid.countSlot
+        case .plain:
+            inset + RowGrid.slide + countColumn + RowGrid.spacing + restInfoWidth
+        }
+    }
 
     var body: some View {
+        ZStack(alignment: .trailing) {
+            wash
+            countLayer
+            action()
+                .padding(.trailing, inset)
+                .opacity(hovered ? 1 : 0)
+                .allowsHitTesting(hovered)
+                .animation(fadeAnimation, value: hovered)
+            fixed()
+                .padding(.trailing, RowGrid.edge)
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    /// The card's fill with a 24 pt left fade, carrying the info, from the left of the info to the wash end.
+    private var wash: some View {
         HStack(spacing: 0) {
             LinearGradient(
                 colors: [fill.opacity(0), fill],
@@ -1556,17 +1659,41 @@ struct FadeOverlay<Content: View>: View {
                 endPoint: .trailing
             )
             .frame(width: 24)
-            content()
-                .padding(.trailing, 8)
-                .frame(maxHeight: .infinity)
-                .background(fill)
+            HStack(spacing: 0) {
+                info()
+                    .padding(.trailing, RowGrid.spacing)
+                Color.clear.frame(width: max(0, span - washEnd), height: 1)
+            }
+            .frame(maxHeight: .infinity)
+            .background(fill)
         }
         .fixedSize(horizontal: true, vertical: false)
         .frame(maxHeight: .infinity)
-        .padding(.trailing, trailingInset)
-        .opacity(shown ? 1 : 0)
-        .allowsHitTesting(shown)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: shown)
+        .padding(.trailing, washEnd)
+        .opacity(hovered ? 1 : 0)
+        .allowsHitTesting(hovered)
+        .animation(fadeAnimation, value: hovered)
+    }
+
+    @ViewBuilder
+    private var countLayer: some View {
+        switch kind {
+        case .stepper:
+            count()
+                .frame(width: RowGrid.countSlot, height: RowGrid.stepperHeight)
+                .padding(.trailing, inset + RowGrid.slide)
+        case .plain:
+            restInfo()
+                .frame(width: restInfoWidth, alignment: .trailing)
+                .padding(.trailing, inset + countColumn + RowGrid.spacing)
+                .offset(x: hovered ? -RowGrid.slide : 0)
+                .animation(slideAnimation, value: hovered)
+            count()
+                .frame(width: countColumn, alignment: .trailing)
+                .padding(.trailing, inset)
+                .offset(x: hovered ? -RowGrid.slide : 0)
+                .animation(slideAnimation, value: hovered)
+        }
     }
 }
 
@@ -1583,12 +1710,18 @@ struct WorkedMark: View {
     }
 }
 
-/// The count of pomodoros. A fixed 72 × 26 slot: − and + appear on hover, and the number never moves.
+/// The count of pomodoros: a fixed 72 × 26 slot at the row's hover position. On hover − and + fade in around the number.
+/// At rest the number sits `restShift` to the right, flush with the row's right edge (or left of Done), and slides
+/// between the two positions in 150 ms.
 struct PomodoroStepper: View {
     var count: Int
     var minimum: Int
     var maximum: Int = Session.maxPomodoros
     var revealed: Bool
+    /// How far right of its hover position the number rests.
+    var restShift: CGFloat = 0
+    /// False while the row's name is edited: the resting number is hidden.
+    var restVisible = true
     var reduceMotion: Bool
     /// The task name, for VoiceOver.
     var taskName: String
@@ -1609,6 +1742,7 @@ struct PomodoroStepper: View {
             Capsule()
                 .fill(Theme.bgBase)
                 .opacity(showsControls ? 1 : 0)
+                .allowsHitTesting(false)
             HStack(spacing: 0) {
                 StepperButton(symbol: "minus", enabled: canDecrease, tip: "One pomodoro less", limitTip: "At least \(minimum)") {
                     decrease()
@@ -1620,7 +1754,9 @@ struct PomodoroStepper: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(width: 24, height: RowGrid.stepperHeight)
-                    .opacity(count == 1 && !showsControls ? 0 : 1)
+                    .opacity(!showsControls && (count == 1 || !restVisible) ? 0 : 1)
+                    .offset(x: showsControls ? 0 : restShift)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsControls)
                     .help(detail)
                 StepperButton(symbol: "plus", enabled: canIncrease, tip: "One pomodoro more", limitTip: "Up to \(maximum)") {
                     increase()
@@ -1701,51 +1837,12 @@ private struct StepperButton: View {
     }
 }
 
-/// What a queue or LATER row shows on the right at rest. A count of 1 shows nothing and the name runs to the row's
-/// 10 pt right padding. Any other count shows only `×n`, centered where the stepper's number sits on hover (the stepper is the rightmost element),
-/// and the name ends 8 pt before it. The hover cluster is a separate overlay and never changes this layout.
-struct RestCount: View {
-    var count: Int
-    var shown: Bool
-    var detail: String
-    var reduceMotion: Bool
-
-    /// Distance from the row's inner right edge to the center of the stepper's number: half the stepper slot at the right edge.
-    private static let labelCenter = RowGrid.countSlot / 2 + RowGrid.edgeExtra
-    private static let edgeGap = RowGrid.edgeExtra
-
-    @MainActor
-    private static let labelWidth: CGFloat = {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        return ceil(("×0" as NSString).size(withAttributes: [.font: font]).width)
-    }()
-
-    private var showsLabel: Bool { shown && count != 1 }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if showsLabel {
-                Text("×\(max(0, count))")
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(Theme.textOnWater)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.leading, RowGrid.spacing)
-                    .help(detail)
-                    .accessibilityHidden(true)
-            }
-            Color.clear
-                .frame(width: showsLabel ? Self.labelCenter - Self.labelWidth / 2 : Self.edgeGap, height: 1)
-        }
-        .frame(height: RowGrid.height)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsLabel)
-    }
-}
-
-/// Done and History keep the count in the stepper's slot, so its number lines up with the queue's.
-struct CountSlot: View {
+/// The count in Done and History: display-only text in the count column, right-aligned. It rests flush right when it
+/// is 2 or more, and shows on hover at any count.
+struct PlainCount: View {
     var count: Int
     var revealed: Bool
+    var reduceMotion: Bool
 
     var body: some View {
         Text("×\(max(0, count))")
@@ -1753,8 +1850,9 @@ struct CountSlot: View {
             .foregroundStyle(Theme.textMuted)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
-            .frame(width: RowGrid.countSlot, height: RowGrid.stepperHeight)
+            .frame(width: CountMetrics.labelWidth, height: RowGrid.stepperHeight, alignment: .trailing)
             .opacity(count == 1 && !revealed ? 0 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: revealed)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(count) pomodoros")
     }
@@ -1877,7 +1975,16 @@ private struct QueueLine: View {
 
     private var revealed: Bool {
         floating || pointerHover || model.landedID == item.id || model.tourQueueRevealID == item.id
+            || model.tagPickerID == item.id
     }
+
+    /// The tag area takes clicks unless the row is lifted, edited, or held, or the tour is up.
+    private var tagInteractive: Bool {
+        !floating && !isEditing && model.tour == nil && model.queueDrag == nil
+    }
+
+    /// The Done button's color: the mode's surface color while running, grey while paused.
+    private var accent: Color { paused ? Theme.pausedSurface : Theme.surface(item.intensity) }
 
     /// The row under a dragged task shows only the card hover.
     private var passedOver: Bool {
@@ -1945,6 +2052,9 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         } tag: {
             if let rowTag {
                 TagLabel(tag: rowTag, model: model, strength: paused ? 0.6 : 1, column: tagColumn)
+                    .background(alignment: .leading) {
+                        if tagInteractive { TagHoverPlate(tag: rowTag, column: tagColumn) }
+                    }
             }
         } name: {
             if isEditing {
@@ -1967,30 +2077,47 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 )
             }
         } rest: {
-            RestCount(
-                count: item.count,
-                shown: !isEditing,
-                detail: countDetail,
-                reduceMotion: model.reduceMotion
-            )
+            // Only the space the right side takes at rest. RowTrailing draws it over the card.
+            Color.clear
+                .frame(width: restReserve, height: RowGrid.height)
+                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.15), value: restReserve)
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
         }
         .modifier(RowCard(fill: fill, hoverFill: hoverFill, hoverShown: hoverShown, reduceMotion: model.reduceMotion, bar: barColor))
+        .overlay(alignment: .topLeading) {
+            TagSlot(
+                model: model,
+                id: item.id,
+                tag: rowTag,
+                column: tagWidth,
+                interactive: tagInteractive,
+                rowHovered: revealed,
+                hintFill: showsWorkBar ? Theme.bgCardActiveHover : Theme.bgCardHover
+            )
+            .padding(.leading, RowGrid.leading + RowGrid.gauge)
+        }
         .overlay(alignment: .trailing) {
-            FadeOverlay(
-                shown: overlayShown,
+            RowTrailing(
+                kind: .stepper,
+                hovered: overlayShown,
                 reduceMotion: model.reduceMotion,
                 fill: showsWorkBar ? Theme.bgCardActiveHover : Theme.bgCardHover,
-                trailingInset: 0
+                inset: trailingInset,
+                // In NOW the wash ends exactly at the Done button's left edge, so it never covers the pill.
+                washEnd: isNow ? RowGrid.edge + DoneButton.width : 0
             ) {
-                HStack(spacing: 0) {
-                    FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
-                        .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
-                        .padding(.trailing, 8)
-                    hoverCluster
-                }
+                FinishClock(text: finishText, help: finishHelp, fadesWithText: true)
+                    .animation(QueueMotion.slide(model.reduceMotion), value: finishText)
+            } restInfo: {
+                EmptyView()
+            } count: {
+                stepper
+            } action: {
+                rowMenu
+            } fixed: {
+                if isNow { doneButton }
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
@@ -2005,7 +2132,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    controlZones: RowGrid.controlZones,
+                    controlZones: RowGrid.controlZones(inset: trailingInset),
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -2019,30 +2146,53 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         "\(item.count) × \(item.intensity.mode.workMinutes) min"
     }
 
+    /// The NOW row's Done button: always visible, the rightmost element, 10 pt from the card's edge.
+    private var doneButton: some View {
+        DoneButton(
+            accent: accent,
+            hovered: model.doneHovered,
+            pressed: model.donePressed,
+            confirming: model.finishConfirmingID == item.id,
+            reduceMotion: model.reduceMotion,
+            onHover: { model.doneHovered = $0 },
+            onPress: { model.donePressed = $0 },
+            action: { model.finishFromRow(id: item.id) }
+        )
+    }
+
     /// The hover cluster shows on hover, and while the stepper has keyboard focus. Never while editing.
     private var overlayShown: Bool {
         (revealed || model.focusedStepperID == item.id) && !isEditing
     }
 
-    private var hoverCluster: some View {
-        HStack(spacing: 0) {
-            rowMenu
-            PomodoroStepper(
-                count: item.count,
-                minimum: pinned ? 1 : 0,
-                revealed: true,
-                reduceMotion: model.reduceMotion,
-                taskName: taskName,
-                detail: countDetail,
-                onFocus: { model.focusedStepperID = $0 ? item.id : nil }
-            ) { count in
-                model.setCount(id: item.id, count: count)
-            }
-            .tourTarget(item.id == TourSample.outline && !floating ? .taskCount : nil)
-            .padding(.leading, RowGrid.menuGap)
+    /// Distance from the card's right edge to the rightmost resting element: the count, or in NOW the Done pill and its gap.
+    private var trailingInset: CGFloat {
+        isNow ? RowGrid.edge + DoneButton.width + DoneButton.gap : RowGrid.edge
+    }
+
+    /// What the name makes room for at rest: the count when it is not 1, and in NOW the Done pill.
+    private var restReserve: CGFloat {
+        let count = CountMetrics.restReserve(count: item.count, shown: !isEditing)
+        guard isNow else { return RowGrid.edgeExtra + count }
+        let beforeDone = count > 0 ? DoneButton.gap + count : RowGrid.spacing
+        return RowGrid.edgeExtra + DoneButton.width + beforeDone
+    }
+
+    private var stepper: some View {
+        PomodoroStepper(
+            count: item.count,
+            minimum: pinned ? 1 : 0,
+            revealed: overlayShown,
+            restShift: CountMetrics.stepperRestShift,
+            restVisible: !isEditing,
+            reduceMotion: model.reduceMotion,
+            taskName: taskName,
+            detail: countDetail,
+            onFocus: { model.focusedStepperID = $0 ? item.id : nil }
+        ) { count in
+            model.setCount(id: item.id, count: count)
         }
-        .frame(height: RowGrid.height)
-        .padding(.trailing, RowGrid.edgeExtra)
+        .tourTarget(item.id == TourSample.outline && !floating ? .taskCount : nil)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {
@@ -2085,6 +2235,12 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             .item("Add a pomodoro", enabled: item.count < Session.maxPomodoros) { addPomodoro() },
             .item("Remove a pomodoro", enabled: item.count > minimum) { removePomodoro() },
             .separator,
+        ]
+        if tagColumn == 0 {
+            entries.append(.item("Add tag\u{2026}", enabled: tagInteractive) { model.openTagPicker(id: item.id) })
+            entries.append(.separator)
+        }
+        entries += [
             .item("Move up", enabled: model.session.canMoveUp(id: item.id)) { model.moveUp(id: item.id) },
             .item("Move down", enabled: model.session.canMoveDown(id: item.id)) { model.moveDown(id: item.id) },
         ]
@@ -2144,6 +2300,12 @@ private struct LaterLine: View {
 
     private var revealed: Bool {
         floating || pointerHover || model.landedID == item.id || model.tourLaterRevealID == item.id
+            || model.tagPickerID == item.id
+    }
+
+    /// The tag area takes clicks unless the row is lifted, edited, or held, or the tour is up.
+    private var tagInteractive: Bool {
+        !floating && !isEditing && model.tour == nil && model.queueDrag == nil
     }
 
     private var passedOver: Bool {
@@ -2182,6 +2344,9 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         } tag: {
             if let rowTag {
                 TagLabel(tag: rowTag, model: model, column: tagColumn)
+                    .background(alignment: .leading) {
+                        if tagInteractive { TagHoverPlate(tag: rowTag, column: tagColumn) }
+                    }
             }
         } name: {
             if isEditing {
@@ -2203,12 +2368,9 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
                 )
             }
         } rest: {
-            RestCount(
-                count: item.count,
-                shown: !isEditing,
-                detail: countDetail,
-                reduceMotion: model.reduceMotion
-            )
+            Color.clear
+                .frame(width: restReserve, height: RowGrid.height)
+                .animation(model.reduceMotion ? nil : .easeOut(duration: 0.15), value: restReserve)
         }
         .onChange(of: model.textFocusNonce) { _, _ in
             if isEditing { finishEditing(save: true) }
@@ -2219,14 +2381,39 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             hoverShown: floating || cardHovered || overlayShown,
             reduceMotion: model.reduceMotion
         ))
+        .overlay(alignment: .topLeading) {
+            TagSlot(
+                model: model,
+                id: item.id,
+                tag: rowTag,
+                column: tagWidth,
+                interactive: tagInteractive,
+                rowHovered: revealed,
+                hintFill: Theme.bgCardHover
+            )
+            .padding(.leading, RowGrid.leading + RowGrid.gauge)
+        }
         .overlay(alignment: .trailing) {
-            FadeOverlay(
-                shown: overlayShown,
+            RowTrailing(
+                kind: .stepper,
+                hovered: overlayShown,
                 reduceMotion: model.reduceMotion,
-                fill: Theme.bgCardHover,
-                trailingInset: 0
+                fill: Theme.bgCardHover
             ) {
-                hoverCluster
+                EmptyView()
+            } restInfo: {
+                EmptyView()
+            } count: {
+                stepper
+            } action: {
+                EllipsisMenuButton(
+                    help: "Return, reschedule, or delete",
+                    label: "Actions for \(taskName)"
+                ) {
+                    menuEntries()
+                }
+            } fixed: {
+                EmptyView()
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: RowGrid.radius, style: .continuous))
@@ -2241,7 +2428,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
             if !floating {
                 RowDragSource(
                     movable: model.canDragRow(id: item.id),
-                    controlZones: RowGrid.controlZones,
+                    controlZones: RowGrid.controlZones(),
                     onBegin: { model.beginQueueDrag(id: item.id, pressedAt: $0) }
                 )
             }
@@ -2259,29 +2446,25 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
         (revealed || model.focusedStepperID == item.id) && !isEditing
     }
 
-    private var hoverCluster: some View {
-        HStack(spacing: 0) {
-            EllipsisMenuButton(
-                help: "Return, reschedule, or delete",
-                label: "Actions for \(taskName)"
-            ) {
-                menuEntries()
-            }
-            PomodoroStepper(
-                count: item.count,
-                minimum: 0,
-                revealed: true,
-                reduceMotion: model.reduceMotion,
-                taskName: taskName,
-                detail: countDetail,
-                onFocus: { model.focusedStepperID = $0 ? item.id : nil }
-            ) { count in
-                model.setLaterCount(id: item.id, count: count)
-            }
-            .padding(.leading, RowGrid.menuGap)
+    /// What the name makes room for at rest: the count when it is not 1.
+    private var restReserve: CGFloat {
+        RowGrid.edgeExtra + CountMetrics.restReserve(count: item.count, shown: !isEditing)
+    }
+
+    private var stepper: some View {
+        PomodoroStepper(
+            count: item.count,
+            minimum: 0,
+            revealed: overlayShown,
+            restShift: CountMetrics.stepperRestShift,
+            restVisible: !isEditing,
+            reduceMotion: model.reduceMotion,
+            taskName: taskName,
+            detail: countDetail,
+            onFocus: { model.focusedStepperID = $0 ? item.id : nil }
+        ) { count in
+            model.setLaterCount(id: item.id, count: count)
         }
-        .frame(height: RowGrid.height)
-        .padding(.trailing, RowGrid.edgeExtra)
     }
 
     private var editHandler: ((CGFloat?) -> Void)? {
@@ -2312,14 +2495,19 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     }
 
     private func menuEntries() -> [MenuEntry] {
-        [
+        var entries: [MenuEntry] = [
             .item("Back to queue") { model.returnLater(id: item.id) },
-        ] + Snooze.offers(on: model.now, excluding: item.returnDay).map { offer in
-            MenuEntry.item(offer.title) { model.retargetLater(id: item.id, returnDay: offer.returnDay) }
-        } + [
-            .separator,
-            .item("Delete", destructive: true) { model.deleteLater(id: item.id) },
         ]
+        entries += Snooze.offers(on: model.now, excluding: item.returnDay).map { offer in
+            MenuEntry.item(offer.title) { model.retargetLater(id: item.id, returnDay: offer.returnDay) }
+        }
+        if tagColumn == 0 {
+            entries.append(.separator)
+            entries.append(.item("Add tag\u{2026}", enabled: tagInteractive) { model.openTagPicker(id: item.id) })
+        }
+        entries.append(.separator)
+        entries.append(.item("Delete", destructive: true) { model.deleteLater(id: item.id) })
+        return entries
     }
 }
 
@@ -2389,6 +2577,7 @@ private final class MenuActionTarget: NSObject {
 
 private enum PopUpMenu {
     static func show(_ entries: [MenuEntry]) {
+        MainActor.assumeIsolated { AppRuntime.model.closeTagPicker() }
         let menu = NSMenu()
         menu.appearance = NSAppearance(named: .darkAqua)
         var targets: [MenuActionTarget] = []
@@ -2716,41 +2905,43 @@ private struct DoneLine: View {
         } name: {
             TruncatingName(text: taskName, color: Theme.textSecondary)
         } rest: {
-            HStack(spacing: 0) {
-                WorkedMark(seconds: item.workedSeconds, intensity: item.intensity)
-                    .frame(width: RowGrid.workedWidth, alignment: .trailing)
-                CountSlot(count: item.count, revealed: revealed)
-                Color.clear.frame(width: RowGrid.edgeExtra, height: 1)
-            }
+            Color.clear.frame(width: CountMetrics.doneReserve, height: 1)
         }
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(revealed ? Theme.bgCard : Color.clear)
         }
         .overlay(alignment: .trailing) {
-            FadeOverlay(
-                shown: revealed,
+            RowTrailing(
+                kind: .plain,
+                hovered: revealed,
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
-                trailingInset: RowGrid.doneRestWidth
+                restInfoWidth: RowGrid.workedWidth,
+                countColumn: CountMetrics.labelWidth
             ) {
-                HStack(spacing: 8) {
-                    FinishClock(
-                        text: ClockFormat.time(item.finishedAt),
-                        help: FinishClock.finishedHelp(item.finishedAt),
-                        color: Theme.textTertiary
-                    )
-                    SquareIconButton(
-                        systemName: "arrow.uturn.backward",
-                        weight: .semibold,
-                        tint: Theme.link,
-                        slot: IconMetrics.column,
-                        help: "Copy to the end of the queue",
-                        onFocus: { model.doneSectionFocused = $0 }
-                    ) {
-                        model.requeue(id: item.id)
-                    }
+                FinishClock(
+                    text: ClockFormat.time(item.finishedAt),
+                    help: FinishClock.finishedHelp(item.finishedAt),
+                    color: Theme.textTertiary
+                )
+            } restInfo: {
+                WorkedMark(seconds: item.workedSeconds, intensity: item.intensity)
+            } count: {
+                PlainCount(count: item.count, revealed: revealed, reduceMotion: model.reduceMotion)
+            } action: {
+                SquareIconButton(
+                    systemName: "arrow.uturn.backward",
+                    weight: .semibold,
+                    tint: Theme.link,
+                    slot: IconMetrics.column,
+                    help: "Copy to the end of the queue",
+                    onFocus: { model.doneSectionFocused = $0 }
+                ) {
+                    model.requeue(id: item.id)
                 }
+            } fixed: {
+                EmptyView()
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

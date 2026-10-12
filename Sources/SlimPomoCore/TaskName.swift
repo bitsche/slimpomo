@@ -55,6 +55,25 @@ public enum TaskName {
         split(raw).tag
     }
 
+    /// The longest label the prefix parser accepts.
+    public static let maxTagLength = 12
+
+    /// Text typed for a tag, made to fit the prefix rule: uppercase, no spaces or colons, at most 12 characters.
+    public static func sanitizedTag(_ text: String) -> String {
+        let kept = text.uppercased().filter { $0 != ":" && !$0.isWhitespace }
+        return String(kept.prefix(maxTagLength))
+    }
+
+    /// The name with `tag` as its prefix (`TAG: rest`), replacing any label it has, or without a label when `tag` is nil.
+    /// The rest of the name is unchanged. A tag that does not fit the prefix rule leaves the name as it is.
+    public static func settingTag(_ tag: String?, in raw: String) -> String {
+        let rest = split(raw).rest
+        guard let tag else { return rest }
+        let label = sanitizedTag(tag)
+        guard !label.isEmpty, !rest.isEmpty else { return raw }
+        return "\(label): \(rest)"
+    }
+
     /// Trimmed, with every run of whitespace collapsed to one space. Case is kept.
     public static func normalized(_ name: String) -> String {
         name.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")

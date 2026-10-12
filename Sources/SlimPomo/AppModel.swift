@@ -45,6 +45,16 @@ final class AppModel {
     var doneListExpanded = false
     var suppressDoneAnimation = false
     var modePickerOpen = false
+    /// The row whose tag picker is open. Its search text and highlighted entry are separate properties, so typing
+    /// does not make every row render again.
+    var tagPickerID: UUID?
+    var tagQuery = ""
+    var tagSelection: Int?
+    /// The pointer is on the NOW row's Done button, and the button is held down.
+    var doneHovered = false
+    var donePressed = false
+    /// The NOW row whose Done button is filling in before its pomodoro finishes.
+    var finishConfirmingID: UUID?
     var modeHighlight = Intensity.regular
     var depthHintDismissed = false
     var laterExpanded = true
@@ -258,6 +268,41 @@ final class AppModel {
         apply { $0.markFinished(id: id, now: now) }
     }
 
+    /// The Done button in the NOW row. It fills and its check scales in for 150 ms, then the pomodoro finishes through
+    /// the same path as "Mark as finished". Instant with Reduce Motion.
+    func finishFromRow(id: UUID) {
+        guard tour == nil, finishConfirmingID == nil, session.phase == .work, session.activeItemID == id else { return }
+        guard !reduceMotion else {
+            markFinished(id: id)
+            return
+        }
+        withAnimation(.easeOut(duration: 0.15)) { finishConfirmingID = id }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard let self else { return }
+            // The timer may have ended the pomodoro in the meantime. Finishing a break's task again would count it twice.
+            if self.session.phase == .work, self.session.activeItemID == id {
+                self.markFinished(id: id)
+            }
+            // The NOW row fades out with the button filled. Clear the mark once it is gone.
+            try? await Task.sleep(for: .milliseconds(500))
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) {
+                if self.finishConfirmingID == id { self.finishConfirmingID = nil }
+            }
+        }
+    }
+
+    /// ⌘Return. Finishes the current pomodoro when a Deeeep window is in front and no text field is being edited.
+    func finishFromKeyboard() -> Bool {
+        guard tour == nil, let window = NSApp.keyWindow, !(window.firstResponder is NSTextView),
+              session.phase == .work, let id = session.activeItemID
+        else { return false }
+        markFinished(id: id)
+        return true
+    }
+
     func stop() {
         stopAlarm()
         apply { $0.stop() }
@@ -328,6 +373,99 @@ final class AppModel {
             descriptionDrafts[id] = nil
         }
         editingQueueID = nil
+    }
+
+    // MARK: Tag picker
+
+    /// Every tag with a color, the most recently used first.
+    var knownTags: [String] { tagColors.tagsMostRecentFirst }
+
+    var tagChoices: TagChoices { TagChoices(known: knownTags, query: tagQuery) }
+
+    /// The saved tag of a queue or LATER row.
+    func tag(ofRow id: UUID) -> String? {
+        savedDescription(of: id).flatMap { TaskName.tag(of: $0) }
+    }
+
+    func openTagPicker(id: UUID) {
+        guard tour == nil, queueDrag == nil, editingQueueID != id, savedDescription(of: id) != nil else { return }
+        commitAllDescriptionDrafts()
+        // The picker's search field takes the keyboard. The add field must not ask for it back.
+        draftFocused = false
+        tagQuery = ""
+        tagSelection = TagChoices(known: knownTags, query: "").preselected
+        tagPickerID = id
+    }
+
+    func closeTagPicker() {
+        guard tagPickerID != nil else { return }
+        tagPickerID = nil
+        tagQuery = ""
+        tagSelection = nil
+    }
+
+    func setTagQuery(_ text: String) {
+        tagQuery = text
+        tagSelection = tagChoices.preselected
+    }
+
+    func moveTagSelection(by step: Int) {
+        tagSelection = tagChoices.moved(from: tagSelection, by: step)
+    }
+
+    /// Return: applies the highlighted entry. The first match is highlighted, or the create entry when nothing matches.
+    func commitTagSelection() {
+        let entries = tagChoices.entries
+        guard let index = tagSelection, entries.indices.contains(index) else { return }
+        pickTag(entries[index].tag)
+    }
+
+    func pickTag(_ tag: String) {
+        guard let id = tagPickerID else { return }
+        applyTag(tag, to: id)
+        closeTagPicker()
+    }
+
+    func removeTagFromPickedRow() {
+        guard let id = tagPickerID else { return }
+        applyTag(nil, to: id)
+        closeTagPicker()
+    }
+
+    /// The tag is the name's prefix, so setting, replacing, and removing one only rewrites the start of the name.
+    private func applyTag(_ tag: String?, to id: UUID) {
+        guard let raw = savedDescription(of: id) else { return }
+        let updated = TaskName.settingTag(tag, in: raw)
+        if updated != raw {
+            descriptionDrafts[id] = nil
+            if session.queue.contains(where: { $0.id == id }) {
+                updateDescription(id: id, description: updated)
+            } else {
+                updateLaterDescription(id: id, description: updated)
+            }
+        }
+        if let used = TaskName.tag(of: updated) {
+            noteTagUsed(used)
+        }
+    }
+
+    /// A tag the user picked or created is the newest in the picker's list. It gets a color if it has none.
+    private func noteTagUsed(_ tag: String) {
+        var palette = tagColors
+        palette.assign(tag)
+        palette.touch(tag)
+        guard palette != tagColors else { return }
+        tagColors = palette
+        saveTagColors()
+    }
+
+    /// A row that left the lists (finished, deleted, snoozed) takes its open picker with it.
+    private func dropStaleTagPicker() {
+        guard let open = tagPickerID,
+              !session.queue.contains(where: { $0.id == open }),
+              !session.later.contains(where: { $0.id == open })
+        else { return }
+        closeTagPicker()
     }
 
     func addDraftItem() {
@@ -658,7 +796,7 @@ final class AppModel {
     /// Lifts a row. `pressedAt` is where the button went down (window coordinates), so the row
     /// keeps the offset the pointer had when it was grabbed, not where it was after the 4 pt move.
     func beginQueueDrag(id: UUID, pressedAt: NSPoint? = nil) {
-        guard tour == nil, queueDrag == nil, session.canDrag(id: id) else { return }
+        guard tour == nil, queueDrag == nil, tagPickerID == nil, session.canDrag(id: id) else { return }
         let source: QueueDragController.Source
         let region: DragRegionID
         let index: Int
@@ -894,6 +1032,7 @@ final class AppModel {
         ensureTicker()
         reconcileQueueDrag()
         dropStaleNameEdit()
+        dropStaleTagPicker()
     }
 
     /// Edits `session` and writes it back only if something changed. An `@Observable` write always notifies, and every row
@@ -926,6 +1065,7 @@ final class AppModel {
         store.save(session.snapshot(at: now))
         reconcileQueueDrag()
         dropStaleNameEdit()
+        dropStaleTagPicker()
     }
 
     private func refreshDoneDay() {
@@ -1045,6 +1185,7 @@ final class AppModel {
         releaseTextFocus()
         commitAllDescriptionDrafts()
         modePickerOpen = false
+        closeTagPicker()
         tourSample = Session.tourSample()
         tourHoldSpotlight = false
         tourScrollStep = nil
@@ -1265,6 +1406,10 @@ final class AppModel {
                 if handled { return nil }
             }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command, event.keyCode == 36 || event.keyCode == 76 {
+                let handled = MainActor.assumeIsolated { AppRuntime.model.finishFromKeyboard() }
+                return handled ? nil : event
+            }
             guard flags == .command, let key = event.charactersIgnoringModifiers?.lowercased() else {
                 return event
             }
@@ -1302,6 +1447,8 @@ final class AppModel {
             let point = event.locationInWindow
             let windowNumber = event.windowNumber
             let shouldRelease = MainActor.assumeIsolated { () -> Bool in
+                // The tag picker's search field keeps focus while the pointer is on the picker. A press outside closes it.
+                guard AppRuntime.model.tagPickerID == nil else { return false }
                 guard NSApp.windows.contains(where: { $0.firstResponder is NSTextView }) else { return false }
                 guard let window = NSApp.window(withWindowNumber: windowNumber) else { return false }
                 guard let hit = window.contentView?.hitTest(point) else { return true }
