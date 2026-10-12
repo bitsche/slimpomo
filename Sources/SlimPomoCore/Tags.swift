@@ -42,6 +42,17 @@ public struct TagPalette: Equatable, Codable, Sendable {
         entries.append(Entry(tag: tag, colorIndex: colorIndex))
     }
 
+    /// A tag the user just picked or created counts as the most recently used. Its color does not change.
+    public mutating func touch(_ tag: String) {
+        guard let index = entries.firstIndex(where: { $0.tag == tag }), index != entries.count - 1 else { return }
+        entries.append(entries.remove(at: index))
+    }
+
+    /// Every tag with a color, the most recently used first.
+    public var tagsMostRecentFirst: [String] {
+        entries.reversed().map(\.tag)
+    }
+
     /// Gives every tag in `tags` a color, in the order given. Known tags keep theirs.
     public mutating func assign(all tags: [String]) {
         for tag in tags { assign(tag) }
@@ -49,6 +60,54 @@ public struct TagPalette: Equatable, Codable, Sendable {
 
     private func lastAssigned(_ colorIndex: Int) -> Int {
         entries.lastIndex { $0.colorIndex == colorIndex } ?? -1
+    }
+}
+
+/// What the tag picker lists for the text typed in its search field.
+public struct TagChoices: Equatable, Sendable {
+    public enum Entry: Equatable, Sendable {
+        case existing(String)
+        /// "Create XYZ", offered when the typed text is not a known tag yet.
+        case create(String)
+
+        public var tag: String {
+            switch self {
+            case .existing(let tag), .create(let tag): tag
+            }
+        }
+    }
+
+    /// Known tags that contain the typed text (case-insensitive), in the order given, then the create entry if any.
+    public var entries: [Entry]
+
+    /// `known` is in display order, most recently used first.
+    public init(known: [String], query: String) {
+        let typed = TaskName.sanitizedTag(query)
+        var entries = known.filter { typed.isEmpty || $0.uppercased().contains(typed) }.map(Entry.existing)
+        if !typed.isEmpty, !known.contains(where: { $0.uppercased() == typed }) {
+            entries.append(.create(typed))
+        }
+        self.entries = entries
+    }
+
+    /// How many of the entries are known tags. The create entry, if any, follows them.
+    public var existingCount: Int {
+        entries.filter { if case .existing = $0 { true } else { false } }.count
+    }
+
+    /// The text of the create entry, when there is one.
+    public var createName: String? {
+        if case .create(let name)? = entries.last { name } else { nil }
+    }
+
+    /// The first match is preselected. With no match, the create entry is.
+    public var preselected: Int? { entries.isEmpty ? nil : 0 }
+
+    /// Moves the selection one step and stops at the ends.
+    public func moved(from index: Int?, by step: Int) -> Int? {
+        guard !entries.isEmpty else { return nil }
+        guard let index else { return step > 0 ? 0 : entries.count - 1 }
+        return min(max(0, index + step), entries.count - 1)
     }
 }
 

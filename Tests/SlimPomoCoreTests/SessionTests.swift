@@ -771,6 +771,19 @@ struct SessionTests {
         #expect(dates[session.queue[1].id] == now.addingTimeInterval(45 * 60))
     }
 
+    @Test func stopResetsAPausedPomodoroWithoutFinishingIt() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 2)
+        _ = session.start(now: start)
+        _ = session.pause(now: start.addingTimeInterval(10 * 60))
+        #expect(session.stop() == .none)
+        #expect(session.phase == .idle)
+        #expect(session.isRunning == false)
+        #expect(session.queue[0].count == 2)
+        #expect(session.done.isEmpty)
+        #expect(session.history.isEmpty)
+    }
+
     @Test func stopResetsARunningPomodoroWithoutFinishingIt() {
         var session = Session()
         session.addItem(description: "Write", intensity: .regular, count: 2)

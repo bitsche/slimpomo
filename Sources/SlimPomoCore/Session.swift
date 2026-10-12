@@ -717,9 +717,9 @@ public struct Session: Equatable, Codable {
         return .none
     }
 
-    /// Drops the running pomodoro without finishing it and returns to the unstarted queue.
+    /// Drops the current pomodoro, running or paused, without finishing it and returns to the unstarted queue.
     public mutating func stop(now: Date = Date(), calendar: Calendar = .current) -> SessionEffect {
-        guard phase == .work, isRunning else { return .none }
+        guard phase == .work else { return .none }
         becomeIdle()
         settleDoneDay(now: now, calendar: calendar, force: false)
         return .none

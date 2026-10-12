@@ -30,6 +30,9 @@ enum Theme {
     static let bgCardActiveRGB = ThemeRGB(hex: 0x17343F)
     static let bgCardActiveHoverRGB = ThemeRGB(hex: 0x1B3B46)
     static let bgFieldRGB = ThemeRGB(hex: 0x0B161C)
+    /// The tag picker's popover and its 1 pt border.
+    static let popoverRGB = ThemeRGB(hex: 0x1B2E36)
+    static let popoverBorderRGB = ThemeRGB(hex: 0x2A4652)
     static let lineFieldRGB = ThemeRGB(hex: 0x22404A)
     static let lineSubtleRGB = ThemeRGB(hex: 0x1A2D35)
     static let tankAirRGB = ThemeRGB(hex: 0x15303A)
@@ -90,6 +93,8 @@ enum Theme {
     static let bgCardActive = bgCardActiveRGB.color
     static let bgCardActiveHover = bgCardActiveHoverRGB.color
     static let bgField = bgFieldRGB.color
+    static let popover = popoverRGB.color
+    static let popoverBorder = popoverBorderRGB.color
     static let lineField = lineFieldRGB.color
     static let lineSubtle = lineSubtleRGB.color
     static let tankAir = tankAirRGB.color
@@ -141,6 +146,10 @@ enum Theme {
     static let stepperHoverWashNS = NSColor(white: 1, alpha: 0.08)
     /// Whole-row hover on a collapsible section header: white at 4%.
     static let headerHoverWashNS = NSColor(white: 1, alpha: 0.04)
+    /// The highlighted entry in the tag picker: white at 8%.
+    static let popoverSelected = Color.white.opacity(0.08)
+    /// The tag picker's soft shadow.
+    static let popoverShadow = Color.black.opacity(0.4)
     /// Lifted queue card. Black at 35%.
     static let dragShadow = Color.black.opacity(0.35)
     /// Tour dim. Unchanged at about 55% black.

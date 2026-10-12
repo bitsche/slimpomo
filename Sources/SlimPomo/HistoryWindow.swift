@@ -265,36 +265,38 @@ private struct HistoryLine: View {
                 color: Theme.textSecondary
             )
         } rest: {
-            HStack(spacing: 0) {
-                WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
-                    .frame(width: RowGrid.workedWidth, alignment: .trailing)
-                CountSlot(count: row.count, revealed: revealed)
-                Color.clear.frame(width: RowGrid.edgeExtra, height: 1)
-            }
+            Color.clear.frame(width: CountMetrics.doneReserve, height: 1)
         }
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(revealed ? Theme.bgCard : Color.clear)
         }
         .overlay(alignment: .trailing) {
-            FadeOverlay(
-                shown: revealed,
+            RowTrailing(
+                kind: .plain,
+                hovered: revealed,
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
-                trailingInset: RowGrid.doneRestWidth
+                restInfoWidth: RowGrid.workedWidth,
+                countColumn: CountMetrics.labelWidth
             ) {
-                HStack(spacing: 8) {
-                    FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
-                    SquareIconButton(
-                        systemName: "arrow.uturn.backward",
-                        weight: .semibold,
-                        tint: Theme.link,
-                        slot: IconMetrics.column,
-                        help: "Copy to the end of the queue"
-                    ) {
-                        model.requeueHistory(rowID: row.id, day: day)
-                    }
+                FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
+            } restInfo: {
+                WorkedMark(seconds: row.workedSeconds, intensity: row.mode)
+            } count: {
+                PlainCount(count: row.count, revealed: revealed, reduceMotion: model.reduceMotion)
+            } action: {
+                SquareIconButton(
+                    systemName: "arrow.uturn.backward",
+                    weight: .semibold,
+                    tint: Theme.link,
+                    slot: IconMetrics.column,
+                    help: "Copy to the end of the queue"
+                ) {
+                    model.requeueHistory(rowID: row.id, day: day)
                 }
+            } fixed: {
+                EmptyView()
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
