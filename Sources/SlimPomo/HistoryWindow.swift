@@ -278,7 +278,8 @@ private struct HistoryLine: View {
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
                 restInfoWidth: RowGrid.workedWidth,
-                countColumn: CountMetrics.labelWidth
+                countColumn: CountMetrics.labelWidth,
+                countShownAtRest: row.count != 1
             ) {
                 FinishClock(text: ClockFormat.time(row.finishedAt), help: FinishClock.finishedHelp(row.finishedAt))
             } restInfo: {

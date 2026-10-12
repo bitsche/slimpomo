@@ -1616,6 +1616,8 @@ struct RowTrailing<Info: View, RestInfo: View, Count: View, Action: View, Fixed:
     var restInfoWidth: CGFloat = 0
     /// The column the plain count takes.
     var countColumn: CGFloat = 0
+    /// False when the plain count is hidden at rest (`×1`): it fades in at its hover position instead of sliding there.
+    var countShownAtRest = true
     @ViewBuilder var info: () -> Info
     @ViewBuilder var restInfo: () -> RestInfo
     @ViewBuilder var count: () -> Count
@@ -1691,8 +1693,9 @@ struct RowTrailing<Info: View, RestInfo: View, Count: View, Action: View, Fixed:
             count()
                 .frame(width: countColumn, alignment: .trailing)
                 .padding(.trailing, inset)
-                .offset(x: hovered ? -RowGrid.slide : 0)
+                .offset(x: hovered || !countShownAtRest ? -RowGrid.slide : 0)
                 .animation(slideAnimation, value: hovered)
+                .animation(nil, value: countShownAtRest)
         }
     }
 }
@@ -1734,6 +1737,8 @@ struct PomodoroStepper: View {
     @FocusState private var focused: Bool
 
     private var showsControls: Bool { revealed || AppRuntime.model.focusVisible(focused) }
+    /// The number is not shown at rest: a count of 1, or the row's name is being edited.
+    private var hiddenAtRest: Bool { count == 1 || !restVisible }
     private var canDecrease: Bool { count > minimum }
     private var canIncrease: Bool { count < maximum }
 
@@ -1754,9 +1759,13 @@ struct PomodoroStepper: View {
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(width: 24, height: RowGrid.stepperHeight)
-                    .opacity(!showsControls && (count == 1 || !restVisible) ? 0 : 1)
-                    .offset(x: showsControls ? 0 : restShift)
+                    // Only a number that is visible at rest slides. One that is hidden at rest (×1) stays at its hover
+                    // position and fades in and out there, and a count changed while hovered never moves it.
+                    .offset(x: showsControls || hiddenAtRest ? 0 : restShift)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsControls)
+                    .animation(nil, value: hiddenAtRest)
+                    .opacity(!showsControls && hiddenAtRest ? 0 : 1)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: showsControls)
                     .help(detail)
                 StepperButton(symbol: "plus", enabled: canIncrease, tip: "One pomodoro more", limitTip: "Up to \(maximum)") {
                     increase()
@@ -2918,7 +2927,8 @@ private struct DoneLine: View {
                 reduceMotion: model.reduceMotion,
                 fill: Theme.bgCard,
                 restInfoWidth: RowGrid.workedWidth,
-                countColumn: CountMetrics.labelWidth
+                countColumn: CountMetrics.labelWidth,
+                countShownAtRest: item.count != 1
             ) {
                 FinishClock(
                     text: ClockFormat.time(item.finishedAt),
