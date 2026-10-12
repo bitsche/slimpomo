@@ -16,7 +16,10 @@ struct TagAnchorKey: PreferenceKey {
 extension TagStyle {
     /// The `+ TAG` hint of an untagged row.
     static let hintFontSize: CGFloat = 9.5
-    static let hintPadding: CGFloat = 5
+    /// Least space between the hint's text and its border.
+    static let hintPadding: CGFloat = 2
+    /// Space between the hint's right border and the name, inside the column.
+    static let hintGap: CGFloat = 4
     static let hintHeight: CGFloat = 18
     /// Height of the click area and the hover background of a tagged row.
     static let areaHeight: CGFloat = 22
@@ -24,9 +27,16 @@ extension TagStyle {
     static let plateOutset: CGFloat = 4
 
     @MainActor
-    static var hintWidth: CGFloat {
+    static var hintTextWidth: CGFloat {
         let font = NSFont.monospacedDigitSystemFont(ofSize: hintFontSize, weight: .regular)
-        return ceil(("+ TAG" as NSString).size(withAttributes: [.font: font]).width) + hintPadding * 2 + 2
+        return ceil(("+ TAG" as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// The hint fills its column, less the gap before the name, so it never reaches into the name. A column too narrow for
+    /// the text (a one-letter tag) lets it grow just enough to hold it.
+    @MainActor
+    static func hintWidth(column: CGFloat) -> CGFloat {
+        max(column - hintGap, hintTextWidth + hintPadding * 2 + 2)
     }
 }
 
@@ -79,7 +89,7 @@ struct TagSlot: View {
 
     private var areaWidth: CGFloat {
         if let tag { return TagArea.textWidth(tag, column: column) + TagStyle.plateOutset * 2 }
-        return max(column, TagStyle.hintWidth)
+        return max(column, TagStyle.hintWidth(column: column))
     }
 
     private var areaOffset: CGFloat { tag == nil ? 0 : -TagStyle.plateOutset }
@@ -133,7 +143,7 @@ struct TagSlot: View {
             .foregroundStyle(Theme.textTertiary)
             .lineLimit(1)
             .fixedSize()
-            .frame(width: TagStyle.hintWidth, height: TagStyle.hintHeight)
+            .frame(width: TagStyle.hintWidth(column: column), height: TagStyle.hintHeight)
             .background {
                 RoundedRectangle(cornerRadius: 4, style: .continuous).fill(hintFill)
             }
