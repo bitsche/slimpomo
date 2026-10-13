@@ -167,14 +167,20 @@ extension Session {
     }
 
     /// Every tag in use, in order of first appearance: History events, then Done, LATER, and the queue.
-    public func tagsByFirstAppearance() -> [String] {
+    /// `knownHistory` is how many history events, from the front, an earlier call already covered. History is append-only,
+    /// so a caller that has handed out colors for those can skip them and pay only for what came since.
+    public func tagsByFirstAppearance(knownHistory: Int = 0) -> [String] {
         var seen = Set<String>()
         var order: [String] = []
         func note(_ name: String) {
             guard let tag = TaskName.tag(of: name), seen.insert(tag).inserted else { return }
             order.append(tag)
         }
-        for event in history.sorted(by: { $0.timestamp < $1.timestamp }) { note(event.taskName) }
+        if knownHistory > 0, knownHistory <= history.count {
+            for event in history[knownHistory...] { note(event.taskName) }
+        } else {
+            for event in history.sorted(by: { $0.timestamp < $1.timestamp }) { note(event.taskName) }
+        }
         for item in done { note(item.description) }
         for item in later { note(item.description) }
         for item in queue { note(item.description) }

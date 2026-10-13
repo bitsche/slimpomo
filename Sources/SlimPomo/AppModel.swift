@@ -68,8 +68,10 @@ final class AppModel {
     var breakMessage: String?
     /// Bumped when a click lands outside a text field, so open editors resign.
     var textFocusNonce = 0
-    /// True from a mouse press until the next key press. Focus rings and focus-driven reveals only show for keyboard focus.
-    var pointerDrivenInput = false
+    /// True from launch, and from every activation of the app, until the next key press, and from a mouse press until the
+    /// next key press. Focus rings and focus-driven reveals only show for keyboard focus, so a focus the system hands out
+    /// by itself (the first field at launch) is dropped at once.
+    var pointerDrivenInput = true
     /// The row whose stepper has keyboard focus, so its hover cluster stays visible.
     var focusedStepperID: UUID?
     /// Which of the six colors each tag has. Assigned automatically and saved with the other UI state.
@@ -113,6 +115,8 @@ final class AppModel {
     @ObservationIgnored private var tourCursorMonitor: Any?
     @ObservationIgnored private var focusMonitor: Any?
     @ObservationIgnored private var inputModeMonitor: Any?
+    /// How much of the history `syncTagColors` has already given colors to.
+    @ObservationIgnored private var scannedHistoryCount = 0
     @ObservationIgnored private var queueDragMonitor: Any?
     @ObservationIgnored private var landedMonitor: Any?
     @ObservationIgnored private var landedTask: Task<Void, Never>?
@@ -538,14 +542,14 @@ final class AppModel {
 
     func setLaterCount(id: UUID, count: Int) {
         apply { session in
-            session.setLaterCount(id: id, count: count)
+            session.setLaterCount(id: id, count: Session.clampedCount(count))
             return .none
         }
     }
 
     func setCount(id: UUID, count: Int) {
         apply { session in
-            session.setCount(id: id, count: count)
+            session.setCount(id: id, count: Session.clampedCount(count))
             return .none
         }
     }
@@ -1431,6 +1435,10 @@ final class AppModel {
     }
 
     private func installInputModeMonitor() {
+        // Coming back to the app is not keyboard navigation, whatever key was pressed last in another app.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { AppRuntime.model.pointerDrivenInput = true }
+        }
         inputModeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { event in
             let pointer = event.type != .keyDown
             MainActor.assumeIsolated {
@@ -1496,7 +1504,11 @@ final class AppModel {
     /// Gives every tag in use a color. Tags seen for the first time take an unused one. Existing tags keep theirs.
     func syncTagColors() {
         let before = tagColors
-        tagColors.assign(all: session.tagsByFirstAppearance())
+        // History only grows, so after the first full pass only the events since then can bring a new tag. Scanning and
+        // sorting all of it on every action would grow with the years of history.
+        let known = session.history.count >= scannedHistoryCount ? scannedHistoryCount : 0
+        tagColors.assign(all: session.tagsByFirstAppearance(knownHistory: known))
+        scannedHistoryCount = session.history.count
         if tagColors != before { saveTagColors() }
     }
 

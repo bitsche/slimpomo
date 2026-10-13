@@ -150,7 +150,9 @@ final class NameClickAreaView: PointingHandAnchorView {
     }
 
     override var isOpaque: Bool { false }
-    override var acceptsFirstResponder: Bool { true }
+    /// Only Tab (or VoiceOver) may focus a name. The window's own pick of a first responder, at launch or when it becomes
+    /// key again, and a click never do, so the ring never shows up on its own.
+    override var acceptsFirstResponder: Bool { NSApp.currentEvent?.type == .keyDown }
     override var focusRingMaskBounds: NSRect { bounds }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

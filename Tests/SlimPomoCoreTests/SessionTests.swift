@@ -436,6 +436,36 @@ struct SessionTests {
         #expect(session.displayedRemaining(at: breakEnd) == 75 * 60)
     }
 
+    @Test func theStepperCanNeverTakeACountBelowOne() {
+        #expect(Session.minPomodoros == 1)
+        #expect(Session.clampedCount(0) == 1)
+        #expect(Session.clampedCount(-3) == 1)
+        #expect(Session.clampedCount(3) == 3)
+        #expect(Session.clampedCount(Session.maxPomodoros + 4) == Session.maxPomodoros)
+
+        // What the − button does: it is offered only above the minimum, and a step down never lands below it.
+        var count = 3
+        while count > Session.minPomodoros { count = Session.clampedCount(count - 1) }
+        #expect(count == 1)
+        let canDecrease = count > Session.minPomodoros
+        #expect(!canDecrease)
+        #expect(Session.clampedCount(count - 1) == 1)
+    }
+
+    @Test func aTaskAtOneStaysAtOneInQueueAndLaterWhenAskedForZero() {
+        var session = Session()
+        session.addItem(description: "Write", intensity: .regular, count: 1)
+        session.addItem(description: "Review", intensity: .focus, count: 1)
+        let write = session.queue[0].id
+        let review = session.queue[1].id
+        session.setCount(id: write, count: Session.clampedCount(session.queue[0].count - 1))
+        #expect(session.queue[0].count == 1)
+
+        session.snooze(id: review, returnDay: "2099-01-01", now: start)
+        session.setLaterCount(id: review, count: Session.clampedCount(session.later[0].count - 1))
+        #expect(session.later[0].count == 1)
+    }
+
     @Test func activeWorkCountStaysAtLeastOne() {
         var session = Session()
         session.addItem(description: "Write", intensity: .regular, count: 2)

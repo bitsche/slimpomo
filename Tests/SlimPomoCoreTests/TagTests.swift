@@ -75,6 +75,18 @@ struct TagTests {
         #expect(palette.colorIndex(for: "QUEUE") == 2)
     }
 
+    @Test func knownHistoryIsSkippedWhenScanningForTags() throws {
+        let s = try sessionWithHistory([
+            event("Old: x", at: Date(timeIntervalSince1970: 1_000)),
+            event("New: x", at: Date(timeIntervalSince1970: 2_000)),
+        ])
+        #expect(s.tagsByFirstAppearance() == ["OLD", "NEW"])
+        #expect(s.tagsByFirstAppearance(knownHistory: 1) == ["NEW"])
+        #expect(s.tagsByFirstAppearance(knownHistory: 2).isEmpty)
+        // A count past the end of the history means it was replaced: scan everything.
+        #expect(s.tagsByFirstAppearance(knownHistory: 5) == ["OLD", "NEW"])
+    }
+
     @Test func breakdownSortsBiggestFirstAndOtherLast() {
         let rows = [
             row("ANTI: a", 4_500),
