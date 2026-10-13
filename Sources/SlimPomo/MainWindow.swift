@@ -1969,10 +1969,6 @@ private struct QueueLine: View {
         !floating && model.editingQueueID == item.id
     }
 
-    private var pinned: Bool {
-        model.session.phase == .work && item.id == model.session.activeItemID
-    }
-
     private var showsWorkBar: Bool {
         isCurrent && inWork
     }
@@ -2190,7 +2186,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     private var stepper: some View {
         PomodoroStepper(
             count: item.count,
-            minimum: pinned ? 1 : 0,
+            minimum: Session.minPomodoros,
             revealed: overlayShown,
             restShift: CountMetrics.stepperRestShift,
             restVisible: !isEditing,
@@ -2237,12 +2233,11 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
 
     private func menuEntries() -> [MenuEntry] {
         let snoozeLocked = !model.session.canSnooze(id: item.id)
-        let minimum = pinned ? 1 : 0
         var entries: [MenuEntry] = [
             .item("Mark as finished", enabled: item.count != 0) { model.markFinished(id: item.id) },
             .separator,
             .item("Add a pomodoro", enabled: item.count < Session.maxPomodoros) { addPomodoro() },
-            .item("Remove a pomodoro", enabled: item.count > minimum) { removePomodoro() },
+            .item("Remove a pomodoro", enabled: item.count > Session.minPomodoros) { removePomodoro() },
             .separator,
         ]
         if tagColumn == 0 {
@@ -2267,7 +2262,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     }
 
     private func removePomodoro() {
-        guard item.count > (pinned ? 1 : 0) else { return }
+        guard item.count > Session.minPomodoros else { return }
         model.setCount(id: item.id, count: item.count - 1)
     }
 
@@ -2463,7 +2458,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
     private var stepper: some View {
         PomodoroStepper(
             count: item.count,
-            minimum: 0,
+            minimum: Session.minPomodoros,
             revealed: overlayShown,
             restShift: CountMetrics.stepperRestShift,
             restVisible: !isEditing,
@@ -2499,7 +2494,7 @@ ListRow(height: isEditing ? nil : RowGrid.height, alignment: isEditing ? .top : 
 
     private func step(_ delta: Int) {
         let next = item.count + delta
-        guard next >= 0, next <= Session.maxPomodoros else { return }
+        guard next >= Session.minPomodoros, next <= Session.maxPomodoros else { return }
         model.setLaterCount(id: item.id, count: next)
     }
 

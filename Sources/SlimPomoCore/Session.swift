@@ -884,6 +884,15 @@ public struct Session: Equatable, Codable {
         queue[index].intensity = intensity
     }
 
+    /// Fewest pomodoros the stepper and the row menus allow. A task at 0 can only come from a session saved before this rule;
+    /// finishing its last pomodoro is what takes a task out of the queue, never taking the count down.
+    public static let minPomodoros = 1
+
+    /// A count the stepper or a menu asked for, held to `minPomodoros...maxPomodoros`.
+    public static func clampedCount(_ count: Int) -> Int {
+        min(maxPomodoros, max(minPomodoros, count))
+    }
+
     /// Count is the remaining pomodoros, including the one in progress.
     /// The active work item stays at least 1. Any other item may sit at 0 and stays in the queue.
     public mutating func setCount(id: UUID, count: Int) {
@@ -977,7 +986,7 @@ public struct Session: Equatable, Codable {
         later[index].intensity = intensity
     }
 
-    /// A LATER task is never running, so its count may be 0...5.
+    /// A LATER task is never running, so the count itself may be 0...5. The stepper and menus pass it through `clampedCount`.
     public mutating func setLaterCount(id: UUID, count: Int) {
         guard let index = later.firstIndex(where: { $0.id == id }) else { return }
         later[index].count = min(max(0, count), Self.maxPomodoros)
